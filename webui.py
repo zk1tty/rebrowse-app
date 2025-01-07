@@ -46,10 +46,14 @@ async def run_browser_agent(
         use_vision,
         browser_context=None  # Added optional argument
 ):
-    """
-    Runs the browser agent based on user configurations.
-    """
+    # Ensure the recording directory exists
+    os.makedirs(save_recording_path, exist_ok=True)
 
+    # Get the list of existing videos before the agent runs
+    existing_videos = set(glob.glob(os.path.join(save_recording_path, '*.[mM][pP]4')) + 
+                          glob.glob(os.path.join(save_recording_path, '*.[wW][eE][bB][mM]')))
+
+    # Run the agent
     llm = utils.get_llm_model(
         provider=llm_provider,
         model_name=llm_model_name,
@@ -58,7 +62,7 @@ async def run_browser_agent(
         api_key=llm_api_key
     )
     if agent_type == "org":
-        return await run_org_agent(
+        final_result, errors, model_actions, model_thoughts = await run_org_agent(
             llm=llm,
             headless=headless,
             disable_security=disable_security,
@@ -71,7 +75,7 @@ async def run_browser_agent(
             browser_context=browser_context  # pass context
         )
     elif agent_type == "custom":
-        return await run_custom_agent(
+        final_result, errors, model_actions, model_thoughts = await run_custom_agent(
             llm=llm,
             use_own_browser=use_own_browser,
             headless=headless,
@@ -88,6 +92,16 @@ async def run_browser_agent(
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
 
+    # Get the list of videos after the agent runs
+    new_videos = set(glob.glob(os.path.join(save_recording_path, '*.[mM][pP]4')) + 
+                     glob.glob(os.path.join(save_recording_path, '*.[wW][eE][bB][mM]')))
+
+    # Find the newly created video
+    latest_video = None
+    if new_videos - existing_videos:
+        latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
+
+    return final_result, errors, model_actions, model_thoughts, latest_video
 
 async def run_org_agent(
         llm,
@@ -420,22 +434,10 @@ def main():
         run_button.click(
             fn=run_with_stream,
             inputs=[
-                agent_type,
-                llm_provider,
-                llm_model_name,
-                llm_temperature,
-                llm_base_url,
-                llm_api_key,
-                use_own_browser,
-                headless,
-                disable_security,
-                window_w,
-                window_h,
-                save_recording_path,
-                task,
-                add_infos,
-                max_steps,
-                use_vision
+                agent_type, llm_provider, llm_model_name, llm_temperature,
+                llm_base_url, llm_api_key, use_own_browser, headless,
+                disable_security, window_w, window_h, save_recording_path,
+                task, add_infos, max_steps, use_vision
             ],
             outputs=[
                 browser_view,

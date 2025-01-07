@@ -11,6 +11,7 @@ import os
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
 
 def get_llm_model(provider: str, **kwargs):
@@ -39,7 +40,7 @@ def get_llm_model(provider: str, **kwargs):
         )
     elif provider == 'openai':
         if not kwargs.get("base_url", ""):
-            base_url = "https://api.openai.com/v1"
+            base_url = os.getenv("OPENAI_ENDPOINT", "https://api.openai.com/v1")
         else:
             base_url = kwargs.get("base_url")
 
@@ -66,7 +67,7 @@ def get_llm_model(provider: str, **kwargs):
             api_key = kwargs.get("api_key")
 
         return ChatOpenAI(
-            model=kwargs.get("model_name", 'gpt-4o'),
+            model=kwargs.get("model_name", 'deepseek-chat'),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=api_key
@@ -80,6 +81,11 @@ def get_llm_model(provider: str, **kwargs):
             model=kwargs.get("model_name", 'gemini-2.0-flash-exp'),
             temperature=kwargs.get("temperature", 0.0),
             google_api_key=api_key,
+        )
+    elif provider == 'ollama':
+        return ChatOllama(
+            model=kwargs.get("model_name", 'qwen2.5:7b'),
+            temperature=kwargs.get("temperature", 0.0),
         )
     elif provider == "azure_openai":
         if not kwargs.get("base_url", ""):

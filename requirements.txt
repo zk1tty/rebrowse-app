@@ -4,3 +4,5 @@ pyperclip
 gradio
 python-dotenv
 argparse
+langchain-ollama
+

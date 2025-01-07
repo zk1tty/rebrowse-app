@@ -106,7 +106,6 @@ def test_deepseek_model():
         base_url=os.getenv("DEEPSEEK_ENDPOINT", ""),
         api_key=os.getenv("DEEPSEEK_API_KEY", "")
     )
-    pdb.set_trace()
     message = HumanMessage(
         content=[
             {"type": "text", "text": "who are you?"}
@@ -116,8 +115,17 @@ def test_deepseek_model():
     print(ai_msg.content)
 
 
+def test_ollama_model():
+    from langchain_ollama import ChatOllama
+
+    llm = ChatOllama(model="qwen2.5:7b")
+    ai_msg = llm.invoke("Sing a ballad of LangChain.")
+    print(ai_msg.content)
+
+
 if __name__ == '__main__':
     # test_openai_model()
     # test_gemini_model()
     # test_azure_openai_model()
-    test_deepseek_model()
+    # test_deepseek_model()
+    test_ollama_model()

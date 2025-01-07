@@ -105,9 +105,15 @@ async def test_browser_use_custom():
     #     api_key=os.getenv("GOOGLE_API_KEY", "")
     # )
 
+    # llm = utils.get_llm_model(
+    #     provider="deepseek",
+    #     model_name="deepseek-chat",
+    #     temperature=0.8
+    # )
+
     llm = utils.get_llm_model(
-        provider="deepseek",
-        model_name="deepseek-chat",
+        provider="ollama",
+        model_name="qwen2.5:7b",
         temperature=0.8
     )
 
