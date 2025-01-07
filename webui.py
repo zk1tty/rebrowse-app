@@ -10,6 +10,7 @@ import argparse
 import gradio as gr
 import os
 import asyncio
+import glob
 from playwright.async_api import async_playwright
 from browser_use.browser.browser import Browser, BrowserConfig
 from browser_use.browser.context import (
