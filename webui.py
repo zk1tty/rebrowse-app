@@ -467,7 +467,7 @@ def create_ui(theme_name="Ocean"):
                     run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
                     stop_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
 
-            with gr.TabItem("🎬 Recordings", id=5):
+            with gr.TabItem("📊 Results", id=5):
                 recording_display = gr.Video(label="Latest Recording")
 
                 with gr.Group():
@@ -490,6 +490,28 @@ def create_ui(theme_name="Ocean"):
                             model_thoughts_output = gr.Textbox(
                                 label="Model Thoughts", lines=3, show_label=True
                             )
+            
+            with gr.TabItem("🎥 Recordings", id=6):
+                def list_recordings(save_recording_path):
+                    if not os.path.exists(save_recording_path):
+                        return []
+                    recordings = glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4")) + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
+                    return recordings
+
+                recordings_gallery = gr.Gallery(
+                    label="Recordings",
+                    value=list_recordings("./tmp/record_videos"),
+                    columns=3,
+                    height="auto",
+                    object_fit="contain"
+                )
+
+                refresh_button = gr.Button("🔄 Refresh Recordings", variant="secondary")
+                refresh_button.click(
+                    fn=list_recordings,
+                    inputs=save_recording_path,
+                    outputs=recordings_gallery
+                )
 
         # Attach the callback to the LLM provider dropdown
         llm_provider.change(
