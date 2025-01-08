@@ -523,13 +523,6 @@ def create_ui(theme_name="Ocean"):
             outputs=llm_model_name
         )  
 
-        # Attach the callback to the fetch models button
-        fetch_models_button.click(
-            fetch_available_models,
-            inputs=[llm_provider, llm_api_key, llm_base_url],
-            outputs=fetch_models_output
-        )
-          
         # Run button click handler
         run_button.click(
             fn=run_browser_agent,
