@@ -184,6 +184,15 @@ async def run_custom_agent(
             playwright = await async_playwright().start()
             chrome_exe = os.getenv("CHROME_PATH", "")
             chrome_use_data = os.getenv("CHROME_USER_DATA", "")
+
+            if chrome_exe == "":
+                chrome_exe = None
+            elif not os.path.exists(chrome_exe):
+                raise ValueError(f"Chrome executable not found at {chrome_exe}")
+            
+            if chrome_use_data == "":
+                chrome_use_data = None
+
             browser_context_ = await playwright.chromium.launch_persistent_context(
                 user_data_dir=chrome_use_data,
                 executable_path=chrome_exe,
