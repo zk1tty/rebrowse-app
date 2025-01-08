@@ -17,6 +17,7 @@ from browser_use.browser.views import BrowserState
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     HumanMessage,
+    AIMessage
 )
 
 from .custom_prompts import CustomAgentMessagePrompt
@@ -26,40 +27,70 @@ logger = logging.getLogger(__name__)
 
 class CustomMassageManager(MessageManager):
     def __init__(
-        self,
-        llm: BaseChatModel,
-        task: str,
-        action_descriptions: str,
-        system_prompt_class: Type[SystemPrompt],
-        max_input_tokens: int = 128000,
-        estimated_tokens_per_character: int = 3,
-        image_tokens: int = 800,
-        include_attributes: list[str] = [],
-        max_error_length: int = 400,
-        max_actions_per_step: int = 10,
+            self,
+            llm: BaseChatModel,
+            task: str,
+            action_descriptions: str,
+            system_prompt_class: Type[SystemPrompt],
+            max_input_tokens: int = 128000,
+            estimated_tokens_per_character: int = 3,
+            image_tokens: int = 800,
+            include_attributes: list[str] = [],
+            max_error_length: int = 400,
+            max_actions_per_step: int = 10,
+            tool_call_in_content: bool = False,
     ):
         super().__init__(
-            llm,
-            task,
-            action_descriptions,
-            system_prompt_class,
-            max_input_tokens,
-            estimated_tokens_per_character,
-            image_tokens,
-            include_attributes,
-            max_error_length,
-            max_actions_per_step,
+            llm=llm,
+            task=task,
+            action_descriptions=action_descriptions,
+            system_prompt_class=system_prompt_class,
+            max_input_tokens=max_input_tokens,
+            estimated_tokens_per_character=estimated_tokens_per_character,
+            image_tokens=image_tokens,
+            include_attributes=include_attributes,
+            max_error_length=max_error_length,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
         )
 
-        # Move Task info to state_message
+        # Custom: Move Task info to state_message
         self.history = MessageHistory()
         self._add_message_with_tokens(self.system_prompt)
+        tool_calls = [
+            {
+                'name': 'AgentOutput',
+                'args': {
+                    'current_state': {
+                        'evaluation_previous_goal': 'Unknown - No previous actions to evaluate.',
+                        'memory': '',
+                        'next_goal': 'Obtain task from user',
+                    },
+                    'action': [],
+                },
+                'id': '',
+                'type': 'tool_call',
+            }
+        ]
+        if self.tool_call_in_content:
+            # openai throws error if tool_calls are not responded -> move to content
+            example_tool_call = AIMessage(
+                content=f'{tool_calls}',
+                tool_calls=[],
+            )
+        else:
+            example_tool_call = AIMessage(
+                content=f'',
+                tool_calls=tool_calls,
+            )
+
+        self._add_message_with_tokens(example_tool_call)
 
     def add_state_message(
-        self,
-        state: BrowserState,
-        result: Optional[List[ActionResult]] = None,
-        step_info: Optional[AgentStepInfo] = None,
+            self,
+            state: BrowserState,
+            result: Optional[List[ActionResult]] = None,
+            step_info: Optional[AgentStepInfo] = None,
     ) -> None:
         """Add browser state as human message"""
 
@@ -72,7 +103,7 @@ class CustomMassageManager(MessageManager):
                         self._add_message_with_tokens(msg)
                     if r.error:
                         msg = HumanMessage(
-                            content=str(r.error)[-self.max_error_length :]
+                            content=str(r.error)[-self.max_error_length:]
                         )
                         self._add_message_with_tokens(msg)
                     result = None  # if result in history, we dont want to add it again

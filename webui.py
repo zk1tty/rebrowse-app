@@ -29,22 +29,24 @@ from src.utils import utils
 
 
 async def run_browser_agent(
-    agent_type,
-    llm_provider,
-    llm_model_name,
-    llm_temperature,
-    llm_base_url,
-    llm_api_key,
-    use_own_browser,
-    headless,
-    disable_security,
-    window_w,
-    window_h,
-    save_recording_path,
-    task,
-    add_infos,
-    max_steps,
-    use_vision,
+        agent_type,
+        llm_provider,
+        llm_model_name,
+        llm_temperature,
+        llm_base_url,
+        llm_api_key,
+        use_own_browser,
+        headless,
+        disable_security,
+        window_w,
+        window_h,
+        save_recording_path,
+        task,
+        add_infos,
+        max_steps,
+        use_vision,
+        max_actions_per_step,
+        tool_call_in_content
 ):
     # Ensure the recording directory exists
     os.makedirs(save_recording_path, exist_ok=True)
@@ -74,6 +76,8 @@ async def run_browser_agent(
             task=task,
             max_steps=max_steps,
             use_vision=use_vision,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
         )
     elif agent_type == "custom":
         final_result, errors, model_actions, model_thoughts = await run_custom_agent(
@@ -88,6 +92,8 @@ async def run_browser_agent(
             add_infos=add_infos,
             max_steps=max_steps,
             use_vision=use_vision,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
@@ -107,15 +113,18 @@ async def run_browser_agent(
 
 
 async def run_org_agent(
-    llm,
-    headless,
-    disable_security,
-    window_w,
-    window_h,
-    save_recording_path,
-    task,
-    max_steps,
-    use_vision,
+        llm,
+        headless,
+        disable_security,
+        window_w,
+        window_h,
+        save_recording_path,
+        task,
+        max_steps,
+        use_vision,
+        max_actions_per_step,
+        tool_call_in_content
+
 ):
     browser = Browser(
         config=BrowserConfig(
@@ -125,20 +134,22 @@ async def run_org_agent(
         )
     )
     async with await browser.new_context(
-        config=BrowserContextConfig(
-            trace_path="./tmp/traces",
-            save_recording_path=save_recording_path if save_recording_path else None,
-            no_viewport=False,
-            browser_window_size=BrowserContextWindowSize(
-                width=window_w, height=window_h
-            ),
-        )
+            config=BrowserContextConfig(
+                trace_path="./tmp/traces",
+                save_recording_path=save_recording_path if save_recording_path else None,
+                no_viewport=False,
+                browser_window_size=BrowserContextWindowSize(
+                    width=window_w, height=window_h
+                ),
+            )
     ) as browser_context:
         agent = Agent(
             task=task,
             llm=llm,
             use_vision=use_vision,
             browser_context=browser_context,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
         )
         history = await agent.run(max_steps=max_steps)
 
@@ -151,17 +162,19 @@ async def run_org_agent(
 
 
 async def run_custom_agent(
-    llm,
-    use_own_browser,
-    headless,
-    disable_security,
-    window_w,
-    window_h,
-    save_recording_path,
-    task,
-    add_infos,
-    max_steps,
-    use_vision,
+        llm,
+        use_own_browser,
+        headless,
+        disable_security,
+        window_w,
+        window_h,
+        save_recording_path,
+        task,
+        add_infos,
+        max_steps,
+        use_vision,
+        max_actions_per_step,
+        tool_call_in_content
 ):
     controller = CustomController()
     playwright = None
@@ -197,17 +210,17 @@ async def run_custom_agent(
             )
         )
         async with await browser.new_context(
-            config=BrowserContextConfig(
-                trace_path="./tmp/result_processing",
-                save_recording_path=save_recording_path
-                if save_recording_path
-                else None,
-                no_viewport=False,
-                browser_window_size=BrowserContextWindowSize(
-                    width=window_w, height=window_h
+                config=BrowserContextConfig(
+                    trace_path="./tmp/result_processing",
+                    save_recording_path=save_recording_path
+                    if save_recording_path
+                    else None,
+                    no_viewport=False,
+                    browser_window_size=BrowserContextWindowSize(
+                        width=window_w, height=window_h
+                    ),
                 ),
-            ),
-            context=browser_context_,
+                context=browser_context_,
         ) as browser_context:
             agent = CustomAgent(
                 task=task,
@@ -217,6 +230,8 @@ async def run_custom_agent(
                 browser_context=browser_context,
                 controller=controller,
                 system_prompt_class=CustomSystemPrompt,
+                max_actions_per_step=max_actions_per_step,
+                tool_call_in_content=tool_call_in_content
             )
             history = await agent.run(max_steps=max_steps)
 
@@ -290,7 +305,7 @@ def create_ui(theme_name="Ocean"):
     """
 
     with gr.Blocks(
-        title="Browser Use WebUI", theme=theme_map[theme_name], css=css, js=js
+            title="Browser Use WebUI", theme=theme_map[theme_name], css=css, js=js
     ) as demo:
         with gr.Row():
             gr.Markdown(
@@ -318,10 +333,23 @@ def create_ui(theme_name="Ocean"):
                         label="Max Run Steps",
                         info="Maximum number of steps the agent will take",
                     )
+                    max_actions_per_step = gr.Slider(
+                        minimum=1,
+                        maximum=20,
+                        value=10,
+                        step=1,
+                        label="Max Actions per Step",
+                        info="Maximum number of actions the agent will take per step",
+                    )
                     use_vision = gr.Checkbox(
                         label="Use Vision",
                         value=True,
                         info="Enable visual processing capabilities",
+                    )
+                    tool_call_in_content = gr.Checkbox(
+                        label="Use Tool Calls in Content",
+                        value=True,
+                        info="Enable Tool Calls in content",
                     )
 
             with gr.TabItem("🔧 LLM Configuration", id=2):
@@ -461,6 +489,8 @@ def create_ui(theme_name="Ocean"):
                 add_infos,
                 max_steps,
                 use_vision,
+                max_actions_per_step,
+                tool_call_in_content
             ],
             outputs=[
                 final_result_output,

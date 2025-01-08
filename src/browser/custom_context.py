@@ -23,11 +23,12 @@ class CustomBrowserContext(BrowserContext):
         config: BrowserContextConfig = BrowserContextConfig(),
         context: BrowserContext = None,
     ):
-        super(CustomBrowserContext, self).__init__(browser, config)
+        super(CustomBrowserContext, self).__init__(browser=browser, config=config)
         self.context = context
 
     async def _create_context(self, browser: PlaywrightBrowser):
         """Creates a new browser context with anti-detection measures and loads cookies if available."""
+        # If we have a context, return it directly
         if self.context:
             return self.context
         if self.browser.config.chrome_instance_path and len(browser.contexts) > 0:
@@ -46,7 +47,7 @@ class CustomBrowserContext(BrowserContext):
                 bypass_csp=self.config.disable_security,
                 ignore_https_errors=self.config.disable_security,
                 record_video_dir=self.config.save_recording_path,
-                record_video_size=self.config.browser_window_size,  # set record video size
+                record_video_size=self.config.browser_window_size,  # set record video size, same as windows size
             )
 
         if self.config.trace_path:
