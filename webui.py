@@ -49,6 +49,7 @@ async def run_browser_agent(
         window_w,
         window_h,
         save_recording_path,
+        enable_recording,
         task,
         add_infos,
         max_steps,
@@ -56,14 +57,21 @@ async def run_browser_agent(
         max_actions_per_step,
         tool_call_in_content
 ):
-    # Ensure the recording directory exists
-    os.makedirs(save_recording_path, exist_ok=True)
+    # Disable recording if the checkbox is unchecked
+    if not enable_recording:
+        save_recording_path = None
+
+    # Ensure the recording directory exists if recording is enabled
+    if save_recording_path:
+        os.makedirs(save_recording_path, exist_ok=True)
 
     # Get the list of existing videos before the agent runs
-    existing_videos = set(
-        glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
-        + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
-    )
+    existing_videos = set()
+    if save_recording_path:
+        existing_videos = set(
+            glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
+            + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
+        )
 
     # Run the agent
     llm = utils.get_llm_model(
@@ -106,16 +114,15 @@ async def run_browser_agent(
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
 
-    # Get the list of videos after the agent runs
-    new_videos = set(
-        glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
-        + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
-    )
-
-    # Find the newly created video
+    # Get the list of videos after the agent runs (if recording is enabled)
     latest_video = None
-    if new_videos - existing_videos:
-        latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
+    if save_recording_path:
+        new_videos = set(
+            glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
+            + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
+        )
+        if new_videos - existing_videos:
+            latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
 
     return final_result, errors, model_actions, model_thoughts, latest_video
 
@@ -527,20 +534,24 @@ def create_ui(theme_name="Ocean"):
             lambda provider, api_key, base_url: update_model_dropdown(provider, api_key, base_url),
             inputs=[llm_provider, llm_api_key, llm_base_url],
             outputs=llm_model_name
-        )
-        
+        )  
+
         # Add this after defining the components
         enable_recording.change(
             lambda enabled: gr.update(interactive=enabled),
             inputs=enable_recording,
             outputs=save_recording_path
         )
-
+          
         # Run button click handler
         run_button.click(
             fn=run_browser_agent,
-            inputs=[agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key, use_own_browser, headless, disable_security, window_w, window_h, save_recording_path, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content],
-            outputs=[final_result_output, errors_output, model_actions_output, model_thoughts_output, recording_display,],
+            inputs=[
+                agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                use_own_browser, headless, disable_security, window_w, window_h, save_recording_path,
+                enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
+            ],
+            outputs=[final_result_output, errors_output, model_actions_output, model_thoughts_output, recording_display],
         )
 
     return demo
