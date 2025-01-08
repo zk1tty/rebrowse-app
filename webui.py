@@ -419,6 +419,11 @@ def create_ui(theme_name="Ocean"):
                             value=True,
                             info="Disable browser security features",
                         )
+                        enable_recording = gr.Checkbox(
+                            label="Enable Recording",
+                            value=True,
+                            info="Enable saving browser recordings",
+                        )
 
                     with gr.Row():
                         window_w = gr.Number(
@@ -437,6 +442,7 @@ def create_ui(theme_name="Ocean"):
                         placeholder="e.g. ./tmp/record_videos",
                         value="./tmp/record_videos",
                         info="Path to save browser recordings",
+                        interactive=True,  # Allow editing only if recording is enabled
                     )
 
             with gr.TabItem("🤖 Run Agent", id=4):
@@ -521,7 +527,14 @@ def create_ui(theme_name="Ocean"):
             lambda provider, api_key, base_url: update_model_dropdown(provider, api_key, base_url),
             inputs=[llm_provider, llm_api_key, llm_base_url],
             outputs=llm_model_name
-        )  
+        )
+        
+        # Add this after defining the components
+        enable_recording.change(
+            lambda enabled: gr.update(interactive=enabled),
+            inputs=enable_recording,
+            outputs=save_recording_path
+        )
 
         # Run button click handler
         run_button.click(
