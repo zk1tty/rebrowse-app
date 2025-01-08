@@ -34,7 +34,7 @@ from src.browser.custom_browser import CustomBrowser
 from src.browser.custom_context import BrowserContextConfig
 from src.controller.custom_controller import CustomController
 from src.utils import utils
-from src.utils.utils import update_model_dropdown, fetch_available_models
+from src.utils.utils import update_model_dropdown
 
 async def run_browser_agent(
         agent_type,
@@ -401,15 +401,6 @@ def create_ui(theme_name="Ocean"):
                             info="Your API key (leave blank to use .env)"
                         )
                     
-                    # Add a button to fetch available models
-                    fetch_models_button = gr.Button("🔄 Fetch Available Models", variant="secondary")
-                    fetch_models_output = gr.Textbox(
-                        label="Available Models",
-                        lines=3,
-                        interactive=False,
-                        info="List of available models for the selected provider"
-                    )
-
             with gr.TabItem("🌐 Browser Settings", id=3):
                 with gr.Group():
                     with gr.Row():
