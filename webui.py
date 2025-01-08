@@ -370,7 +370,7 @@ def create_ui(theme_name="Ocean"):
                     llm_provider = gr.Dropdown(
                         ["anthropic", "openai", "deepseek", "gemini", "ollama", "azure_openai"],
                         label="LLM Provider",
-                        value="openai",
+                        value="",
                         info="Select your preferred language model provider"
                     )
                     llm_model_name = gr.Dropdown(
@@ -495,8 +495,20 @@ def create_ui(theme_name="Ocean"):
                 def list_recordings(save_recording_path):
                     if not os.path.exists(save_recording_path):
                         return []
+                    
+                    # Get all video files
                     recordings = glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4")) + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
-                    return recordings
+                    
+                    # Sort recordings by creation time (oldest first)
+                    recordings.sort(key=os.path.getctime)
+                    
+                    # Add numbering to the recordings
+                    numbered_recordings = []
+                    for idx, recording in enumerate(recordings, start=1):
+                        filename = os.path.basename(recording)
+                        numbered_recordings.append((recording, f"{idx}. {filename}"))
+                    
+                    return numbered_recordings
 
                 recordings_gallery = gr.Gallery(
                     label="Recordings",
