@@ -4,6 +4,9 @@
 # @Email   : wenshaoguo1026@gmail.com
 # @Project : browser-use-webui
 # @FileName: webui.py
+
+import pdb
+
 from dotenv import load_dotenv
 load_dotenv()
 import argparse
@@ -21,8 +24,11 @@ from src.browser.custom_browser import CustomBrowser
 from src.controller.custom_controller import CustomController
 from src.agent.custom_agent import CustomAgent
 from src.agent.custom_prompts import CustomSystemPrompt
-
+from src.browser.custom_browser import CustomBrowser
+from src.browser.custom_context import BrowserContextConfig
+from src.controller.custom_controller import CustomController
 from src.utils import utils
+from src.utils.utils import update_model_dropdown
 from src.utils.file_utils import get_latest_files
 from src.utils.stream_utils import stream_browser_view, capture_screenshot
 
@@ -44,18 +50,24 @@ async def run_browser_agent(
         add_infos,
         max_steps,
         use_vision,
+        max_actions_per_step,
+        tool_call_in_content,
         browser_context=None  # Added optional argument
 ):
-    """
-    Runs the browser agent based on user configurations.
-    """
+    # Ensure the recording directory exists
+    os.makedirs(save_recording_path, exist_ok=True)
 
+    # Get the list of existing videos before the agent runs
+    existing_videos = set(glob.glob(os.path.join(save_recording_path, '*.[mM][pP]4')) + 
+                          glob.glob(os.path.join(save_recording_path, '*.[wW][eE][bB][mM]')))
+
+    # Run the agent
     llm = utils.get_llm_model(
         provider=llm_provider,
         model_name=llm_model_name,
         temperature=llm_temperature,
         base_url=llm_base_url,
-        api_key=llm_api_key
+        api_key=llm_api_key,
     )
     if agent_type == "org":
         return await run_org_agent(
@@ -68,7 +80,9 @@ async def run_browser_agent(
             task=task,
             max_steps=max_steps,
             use_vision=use_vision,
-            browser_context=browser_context  # pass context
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
+            browser_context=browser_context,  # pass context,
         )
     elif agent_type == "custom":
         return await run_custom_agent(
@@ -83,10 +97,13 @@ async def run_browser_agent(
             add_infos=add_infos,
             max_steps=max_steps,
             use_vision=use_vision,
-            browser_context=browser_context  # pass context
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
+            browser_context=browser_context,  # pass context,
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
+
 
 
 async def run_org_agent(
@@ -99,7 +116,9 @@ async def run_org_agent(
         task,
         max_steps,
         use_vision,
-        browser_context=None  # receive context
+        max_actions_per_step,
+        tool_call_in_content,
+        browser_context=None,  # receive context
 ):
     browser = None
     if browser_context is None:
@@ -142,7 +161,9 @@ async def run_org_agent(
             task=task,
             llm=llm,
             use_vision=use_vision,
-            browser_context=browser_context
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
+            browser_context=browser_context,
         )
         history = await agent.run(max_steps=max_steps)
         final_result = history.final_result()
@@ -152,7 +173,6 @@ async def run_org_agent(
         recorded_files = get_latest_files(save_recording_path)
         trace_file = get_latest_files(save_recording_path + "/../traces")
         return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
-
 
 async def run_custom_agent(
         llm,
@@ -166,7 +186,9 @@ async def run_custom_agent(
         add_infos,
         max_steps,
         use_vision,
-        browser_context=None  # receive context
+        max_actions_per_step,
+        tool_call_in_content,
+        browser_context=None,  # receive context
 ):
     controller = CustomController()
     playwright = None
@@ -176,20 +198,29 @@ async def run_custom_agent(
             playwright = await async_playwright().start()
             chrome_exe = os.getenv("CHROME_PATH", "")
             chrome_use_data = os.getenv("CHROME_USER_DATA", "")
+
+            if chrome_exe == "":
+                chrome_exe = None
+            elif not os.path.exists(chrome_exe):
+                raise ValueError(f"Chrome executable not found at {chrome_exe}")
+            
+            if chrome_use_data == "":
+                chrome_use_data = None
+
             browser_context_ = await playwright.chromium.launch_persistent_context(
                 user_data_dir=chrome_use_data,
                 executable_path=chrome_exe,
                 no_viewport=False,
                 headless=headless,  # 保持浏览器窗口可见
                 user_agent=(
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                    '(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
                 ),
                 java_script_enabled=True,
                 bypass_csp=disable_security,
                 ignore_https_errors=disable_security,
                 record_video_dir=save_recording_path if save_recording_path else None,
-                record_video_size={'width': window_w, 'height': window_h}
+                record_video_size={"width": window_w, "height": window_h},
             )
         else:
             browser_context_ = None
@@ -250,6 +281,7 @@ async def run_custom_agent(
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         final_result = ""
         errors = str(e) + "\n" + traceback.format_exc()
@@ -409,6 +441,7 @@ theme_map = {
     "Origin": Origin(),
     "Citrus": Citrus(),
     "Ocean": Ocean(),
+    "Base": Base()
 }
 
 # Create the Gradio UI
@@ -439,57 +472,124 @@ def create_ui(theme_name="Ocean"):
                 ### Control your browser with AI assistance
                 """,
                 elem_classes=["header-text"],
+                elem_classes=["header-text"],
             )
 
-        # Tabs
-        with gr.Tabs():
-            # Agent Settings
-            with gr.Tab("⚙️ Agent Settings"):
-                agent_type = gr.Radio(
-                    ["org", "custom"],
-                    label="Agent Type",
-                    value="custom",
-                )
-                max_steps = gr.Slider(1, 200, value=100, step=1, label="Max Run Steps")
-                max_actions_per_step = gr.Slider(
-                    1, 20, value=10, step=1, label="Max Actions per Step"
-                )
-                use_vision = gr.Checkbox(value=True, label="Use Vision")
-                tool_call_in_content = gr.Checkbox(
-                    value=True, label="Enable Tool Calls in Content"
-                )
+        with gr.Tabs() as tabs:
+            with gr.TabItem("⚙️ Agent Settings", id=1):
+                with gr.Group():
+                    agent_type = gr.Radio(
+                        ["org", "custom"],
+                        label="Agent Type",
+                        value="custom",
+                        info="Select the type of agent to use",
+                    )
+                    max_steps = gr.Slider(
+                        minimum=1,
+                        maximum=200,
+                        value=100,
+                        step=1,
+                        label="Max Run Steps",
+                        info="Maximum number of steps the agent will take",
+                    )
+                    max_actions_per_step = gr.Slider(
+                        minimum=1,
+                        maximum=20,
+                        value=10,
+                        step=1,
+                        label="Max Actions per Step",
+                        info="Maximum number of actions the agent will take per step",
+                    )
+                    use_vision = gr.Checkbox(
+                        label="Use Vision",
+                        value=True,
+                        info="Enable visual processing capabilities",
+                    )
+                    tool_call_in_content = gr.Checkbox(
+                        label="Use Tool Calls in Content",
+                        value=True,
+                        info="Enable Tool Calls in content",
+                    )
 
-            # LLM Configuration
-            with gr.Tab("🔧 LLM Configuration"):
-                llm_provider = gr.Dropdown(
-                    ["anthropic", "openai", "gemini", "azure_openai", "deepseek"],
-                    label="LLM Provider",
-                    value="gemini",
-                )
-                llm_model_name = gr.Textbox(label="Model Name", value="gemini-2.0-flash-exp")
-                llm_temperature = gr.Slider(0.0, 2.0, value=1.0, step=0.1, label="Temperature")
-                llm_base_url = gr.Textbox(label="Base URL")
-                llm_api_key = gr.Textbox(label="API Key", type="password")
+            with gr.TabItem("🔧 LLM Configuration", id=2):
+                with gr.Group():
+                    llm_provider = gr.Dropdown(
+                        ["anthropic", "openai", "deepseek", "gemini", "ollama", "azure_openai"],
+                        label="LLM Provider",
+                        value="",
+                        info="Select your preferred language model provider"
+                    )
+                    llm_model_name = gr.Dropdown(
+                        label="Model Name",
+                        value="",
+                        interactive=True,
+                        allow_custom_value=True,  # Allow users to input custom model names
+                        info="Select a model from the dropdown or type a custom model name"
+                    )
+                    llm_temperature = gr.Slider(
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=1.0,
+                        step=0.1,
+                        label="Temperature",
+                        info="Controls randomness in model outputs"
+                    )
+                    with gr.Row():
+                        llm_base_url = gr.Textbox(
+                            label="Base URL",
+                            value=os.getenv(f"{llm_provider.value.upper()}_BASE_URL ", ""),  # Default to .env value
+                            info="API endpoint URL (if required)"
+                        )
+                        llm_api_key = gr.Textbox(
+                            label="API Key",
+                            type="password",
+                            value=os.getenv(f"{llm_provider.value.upper()}_API_KEY", ""),  # Default to .env value
+                            info="Your API key (leave blank to use .env)"
+                        )
+                    
+            with gr.TabItem("🌐 Browser Settings", id=3):
+                with gr.Group():
+                    with gr.Row():
+                        use_own_browser = gr.Checkbox(
+                            label="Use Own Browser",
+                            value=False,
+                            info="Use your existing browser instance",
+                        )
+                        headless = gr.Checkbox(
+                            label="Headless Mode",
+                            value=False,
+                            info="Run browser without GUI",
+                        )
+                        disable_security = gr.Checkbox(
+                            label="Disable Security",
+                            value=True,
+                            info="Disable browser security features",
+                        )
 
-            # Browser Settings
-            with gr.Tab("🌐 Browser Settings"):
-                use_own_browser = gr.Checkbox(value=False, label="Use Own Browser")
-                headless = gr.Checkbox(value=False, label="Headless Mode")
-                disable_security = gr.Checkbox(value=True, label="Disable Security")
-                window_w = gr.Number(value=1280, label="Window Width")
-                window_h = gr.Number(value=1100, label="Window Height")
-                save_recording_path = gr.Textbox(
-                    value="./tmp/record_videos",
-                    label="Recording Path",
-                    placeholder="e.g. ./tmp/record_videos",
-                )
+                    with gr.Row():
+                        window_w = gr.Number(
+                            label="Window Width",
+                            value=1280,
+                            info="Browser window width",
+                        )
+                        window_h = gr.Number(
+                            label="Window Height",
+                            value=1100,
+                            info="Browser window height",
+                        )
 
-            # Run Agent
-            with gr.Tab("🤖 Run Agent"):
+                    save_recording_path = gr.Textbox(
+                        label="Recording Path",
+                        placeholder="e.g. ./tmp/record_videos",
+                        value="./tmp/record_videos",
+                        info="Path to save browser recordings",
+                    )
+
+            with gr.TabItem("🤖 Run Agent", id=4):
                 task = gr.Textbox(
                     lines=4,
                     value="go to google.com and type 'OpenAI' click search and give me the first url",
-                    label="Task Description",
+                    info="Describe what you want the agent to do",
                 )
                 add_infos = gr.Textbox(lines=3, label="Additional Information")
 
@@ -536,7 +636,7 @@ def create_ui(theme_name="Ocean"):
                 model_actions_output,
                 model_thoughts_output,
                 recording_file,
-                trace_file,
+                trace_file, max_actions_per_step, tool_call_in_content
             ],
             queue=True,
         )

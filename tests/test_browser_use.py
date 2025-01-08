@@ -80,11 +80,12 @@ async def test_browser_use_org():
 
 async def test_browser_use_custom():
     from browser_use.browser.context import BrowserContextWindowSize
+    from browser_use.browser.browser import BrowserConfig
     from playwright.async_api import async_playwright
 
     from src.agent.custom_agent import CustomAgent
     from src.agent.custom_prompts import CustomSystemPrompt
-    from src.browser.custom_browser import BrowserConfig, CustomBrowser
+    from src.browser.custom_browser import CustomBrowser
     from src.browser.custom_context import BrowserContextConfig
     from src.controller.custom_controller import CustomController
 
@@ -95,15 +96,15 @@ async def test_browser_use_custom():
     #     model_name="gpt-4o",
     #     temperature=0.8,
     #     base_url=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
-    #     api_key=os.getenv("AZURE_OPENAI_API_KEY", "")
+    #     api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
     # )
 
-    # llm = utils.get_llm_model(
-    #     provider="gemini",
-    #     model_name="gemini-2.0-flash-exp",
-    #     temperature=1.0,
-    #     api_key=os.getenv("GOOGLE_API_KEY", "")
-    # )
+    llm = utils.get_llm_model(
+        provider="gemini",
+        model_name="gemini-2.0-flash-exp",
+        temperature=1.0,
+        api_key=os.getenv("GOOGLE_API_KEY", "")
+    )
 
     # llm = utils.get_llm_model(
     #     provider="deepseek",
@@ -111,14 +112,16 @@ async def test_browser_use_custom():
     #     temperature=0.8
     # )
 
-    llm = utils.get_llm_model(
-        provider="ollama", model_name="qwen2.5:7b", temperature=0.8
-    )
+    # llm = utils.get_llm_model(
+    #     provider="ollama", model_name="qwen2.5:7b", temperature=0.8
+    # )
 
     controller = CustomController()
     use_own_browser = False
     disable_security = True
-    use_vision = False
+    use_vision = True  # Set to False when using DeepSeek
+    tool_call_in_content = True  # Set to True when using Ollama
+    max_actions_per_step = 1
     playwright = None
     browser_context_ = None
     try:
@@ -171,6 +174,8 @@ async def test_browser_use_custom():
                 controller=controller,
                 system_prompt_class=CustomSystemPrompt,
                 use_vision=use_vision,
+                tool_call_in_content=tool_call_in_content,
+                max_actions_per_step=max_actions_per_step
             )
             history: AgentHistoryList = await agent.run(max_steps=10)
 

@@ -5,8 +5,6 @@
 # @Project : browser-use-webui
 # @FileName: custom_context.py
 
-import asyncio
-import base64
 import json
 import logging
 import os
@@ -21,7 +19,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 class CustomBrowserContext(BrowserContext):
-
     def __init__(
             self,
             browser: 'CustomBrowser',  # Forward declaration for CustomBrowser
