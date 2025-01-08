@@ -13,10 +13,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 import gradio as gr
-from openai import OpenAI, AzureOpenAI
-from google.generativeai import configure, list_models
-from langchain_anthropic import AnthropicLLM
-from langchain_ollama.llms import OllamaLLM
 
 def get_llm_model(provider: str, **kwargs):
     """
@@ -137,52 +133,6 @@ def update_model_dropdown(llm_provider, api_key=None, base_url=None):
         return gr.Dropdown(choices=model_names[llm_provider], value=model_names[llm_provider][0], interactive=True)
     else:
         return gr.Dropdown(choices=[], value="", interactive=True, allow_custom_value=True)
-    
-def fetch_available_models(llm_provider: str, api_key: str = None, base_url: str = None) -> list[str]:
-    """
-    Fetch available models for the selected LLM provider using API keys from .env by default.
-    """
-    try:
-        # Use API keys from .env if not provided
-        if not api_key:
-            api_key = os.getenv(f"{llm_provider.upper()}_API_KEY", "")
-        if not base_url:
-            base_url = os.getenv(f"{llm_provider.upper()}_BASE_URL", "")
-
-        if llm_provider == "anthropic":
-            client = AnthropicLLM(api_key=api_key)
-            return ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229"]  # Example models
-
-        elif llm_provider == "openai":
-            client = OpenAI(api_key=api_key, base_url=base_url)
-            models = client.models.list()
-            return [model.id for model in models.data]
-
-        elif llm_provider == "deepseek":
-            return ["deepseek-chat"]  # Example model
-
-        elif llm_provider == "gemini":
-            configure(api_key=api_key)
-            models = list_models()
-            return [model.name for model in models]
-
-        elif llm_provider == "ollama":
-            client = OllamaLLM(model="default_model_name")  # Replace with the actual model name
-            models = client.models.list()
-            return [model.name for model in models]
-
-        elif llm_provider == "azure_openai":
-            client = AzureOpenAI(api_key=api_key, base_url=base_url)
-            models = client.models.list()
-            return [model.id for model in models.data]
-
-        else:
-            print(f"Unsupported LLM provider: {llm_provider}")
-            return []
-
-    except Exception as e:
-        print(f"Error fetching models from {llm_provider}: {e}")
-        return []
         
 def encode_image(img_path):
     if not img_path:
