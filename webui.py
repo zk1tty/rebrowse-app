@@ -275,6 +275,7 @@ async def run_custom_agent(
                 model_thoughts = history.model_thoughts()
                 
                 recorded_files = get_latest_files(save_recording_path)
+                trace_file = get_latest_files(save_recording_path + "/../traces")
 
     except Exception as e:
         import traceback
@@ -285,6 +286,7 @@ async def run_custom_agent(
         model_actions = ""
         model_thoughts = ""
         recorded_files = {}
+        trace_file = {}
     finally:
         # 显式关闭持久化上下文
         if browser_context_:
@@ -295,7 +297,7 @@ async def run_custom_agent(
             await playwright.stop()
         if browser:
             await browser.close()
-    return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), recorded_files.get('.zip')
+    return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
 
 async def run_with_stream(
     agent_type,
@@ -628,6 +630,8 @@ def create_ui(theme_name="Ocean"):
                 add_infos,
                 max_steps,
                 use_vision,
+                max_actions_per_step,
+                tool_call_in_content,
             ],
             outputs=[
                 browser_view,
