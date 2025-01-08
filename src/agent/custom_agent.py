@@ -85,7 +85,6 @@ class CustomAgent(Agent):
             include_attributes=include_attributes,
             max_error_length=max_error_length,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
         )
         self.add_infos = add_infos
         self.message_manager = CustomMassageManager(
@@ -156,7 +155,7 @@ class CustomAgent(Agent):
             parsed: AgentOutput = response['parsed']
             # cut the number of actions to max_actions_per_step
             parsed.action = parsed.action[: self.max_actions_per_step]
-            self._log_response(parsed)
+            self._log_response(parsed)  # type: ignore
             self.n_steps += 1
 
             return parsed
@@ -165,7 +164,7 @@ class CustomAgent(Agent):
             # and Manually parse the response. Temporarily solution for DeepSeek
             ret = self.llm.invoke(input_messages)
             if isinstance(ret.content, list):
-                parsed_json = json.loads(ret.content[0].replace("```json", "").replace("```", ""))
+                parsed_json = json.loads(str(ret.content[0]).replace("```json", "").replace("```", ""))
             else:
                 parsed_json = json.loads(ret.content.replace("```json", "").replace("```", ""))
             parsed: AgentOutput = self.AgentOutput(**parsed_json)
@@ -193,7 +192,7 @@ class CustomAgent(Agent):
             input_messages = self.message_manager.get_messages()
             model_output = await self.get_next_action(input_messages)
             if step_info is not None:
-                self.update_step_info(model_output, step_info)
+                self.update_step_info(model_output=CustomAgentOutput(**model_output.dict()), step_info=step_info)
                 logger.info(f'🧠 All Memory: {step_info.memory}')
             self._save_conversation(input_messages, model_output)
             self.message_manager._remove_last_state_message()  # we dont want the whole state in the chat history

@@ -6,6 +6,7 @@
 # @FileName: webui.py
 
 import pdb
+import glob
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -54,13 +55,6 @@ async def run_browser_agent(
         tool_call_in_content,
         browser_context=None  # Added optional argument
 ):
-    # Ensure the recording directory exists
-    os.makedirs(save_recording_path, exist_ok=True)
-
-    # Get the list of existing videos before the agent runs
-    existing_videos = set(glob.glob(os.path.join(save_recording_path, '*.[mM][pP]4')) + 
-                          glob.glob(os.path.join(save_recording_path, '*.[wW][eE][bB][mM]')))
-
     # Run the agent
     llm = utils.get_llm_model(
         provider=llm_provider,
@@ -162,7 +156,6 @@ async def run_org_agent(
             llm=llm,
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
             browser_context=browser_context,
         )
         history = await agent.run(max_steps=max_steps)
@@ -208,7 +201,7 @@ async def run_custom_agent(
                 chrome_use_data = None
 
             browser_context_ = await playwright.chromium.launch_persistent_context(
-                user_data_dir=chrome_use_data,
+                user_data_dir=chrome_use_data if chrome_use_data else "",
                 executable_path=chrome_exe,
                 no_viewport=False,
                 headless=headless,  # 保持浏览器窗口可见
@@ -234,7 +227,9 @@ async def run_custom_agent(
                 llm=llm,
                 browser_context=browser_context,
                 controller=controller,
-                system_prompt_class=CustomSystemPrompt
+                system_prompt_class=CustomSystemPrompt,
+                max_actions_per_step=max_actions_per_step,
+                tool_call_in_content=tool_call_in_content
             )
             history = await agent.run(max_steps=max_steps)
             final_result = history.final_result()
@@ -268,7 +263,9 @@ async def run_custom_agent(
                     llm=llm,
                     browser_context=browser_context_in,
                     controller=controller,
-                    system_prompt_class=CustomSystemPrompt
+                    system_prompt_class=CustomSystemPrompt,
+                    max_actions_per_step=max_actions_per_step,
+                    tool_call_in_content=tool_call_in_content
                 )
                 history = await agent.run(max_steps=max_steps)
 
@@ -317,6 +314,8 @@ async def run_with_stream(
     add_infos,
     max_steps,
     use_vision,
+    max_actions_per_step,
+    tool_call_in_content,
 ):
     """Wrapper to run the agent and handle streaming."""
     browser = None
@@ -360,6 +359,8 @@ async def run_with_stream(
                     add_infos,
                     max_steps,
                     use_vision,
+                    max_actions_per_step,
+                    tool_call_in_content,
                     browser_context=browser_context  # Explicit keyword argument
                 )
             )
@@ -430,7 +431,7 @@ async def run_with_stream(
         if browser:
             await browser.close()
 
-from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft
+from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 
 # Define the theme map globally
 theme_map = {
@@ -471,7 +472,6 @@ def create_ui(theme_name="Ocean"):
                 # 🌐 Browser Use WebUI
                 ### Control your browser with AI assistance
                 """,
-                elem_classes=["header-text"],
                 elem_classes=["header-text"],
             )
 
@@ -636,7 +636,7 @@ def create_ui(theme_name="Ocean"):
                 model_actions_output,
                 model_thoughts_output,
                 recording_file,
-                trace_file, max_actions_per_step, tool_call_in_content
+                trace_file
             ],
             queue=True,
         )

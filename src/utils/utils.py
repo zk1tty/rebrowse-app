@@ -23,7 +23,6 @@ def get_llm_model(provider: str, **kwargs):
     :return:
     """
     if provider == "anthropic":
-    if provider == "anthropic":
         if not kwargs.get("base_url", ""):
             base_url = "https://api.anthropic.com"
         else:
@@ -36,14 +35,12 @@ def get_llm_model(provider: str, **kwargs):
 
         return ChatAnthropic(
             model_name=kwargs.get("model_name", "claude-3-5-sonnet-20240620"),
-            model_name=kwargs.get("model_name", "claude-3-5-sonnet-20240620"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=SecretStr(api_key or ""),
             timeout=kwargs.get("timeout", 60),
             stop=kwargs.get("stop", None),
         )
-    elif provider == "openai":
     elif provider == "openai":
         if not kwargs.get("base_url", ""):
             base_url = os.getenv("OPENAI_ENDPOINT", "https://api.openai.com/v1")
@@ -57,12 +54,10 @@ def get_llm_model(provider: str, **kwargs):
 
         return ChatOpenAI(
             model=kwargs.get("model_name", "gpt-4o"),
-            model=kwargs.get("model_name", "gpt-4o"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=SecretStr(api_key or ""),
         )
-    elif provider == "deepseek":
     elif provider == "deepseek":
         if not kwargs.get("base_url", ""):
             base_url = os.getenv("DEEPSEEK_ENDPOINT", "")
@@ -76,12 +71,10 @@ def get_llm_model(provider: str, **kwargs):
 
         return ChatOpenAI(
             model=kwargs.get("model_name", "deepseek-chat"),
-            model=kwargs.get("model_name", "deepseek-chat"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=SecretStr(api_key or ""),
         )
-    elif provider == "gemini":
     elif provider == "gemini":
         if not kwargs.get("api_key", ""):
             api_key = os.getenv("GOOGLE_API_KEY", "")
@@ -89,14 +82,11 @@ def get_llm_model(provider: str, **kwargs):
             api_key = kwargs.get("api_key")
         return ChatGoogleGenerativeAI(
             model=kwargs.get("model_name", "gemini-2.0-flash-exp"),
-            model=kwargs.get("model_name", "gemini-2.0-flash-exp"),
             temperature=kwargs.get("temperature", 0.0),
             api_key=SecretStr(api_key or ""),
         )
     elif provider == "ollama":
-    elif provider == "ollama":
         return ChatOllama(
-            model=kwargs.get("model_name", "qwen2.5:7b"),
             model=kwargs.get("model_name", "qwen2.5:7b"),
             temperature=kwargs.get("temperature", 0.0),
             num_ctx=128000,
@@ -111,7 +101,6 @@ def get_llm_model(provider: str, **kwargs):
         else:
             api_key = kwargs.get("api_key")
         return AzureChatOpenAI(
-            model=kwargs.get("model_name", "gpt-4o"),
             model=kwargs.get("model_name", "gpt-4o"),
             temperature=kwargs.get("temperature", 0.0),
             api_version="2024-05-01-preview",

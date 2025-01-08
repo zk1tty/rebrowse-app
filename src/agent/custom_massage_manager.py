@@ -41,6 +41,7 @@ class CustomMassageManager(MessageManager):
             max_actions_per_step: int = 10,
             tool_call_in_content: bool = False,
     ):
+        self.tool_call_in_content = tool_call_in_content
         super().__init__(
             llm=llm,
             task=task,
@@ -52,13 +53,17 @@ class CustomMassageManager(MessageManager):
             include_attributes=include_attributes,
             max_error_length=max_error_length,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
         )
 
         # Custom: Move Task info to state_message
         self.history = MessageHistory()
         self._add_message_with_tokens(self.system_prompt)
-        tool_calls = [
+        tool_calls = self._create_tool_calls()
+        example_tool_call = self._create_example_tool_call(tool_calls)
+        self._add_message_with_tokens(example_tool_call)
+
+    def _create_tool_calls(self):
+        return [
             {
                 'name': 'AgentOutput',
                 'args': {
@@ -73,19 +78,19 @@ class CustomMassageManager(MessageManager):
                 'type': 'tool_call',
             }
         ]
+
+    def _create_example_tool_call(self, tool_calls):
         if self.tool_call_in_content:
             # openai throws error if tool_calls are not responded -> move to content
-            example_tool_call = AIMessage(
+            return AIMessage(
                 content=f'{tool_calls}',
                 tool_calls=[],
             )
         else:
-            example_tool_call = AIMessage(
+            return AIMessage(
                 content=f'',
                 tool_calls=tool_calls,
             )
-
-        self._add_message_with_tokens(example_tool_call)
 
     def add_state_message(
         self,
