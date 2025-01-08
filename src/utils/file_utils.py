@@ -5,7 +5,7 @@ from typing import Dict, Optional
 
 def get_latest_files(directory: str, file_types: list = ['.webm', '.zip']) -> Dict[str, Optional[str]]:
     """Get the latest recording and trace files"""
-    latest_files = {ext: None for ext in file_types}
+    latest_files: Dict[str, Optional[str]] = {ext: None for ext in file_types}
     
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)

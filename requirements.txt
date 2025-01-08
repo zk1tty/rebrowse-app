@@ -1,8 +1,7 @@
-browser-use
+browser-use==0.1.17
 langchain-google-genai
 pyperclip
 gradio
 python-dotenv
 argparse
 langchain-ollama
-

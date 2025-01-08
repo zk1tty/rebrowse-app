@@ -26,7 +26,7 @@ class CustomBrowserContext(BrowserContext):
             self,
             browser: 'CustomBrowser',  # Forward declaration for CustomBrowser
             config: BrowserContextConfig = BrowserContextConfig(),
-            context: PlaywrightContext = None
+            context: 'PlaywrightContext | None' = None
     ):
         super().__init__(browser=browser, config=config)  # Add proper inheritance
         self._impl_context = context  # Rename to avoid confusion
@@ -36,9 +36,11 @@ class CustomBrowserContext(BrowserContext):
     @property
     def impl_context(self) -> PlaywrightContext:
         """Returns the underlying Playwright context implementation"""
+        if self._impl_context is None:
+            raise RuntimeError("Browser context has not been initialized")
         return self._impl_context
 
-    async def _create_context(self, config: BrowserContextConfig = None):
+    async def _create_context(self, config: BrowserContextConfig | None = None):
         """Creates a new browser context"""
         if self._impl_context:
             return self._impl_context
@@ -69,9 +71,8 @@ class CustomBrowserContext(BrowserContext):
 
     async def new_page(self) -> Page:
         """Creates and returns a new page in this context"""
-        if not self._impl_context:
-            await self._create_context()
-        return await self._impl_context.new_page()
+        context = await self._create_context()
+        return await context.new_page()
 
     async def __aenter__(self):
         if not self._impl_context:

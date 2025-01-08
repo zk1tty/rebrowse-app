@@ -10,7 +10,6 @@ import argparse
 import gradio as gr
 import os
 import asyncio
-import glob
 from playwright.async_api import async_playwright
 from browser_use.browser.browser import Browser, BrowserConfig
 from browser_use.browser.context import (
@@ -47,14 +46,10 @@ async def run_browser_agent(
         use_vision,
         browser_context=None  # Added optional argument
 ):
-    # Ensure the recording directory exists
-    os.makedirs(save_recording_path, exist_ok=True)
+    """
+    Runs the browser agent based on user configurations.
+    """
 
-    # Get the list of existing videos before the agent runs
-    existing_videos = set(glob.glob(os.path.join(save_recording_path, '*.[mM][pP]4')) + 
-                          glob.glob(os.path.join(save_recording_path, '*.[wW][eE][bB][mM]')))
-
-    # Run the agent
     llm = utils.get_llm_model(
         provider=llm_provider,
         model_name=llm_model_name,
@@ -63,7 +58,7 @@ async def run_browser_agent(
         api_key=llm_api_key
     )
     if agent_type == "org":
-        final_result, errors, model_actions, model_thoughts = await run_org_agent(
+        return await run_org_agent(
             llm=llm,
             headless=headless,
             disable_security=disable_security,
@@ -76,7 +71,7 @@ async def run_browser_agent(
             browser_context=browser_context  # pass context
         )
     elif agent_type == "custom":
-        final_result, errors, model_actions, model_thoughts = await run_custom_agent(
+        return await run_custom_agent(
             llm=llm,
             use_own_browser=use_own_browser,
             headless=headless,
@@ -93,16 +88,6 @@ async def run_browser_agent(
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
 
-    # Get the list of videos after the agent runs
-    new_videos = set(glob.glob(os.path.join(save_recording_path, '*.[mM][pP]4')) + 
-                     glob.glob(os.path.join(save_recording_path, '*.[wW][eE][bB][mM]')))
-
-    # Find the newly created video
-    latest_video = None
-    if new_videos - existing_videos:
-        latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
-
-    return final_result, errors, model_actions, model_thoughts, latest_video
 
 async def run_org_agent(
         llm,
@@ -283,49 +268,105 @@ async def run_custom_agent(
             await browser.close()
     return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), recorded_files.get('.zip')
 
-
-async def run_with_stream(*args):
-    """Wrapper to run agent and handle streaming"""
+async def run_with_stream(
+    agent_type,
+    llm_provider,
+    llm_model_name,
+    llm_temperature,
+    llm_base_url,
+    llm_api_key,
+    use_own_browser,
+    headless,
+    disable_security,
+    window_w,
+    window_h,
+    save_recording_path,
+    task,
+    add_infos,
+    max_steps,
+    use_vision,
+):
+    """Wrapper to run the agent and handle streaming."""
     browser = None
     try:
-        browser = CustomBrowser(config=BrowserConfig(
-            headless=False,
-            disable_security=args[8],
-            extra_chromium_args=[f'--window-size={args[9]},{args[10]}'],
-        ))
+        # Initialize the browser
+        browser = CustomBrowser(
+            config=BrowserConfig(
+                headless=False,
+                disable_security=disable_security,
+                extra_chromium_args=[f"--window-size={window_w},{window_h}"],
+            )
+        )
 
+        # Create a new browser context
         async with await browser.new_context(
             config=BrowserContextConfig(
-                trace_path='./tmp/traces',
-                save_recording_path=args[11],
+                trace_path="./tmp/traces",
+                save_recording_path=save_recording_path,
                 no_viewport=False,
-                browser_window_size=BrowserContextWindowSize(width=args[9], height=args[10]),
+                browser_window_size=BrowserContextWindowSize(
+                    width=window_w, height=window_h
+                ),
             )
         ) as browser_context:
-            # No need to explicitly create page - context creation handles it
-            
-            # Run agent in background
-            agent_task = asyncio.create_task(run_browser_agent(*args, browser_context=browser_context))
-            
-            # Initialize values
+            # Run the browser agent in the background
+            agent_task = asyncio.create_task(
+                run_browser_agent(
+                    agent_type,
+                    llm_provider,
+                    llm_model_name,
+                    llm_temperature,
+                    llm_base_url,
+                    llm_api_key,
+                    use_own_browser,
+                    headless,
+                    disable_security,
+                    window_w,
+                    window_h,
+                    save_recording_path,
+                    task,
+                    add_infos,
+                    max_steps,
+                    use_vision,
+                    browser_context=browser_context  # Explicit keyword argument
+                )
+            )
+
+            # Initialize values for streaming
             html_content = "<div>Starting browser...</div>"
             final_result = errors = model_actions = model_thoughts = ""
             recording = trace = None
 
+            # Periodically update the stream while the agent task is running
             while not agent_task.done():
                 try:
                     html_content = await capture_screenshot(browser_context)
                 except Exception as e:
                     html_content = f"<div class='error'>Screenshot error: {str(e)}</div>"
-                    
-                yield [html_content, final_result, errors, model_actions, model_thoughts, recording, trace]
+                
+                yield [
+                    html_content,
+                    final_result,
+                    errors,
+                    model_actions,
+                    model_thoughts,
+                    recording,
+                    trace,
+                ]
                 await asyncio.sleep(0.01)
 
-            # Get agent results when done
+            # Once the agent task completes, get the results
             try:
                 result = await agent_task
                 if isinstance(result, tuple) and len(result) == 6:
-                    final_result, errors, model_actions, model_thoughts, recording, trace = result
+                    (
+                        final_result,
+                        errors,
+                        model_actions,
+                        model_thoughts,
+                        recording,
+                        trace,
+                    ) = result
                 else:
                     errors = "Unexpected result format from agent"
             except Exception as e:
@@ -334,15 +375,16 @@ async def run_with_stream(*args):
             yield [
                 html_content,
                 final_result,
-                errors, 
+                errors,
                 model_actions,
                 model_thoughts,
                 recording,
-                trace
+                trace,
             ]
 
     except Exception as e:
         import traceback
+
         yield [
             f"<div class='error'>Browser error: {str(e)}</div>",
             "",
@@ -350,95 +392,142 @@ async def run_with_stream(*args):
             "",
             "",
             None,
-            None
+            None,
         ]
     finally:
         if browser:
             await browser.close()
 
+from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft
 
-def main():
-    # Gradio UI setup
-    with gr.Blocks(title="Browser Use WebUI", theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta Sans")])) as demo:
-        gr.Markdown("<center><h1>Browser Use WebUI</h1></center>")
-        
+# Define the theme map globally
+theme_map = {
+    "Default": Default(),
+    "Soft": Soft(),
+    "Monochrome": Monochrome(),
+    "Glass": Glass(),
+    "Origin": Origin(),
+    "Citrus": Citrus(),
+    "Ocean": Ocean(),
+}
+
+# Create the Gradio UI
+def create_ui(theme_name="Ocean"):
+    css = """
+    .gradio-container {
+        max-width: 1200px !important;
+        margin: auto !important;
+        padding-top: 20px !important;
+    }
+    .header-text {
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    .theme-section {
+        margin-bottom: 20px;
+        padding: 15px;
+        border-radius: 10px;
+    }
+    """
+
+    with gr.Blocks(title="Browser Use WebUI", theme=theme_map[theme_name], css=css) as demo:
+        # Header
+        with gr.Row():
+            gr.Markdown(
+                """
+                # 🌐 Browser Use WebUI
+                ### Control your browser with AI assistance
+                """,
+                elem_classes=["header-text"],
+            )
+
+        # Tabs
         with gr.Tabs():
-            # Tab for LLM Settings
-            with gr.Tab("LLM Settings"):
-                with gr.Row():
-                    llm_provider = gr.Dropdown(
-                        ["anthropic", "openai", "gemini", "azure_openai", "deepseek"], label="LLM Provider", value="gemini"
-                    )
-                    llm_model_name = gr.Textbox(label="LLM Model Name", value="gemini-2.0-flash-exp")
-                    llm_temperature = gr.Number(label="LLM Temperature", value=1.0)
-                with gr.Row():
-                    llm_base_url = gr.Textbox(label="LLM Base URL")
-                    llm_api_key = gr.Textbox(label="LLM API Key", type="password")
-            
-            # Tab for Browser Settings
-            with gr.Tab("Browser Settings"):
-                with gr.Accordion("Browser Settings", open=True):
-                    use_own_browser = gr.Checkbox(label="Use Own Browser", value=False)
-                    headless = gr.Checkbox(label="Headless", value=False)
-                    disable_security = gr.Checkbox(label="Disable Security", value=True)
-                    with gr.Row():
-                        window_w = gr.Number(label="Window Width", value=1920)
-                        window_h = gr.Number(label="Window Height", value=1080)
-                    save_recording_path = gr.Textbox(label="Save Recording Path", placeholder="e.g. ./tmp/record_videos",
-                                                     value="./tmp/record_videos")
-            
-            # Tab for Task Settings
-            with gr.Tab("Task Settings"):
-                with gr.Accordion("Task Settings", open=True):
-                    task = gr.Textbox(label="Task", lines=10,
-                                      value="go to google.com and type 'OpenAI' click search and give me the first url")
-                    add_infos = gr.Textbox(label="Additional Infos (Optional): Hints to help LLM complete Task", lines=5)
-                    agent_type = gr.Radio(["org", "custom"], label="Agent Type", value="custom")
-                    max_steps = gr.Number(label="Max Run Steps", value=100)
-                    use_vision = gr.Checkbox(label="Use Vision", value=True)
-            
-            # Tab for Stream + File Download and Agent Thoughts
-            with gr.Tab("Results"):
-                with gr.Column():
-                    # Add live stream viewer before other components
-                    browser_view = gr.HTML(
-                        label="Live Browser View",
-                        value="<div style='width:100%; height:600px; border:1px solid #ccc; display:flex; align-items:center; justify-content:center;'><p>Waiting for browser session...</p></div>"
-                    )
-                    final_result_output = gr.Textbox(label="Final Result", lines=5)
-                    errors_output = gr.Textbox(label="Errors", lines=5)
-                    model_actions_output = gr.Textbox(label="Model Actions", lines=5)
-                    model_thoughts_output = gr.Textbox(label="Model Thoughts", lines=5)
-                    with gr.Row():
-                        recording_file = gr.Video(label="Recording File")  # Changed from gr.File to gr.Video
-                        trace_file = gr.File(label="Trace File (ZIP)")
-                    
-                    # Add a refresh button
-                    refresh_button = gr.Button("Refresh Files")
-                    
-                    def refresh_files():
-                        recorded_files = get_latest_files("./tmp/record_videos")
-                        trace_file = get_latest_files("./tmp/traces")
-                        return (
-                            recorded_files.get('.webm') if recorded_files.get('.webm') else None,
-                            trace_file.get('.zip') if trace_file.get('.zip') else None
-                        )
-                    
-                    refresh_button.click(
-                        fn=refresh_files,
-                        inputs=[],
-                        outputs=[recording_file, trace_file]
-                    )
-        
-        # Run button outside tabs for global execution
-        run_button = gr.Button("Run Agent", variant="primary")
+            # Agent Settings
+            with gr.Tab("⚙️ Agent Settings"):
+                agent_type = gr.Radio(
+                    ["org", "custom"],
+                    label="Agent Type",
+                    value="custom",
+                )
+                max_steps = gr.Slider(1, 200, value=100, step=1, label="Max Run Steps")
+                max_actions_per_step = gr.Slider(
+                    1, 20, value=10, step=1, label="Max Actions per Step"
+                )
+                use_vision = gr.Checkbox(value=True, label="Use Vision")
+                tool_call_in_content = gr.Checkbox(
+                    value=True, label="Enable Tool Calls in Content"
+                )
+
+            # LLM Configuration
+            with gr.Tab("🔧 LLM Configuration"):
+                llm_provider = gr.Dropdown(
+                    ["anthropic", "openai", "gemini", "azure_openai", "deepseek"],
+                    label="LLM Provider",
+                    value="gemini",
+                )
+                llm_model_name = gr.Textbox(label="Model Name", value="gemini-2.0-flash-exp")
+                llm_temperature = gr.Slider(0.0, 2.0, value=1.0, step=0.1, label="Temperature")
+                llm_base_url = gr.Textbox(label="Base URL")
+                llm_api_key = gr.Textbox(label="API Key", type="password")
+
+            # Browser Settings
+            with gr.Tab("🌐 Browser Settings"):
+                use_own_browser = gr.Checkbox(value=False, label="Use Own Browser")
+                headless = gr.Checkbox(value=False, label="Headless Mode")
+                disable_security = gr.Checkbox(value=True, label="Disable Security")
+                window_w = gr.Number(value=1280, label="Window Width")
+                window_h = gr.Number(value=1100, label="Window Height")
+                save_recording_path = gr.Textbox(
+                    value="./tmp/record_videos",
+                    label="Recording Path",
+                    placeholder="e.g. ./tmp/record_videos",
+                )
+
+            # Run Agent
+            with gr.Tab("🤖 Run Agent"):
+                task = gr.Textbox(
+                    lines=4,
+                    value="go to google.com and type 'OpenAI' click search and give me the first url",
+                    label="Task Description",
+                )
+                add_infos = gr.Textbox(lines=3, label="Additional Information")
+
+            # Results
+            with gr.Tab("📊 Results"):
+                browser_view = gr.HTML(
+                    value="<div>Waiting for browser session...</div>",
+                    label="Live Browser View",
+                )
+                final_result_output = gr.Textbox(label="Final Result", lines=3)
+                errors_output = gr.Textbox(label="Errors", lines=3)
+                model_actions_output = gr.Textbox(label="Model Actions", lines=3)
+                model_thoughts_output = gr.Textbox(label="Model Thoughts", lines=3)
+                recording_file = gr.Video(label="Latest Recording")
+                trace_file = gr.File(label="Trace File")
+        with gr.Row():
+            run_button = gr.Button("▶️ Run Agent", variant="primary")
+
+        # Button logic
         run_button.click(
             fn=run_with_stream,
             inputs=[
-                agent_type, llm_provider, llm_model_name, llm_temperature,
-                llm_base_url, llm_api_key, use_own_browser, headless,
-                disable_security, window_w, window_h, save_recording_path,
-                task, add_infos, max_steps, use_vision
+                agent_type,
+                llm_provider,
+                llm_model_name,
+                llm_temperature,
+                llm_base_url,
+                llm_api_key,
+                use_own_browser,
+                headless,
+                disable_security,
+                window_w,
+                window_h,
+                save_recording_path,
+                task,
+                add_infos,
+                max_steps,
+                use_vision,
             ],
             outputs=[
                 browser_view,
@@ -447,22 +536,22 @@ def main():
                 model_actions_output,
                 model_thoughts_output,
                 recording_file,
-                trace_file
+                trace_file,
             ],
-            queue=True
+            queue=True,
         )
 
-    demo.launch(server_name=args.ip, server_port=args.port, share=True)
+    return demo
+
 
 if __name__ == "__main__":
-
-    # For local development
     import argparse
+
     parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
     parser.add_argument("--ip", type=str, default="0.0.0.0", help="IP address to bind to")
     parser.add_argument("--port", type=int, default=7860, help="Port to listen on")
+    parser.add_argument("--theme", type=str, default="Ocean", choices=theme_map.keys())
     args = parser.parse_args()
-    main()
-else:
-    # For Vercel deployment
-    main()
+
+    ui = create_ui(theme_name=args.theme)
+    ui.launch(server_name=args.ip, server_port=args.port, share=True)

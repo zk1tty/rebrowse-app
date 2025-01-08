@@ -135,7 +135,7 @@ class CustomAgent(Agent):
                 f'🛠️  Action {i + 1}/{len(response.action)}: {action.model_dump_json(exclude_unset=True)}'
             )
 
-    def update_step_info(self, model_output: CustomAgentOutput, step_info: CustomAgentStepInfo = None):
+    def update_step_info(self, model_output: CustomAgentOutput, step_info: CustomAgentStepInfo | None = None):
         """
         update step info
         """
@@ -152,12 +152,13 @@ class CustomAgent(Agent):
             step_info.task_progress = completed_contents
 
     @time_execution_async('--get_next_action')
-    async def get_next_action(self, input_messages: list[BaseMessage]) -> AgentOutput:
+    async def get_next_action(self, input_messages: list[BaseMessage]) -> CustomAgentOutput:
         """Get next action from LLM based on current state"""
 
         ret = self.llm.invoke(input_messages)
-        parsed_json = json.loads(ret.content.replace('```json', '').replace("```", ""))
-        parsed: AgentOutput = self.AgentOutput(**parsed_json)
+        content_str = ''.join([str(item) for item in ret.content])
+        parsed_json = json.loads(content_str.replace('```json', '').replace("```", ""))
+        parsed: CustomAgentOutput = self.AgentOutput(**parsed_json)
         # cut the number of actions to max_actions_per_step
         parsed.action = parsed.action[: self.max_actions_per_step]
         self._log_response(parsed)
@@ -178,8 +179,9 @@ class CustomAgent(Agent):
             self.message_manager.add_state_message(state, self._last_result, step_info)
             input_messages = self.message_manager.get_messages()
             model_output = await self.get_next_action(input_messages)
-            self.update_step_info(model_output, step_info)
-            logger.info(f'🧠 All Memory: {step_info.memory}')
+            if step_info is not None:
+                self.update_step_info(model_output, step_info)
+                logger.info(f'🧠 All Memory: {step_info.memory}')
             self._save_conversation(input_messages, model_output)
             self.message_manager._remove_last_state_message()  # we dont want the whole state in the chat history
             self.message_manager.add_model_output(model_output)
