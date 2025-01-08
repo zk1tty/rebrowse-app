@@ -6,6 +6,8 @@
 
 import json
 import logging
+import pdb
+import traceback
 from typing import Optional, Type
 
 from browser_use.agent.prompts import SystemPrompt
@@ -37,51 +39,53 @@ logger = logging.getLogger(__name__)
 
 class CustomAgent(Agent):
     def __init__(
-        self,
-        task: str,
-        llm: BaseChatModel,
-        add_infos: str = "",
-        browser: Browser | None = None,
-        browser_context: BrowserContext | None = None,
-        controller: Controller = Controller(),
-        use_vision: bool = True,
-        save_conversation_path: Optional[str] = None,
-        max_failures: int = 5,
-        retry_delay: int = 10,
-        system_prompt_class: Type[SystemPrompt] = SystemPrompt,
-        max_input_tokens: int = 128000,
-        validate_output: bool = False,
-        include_attributes: list[str] = [
-            "title",
-            "type",
-            "name",
-            "role",
-            "tabindex",
-            "aria-label",
-            "placeholder",
-            "value",
-            "alt",
-            "aria-expanded",
-        ],
-        max_error_length: int = 400,
-        max_actions_per_step: int = 10,
+            self,
+            task: str,
+            llm: BaseChatModel,
+            add_infos: str = "",
+            browser: Browser | None = None,
+            browser_context: BrowserContext | None = None,
+            controller: Controller = Controller(),
+            use_vision: bool = True,
+            save_conversation_path: Optional[str] = None,
+            max_failures: int = 5,
+            retry_delay: int = 10,
+            system_prompt_class: Type[SystemPrompt] = SystemPrompt,
+            max_input_tokens: int = 128000,
+            validate_output: bool = False,
+            include_attributes: list[str] = [
+                "title",
+                "type",
+                "name",
+                "role",
+                "tabindex",
+                "aria-label",
+                "placeholder",
+                "value",
+                "alt",
+                "aria-expanded",
+            ],
+            max_error_length: int = 400,
+            max_actions_per_step: int = 10,
+            tool_call_in_content: bool = True,
     ):
         super().__init__(
-            task,
-            llm,
-            browser,
-            browser_context,
-            controller,
-            use_vision,
-            save_conversation_path,
-            max_failures,
-            retry_delay,
-            system_prompt_class,
-            max_input_tokens,
-            validate_output,
-            include_attributes,
-            max_error_length,
-            max_actions_per_step,
+            task=task,
+            llm=llm,
+            browser=browser,
+            browser_context=browser_context,
+            controller=controller,
+            use_vision=use_vision,
+            save_conversation_path=save_conversation_path,
+            max_failures=max_failures,
+            retry_delay=retry_delay,
+            system_prompt_class=system_prompt_class,
+            max_input_tokens=max_input_tokens,
+            validate_output=validate_output,
+            include_attributes=include_attributes,
+            max_error_length=max_error_length,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
         )
         self.add_infos = add_infos
         self.message_manager = CustomMassageManager(
@@ -93,6 +97,7 @@ class CustomAgent(Agent):
             include_attributes=self.include_attributes,
             max_error_length=self.max_error_length,
             max_actions_per_step=self.max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
         )
 
     def _setup_action_models(self) -> None:
@@ -122,7 +127,7 @@ class CustomAgent(Agent):
             )
 
     def update_step_info(
-        self, model_output: CustomAgentOutput, step_info: CustomAgentStepInfo = None
+            self, model_output: CustomAgentOutput, step_info: CustomAgentStepInfo = None
     ):
         """
         update step info
@@ -133,9 +138,9 @@ class CustomAgent(Agent):
         step_info.step_number += 1
         important_contents = model_output.current_state.important_contents
         if (
-            important_contents
-            and "None" not in important_contents
-            and important_contents not in step_info.memory
+                important_contents
+                and "None" not in important_contents
+                and important_contents not in step_info.memory
         ):
             step_info.memory += important_contents + "\n"
 
@@ -146,16 +151,35 @@ class CustomAgent(Agent):
     @time_execution_async("--get_next_action")
     async def get_next_action(self, input_messages: list[BaseMessage]) -> AgentOutput:
         """Get next action from LLM based on current state"""
+        try:
+            structured_llm = self.llm.with_structured_output(self.AgentOutput, include_raw=True)
+            response: dict[str, Any] = await structured_llm.ainvoke(input_messages)  # type: ignore
 
-        ret = self.llm.invoke(input_messages)
-        parsed_json = json.loads(ret.content.replace("```json", "").replace("```", ""))
-        parsed: AgentOutput = self.AgentOutput(**parsed_json)
-        # cut the number of actions to max_actions_per_step
-        parsed.action = parsed.action[: self.max_actions_per_step]
-        self._log_response(parsed)
-        self.n_steps += 1
+            parsed: AgentOutput = response['parsed']
+            # cut the number of actions to max_actions_per_step
+            parsed.action = parsed.action[: self.max_actions_per_step]
+            self._log_response(parsed)
+            self.n_steps += 1
 
-        return parsed
+            return parsed
+        except Exception as e:
+            # If something goes wrong, try to invoke the LLM again without structured output,
+            # and Manually parse the response. Temporarily solution for DeepSeek
+            ret = self.llm.invoke(input_messages)
+            if isinstance(ret.content, list):
+                parsed_json = json.loads(ret.content[0].replace("```json", "").replace("```", ""))
+            else:
+                parsed_json = json.loads(ret.content.replace("```json", "").replace("```", ""))
+            parsed: AgentOutput = self.AgentOutput(**parsed_json)
+            if parsed is None:
+                raise ValueError(f'Could not parse response.')
+
+            # cut the number of actions to max_actions_per_step
+            parsed.action = parsed.action[: self.max_actions_per_step]
+            self._log_response(parsed)
+            self.n_steps += 1
+
+            return parsed
 
     @time_execution_async("--step")
     async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
@@ -233,7 +257,7 @@ class CustomAgent(Agent):
 
                 if self.history.is_done():
                     if (
-                        self.validate_output and step < max_steps - 1
+                            self.validate_output and step < max_steps - 1
                     ):  # if last step, we dont need to validate
                         if not await self._validate_output():
                             continue
