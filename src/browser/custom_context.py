@@ -14,16 +14,15 @@ from browser_use.browser.browser import Browser
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
 
 logger = logging.getLogger(__name__)
-
 class CustomBrowserContext(BrowserContext):
     def __init__(
         self,
-        browser: "Browser",
+        browser: "CustomBrowser",  # Forward declaration for CustomBrowser
         config: BrowserContextConfig = BrowserContextConfig(),
-        context: BrowserContext = None,
+        context: PlaywrightContext = None
     ):
         super(CustomBrowserContext, self).__init__(browser=browser, config=config)
-        self.context = context
+        self.context = context  # Rename to avoid confusion
         self._page = None
 
     @property
@@ -31,7 +30,7 @@ class CustomBrowserContext(BrowserContext):
         """Returns the underlying Playwright context implementation"""
         return self.context
 
-    async def _create_context(self, browser: PlaywrightBrowser):
+    async def _create_context(self, browser: PlaywrightBrowser = None):
         """Creates a new browser context with anti-detection measures and loads cookies if available."""
         if self.context:
             return self.context

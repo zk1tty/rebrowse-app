@@ -627,18 +627,68 @@ def create_ui(theme_name="Ocean"):
                 )
                 add_infos = gr.Textbox(lines=3, label="Additional Information")
 
-            # Results
-            with gr.Tab("📊 Results"):
-                browser_view = gr.HTML(
-                    value="<div>Waiting for browser session...</div>",
-                    label="Live Browser View",
+            with gr.TabItem("📊 Results", id=5):
+                with gr.Group():
+                    gr.Markdown("### Results")
+                    with gr.Row():
+                        browser_view = gr.HTML(
+                            value="<div>Waiting for browser session...</div>",
+                            label="Live Browser View",
+                        )
+                    with gr.Row():
+                        with gr.Column():
+                            final_result_output = gr.Textbox(
+                                label="Final Result", lines=3, show_label=True
+                            )
+                        with gr.Column():
+                            errors_output = gr.Textbox(
+                                label="Errors", lines=3, show_label=True
+                            )
+                    with gr.Row():
+                        with gr.Column():
+                            model_actions_output = gr.Textbox(
+                                label="Model Actions", lines=3, show_label=True
+                            )
+                        with gr.Column():
+                            model_thoughts_output = gr.Textbox(
+                                label="Model Thoughts", lines=3, show_label=True
+                            )
+                        
+                        recording_file = gr.Video(label="Latest Recording")
+                        trace_file = gr.File(label="Trace File")
+            with gr.TabItem("🎥 Recordings", id=6):
+                def list_recordings(save_recording_path):
+                    if not os.path.exists(save_recording_path):
+                        return []
+
+                    # Get all video files
+                    recordings = glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4")) + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
+
+                    # Sort recordings by creation time (oldest first)
+                    recordings.sort(key=os.path.getctime)
+
+                    # Add numbering to the recordings
+                    numbered_recordings = []
+                    for idx, recording in enumerate(recordings, start=1):
+                        filename = os.path.basename(recording)
+                        numbered_recordings.append((recording, f"{idx}. {filename}"))
+
+                    return numbered_recordings
+
+                recordings_gallery = gr.Gallery(
+                    label="Recordings",
+                    value=list_recordings("./tmp/record_videos"),
+                    columns=3,
+                    height="auto",
+                    object_fit="contain"
                 )
-                final_result_output = gr.Textbox(label="Final Result", lines=3)
-                errors_output = gr.Textbox(label="Errors", lines=3)
-                model_actions_output = gr.Textbox(label="Model Actions", lines=3)
-                model_thoughts_output = gr.Textbox(label="Model Thoughts", lines=3)
-                recording_file = gr.Video(label="Latest Recording")
-                trace_file = gr.File(label="Trace File")
+
+                refresh_button = gr.Button("🔄 Refresh Recordings", variant="secondary")
+                refresh_button.click(
+                    fn=list_recordings,
+                    inputs=save_recording_path,
+                    outputs=recordings_gallery
+                )
         with gr.Row():
             run_button = gr.Button("▶️ Run Agent", variant="primary")
 
