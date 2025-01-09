@@ -47,6 +47,7 @@ async def run_browser_agent(
         window_w,
         window_h,
         save_recording_path,
+        enable_recording,
         task,
         add_infos,
         max_steps,
@@ -97,8 +98,6 @@ async def run_browser_agent(
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
-
-
 
 async def run_org_agent(
         llm,
@@ -567,6 +566,11 @@ def create_ui(theme_name="Ocean"):
                             value=True,
                             info="Disable browser security features",
                         )
+                        enable_recording = gr.Checkbox(
+                            label="Enable Recording",
+                            value=True,
+                            info="Enable saving browser recordings",
+                        )
 
                     with gr.Row():
                         window_w = gr.Number(
@@ -585,6 +589,7 @@ def create_ui(theme_name="Ocean"):
                         placeholder="e.g. ./tmp/record_videos",
                         value="./tmp/record_videos",
                         info="Path to save browser recordings",
+                        interactive=True,  # Allow editing only if recording is enabled
                     )
 
             with gr.TabItem("🤖 Run Agent", id=4):
