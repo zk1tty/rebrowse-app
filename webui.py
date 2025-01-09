@@ -49,6 +49,7 @@ async def run_browser_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_trace_path,
         enable_recording,
         task,
         add_infos,
@@ -89,6 +90,7 @@ async def run_browser_agent(
             window_w=window_w,
             window_h=window_h,
             save_recording_path=save_recording_path,
+            save_trace_path=save_trace_path,
             task=task,
             max_steps=max_steps,
             use_vision=use_vision,
@@ -104,6 +106,7 @@ async def run_browser_agent(
             window_w=window_w,
             window_h=window_h,
             save_recording_path=save_recording_path,
+            save_trace_path=save_trace_path,
             task=task,
             add_infos=add_infos,
             max_steps=max_steps,
@@ -134,6 +137,7 @@ async def run_org_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_trace_path,
         task,
         max_steps,
         use_vision,
@@ -150,7 +154,7 @@ async def run_org_agent(
     )
     async with await browser.new_context(
             config=BrowserContextConfig(
-                trace_path="./tmp/traces",
+                trace_path=save_trace_path if save_trace_path else None,
                 save_recording_path=save_recording_path if save_recording_path else None,
                 no_viewport=False,
                 browser_window_size=BrowserContextWindowSize(
@@ -184,6 +188,7 @@ async def run_custom_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_trace_path,
         task,
         add_infos,
         max_steps,
@@ -204,7 +209,7 @@ async def run_custom_agent(
                 chrome_exe = None
             elif not os.path.exists(chrome_exe):
                 raise ValueError(f"Chrome executable not found at {chrome_exe}")
-            
+
             if chrome_use_data == "":
                 chrome_use_data = None
 
@@ -235,7 +240,7 @@ async def run_custom_agent(
         )
         async with await browser.new_context(
                 config=BrowserContextConfig(
-                    trace_path="./tmp/result_processing",
+                    trace_path=save_trace_path if save_trace_path else None,
                     save_recording_path=save_recording_path
                     if save_recording_path
                     else None,
@@ -407,7 +412,7 @@ def create_ui(theme_name="Ocean"):
                             value=os.getenv(f"{llm_provider.value.upper()}_API_KEY", ""),  # Default to .env value
                             info="Your API key (leave blank to use .env)"
                         )
-                    
+
             with gr.TabItem("🌐 Browser Settings", id=3):
                 with gr.Group():
                     with gr.Row():
@@ -452,6 +457,14 @@ def create_ui(theme_name="Ocean"):
                         interactive=True,  # Allow editing only if recording is enabled
                     )
 
+                    save_trace_path = gr.Textbox(
+                        label="Trace Path",
+                        placeholder="e.g. ./tmp/traces",
+                        value="./tmp/traces",
+                        info="Path to save Agent traces",
+                        interactive=True,
+                    )
+
             with gr.TabItem("🤖 Run Agent", id=4):
                 task = gr.Textbox(
                     label="Task Description",
@@ -494,24 +507,24 @@ def create_ui(theme_name="Ocean"):
                             model_thoughts_output = gr.Textbox(
                                 label="Model Thoughts", lines=3, show_label=True
                             )
-            
+
             with gr.TabItem("🎥 Recordings", id=6):
                 def list_recordings(save_recording_path):
                     if not os.path.exists(save_recording_path):
                         return []
-                    
+
                     # Get all video files
                     recordings = glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4")) + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
-                    
+
                     # Sort recordings by creation time (oldest first)
                     recordings.sort(key=os.path.getctime)
-                    
+
                     # Add numbering to the recordings
                     numbered_recordings = []
                     for idx, recording in enumerate(recordings, start=1):
                         filename = os.path.basename(recording)
                         numbered_recordings.append((recording, f"{idx}. {filename}"))
-                    
+
                     return numbered_recordings
 
                 recordings_gallery = gr.Gallery(
@@ -534,7 +547,7 @@ def create_ui(theme_name="Ocean"):
             lambda provider, api_key, base_url: update_model_dropdown(provider, api_key, base_url),
             inputs=[llm_provider, llm_api_key, llm_base_url],
             outputs=llm_model_name
-        )  
+        )
 
         # Add this after defining the components
         enable_recording.change(
@@ -542,13 +555,13 @@ def create_ui(theme_name="Ocean"):
             inputs=enable_recording,
             outputs=save_recording_path
         )
-          
+
         # Run button click handler
         run_button.click(
             fn=run_browser_agent,
             inputs=[
                 agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
-                use_own_browser, headless, disable_security, window_w, window_h, save_recording_path,
+                use_own_browser, headless, disable_security, window_w, window_h, save_recording_path, save_trace_path,
                 enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
             ],
             outputs=[final_result_output, errors_output, model_actions_output, model_thoughts_output, recording_display],
