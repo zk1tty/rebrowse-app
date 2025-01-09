@@ -16,7 +16,9 @@ async def capture_screenshot(browser_context: BrowserContext) -> str:
         if not all_pages:
             return "<div>Waiting for page to be available...</div>"
         # Use the first page
-        page = all_pages[1]
+        for page in all_pages:
+            if page.url != 'about:blank':
+                break
         try:
             screenshot = await page.screenshot(
                 type='jpeg',

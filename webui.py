@@ -47,6 +47,7 @@ async def run_browser_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_trace_path,
         enable_recording,
         task,
         add_infos,
@@ -59,23 +60,6 @@ async def run_browser_agent(
     """Run the browser agent with proper browser context initialization"""
     browser = None
     try:
-        if browser_context is None:
-            browser = CustomBrowser(
-                config=BrowserConfig(
-                    headless=headless,
-                    disable_security=disable_security,
-                    extra_chromium_args=[f'--window-size={window_w},{window_h}'],
-                )
-            )
-            browser_context = await browser.new_context(
-                config=BrowserContextConfig(
-                    trace_path='./tmp/traces',
-                    save_recording_path=save_recording_path if enable_recording else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(width=window_w, height=window_h),
-                )
-            )
-            
         # Run the agent
         llm = utils.get_llm_model(
             provider=llm_provider,
@@ -109,6 +93,7 @@ async def run_browser_agent(
                 window_w=window_w,
                 window_h=window_h,
                 save_recording_path=save_recording_path,
+                save_trace_path=save_trace_path,
                 task=task,
                 add_infos=add_infos,
                 max_steps=max_steps,
@@ -133,6 +118,7 @@ async def run_org_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_trace_path,
         task,
         max_steps,
         use_vision,
@@ -144,14 +130,14 @@ async def run_org_agent(
     if browser_context is None:
         browser = Browser(
             config=BrowserConfig(
-                headless=False,  # Force non-headless for streaming
+                headless=headless,  # Force non-headless for streaming
                 disable_security=disable_security,
                 extra_chromium_args=[f'--window-size={window_w},{window_h}'],
             )
         )
         async with await browser.new_context(
                 config=BrowserContextConfig(
-                    trace_path='./tmp/traces',
+                    trace_path=save_trace_path if save_trace_path else None,
                     save_recording_path=save_recording_path if save_recording_path else None,
                     no_viewport=False,
                     browser_window_size=BrowserContextWindowSize(width=window_w, height=window_h),
@@ -201,6 +187,7 @@ async def run_custom_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_trace_path,
         task,
         add_infos,
         max_steps,
@@ -222,7 +209,7 @@ async def run_custom_agent(
                 chrome_exe = None
             elif not os.path.exists(chrome_exe):
                 raise ValueError(f"Chrome executable not found at {chrome_exe}")
-            
+
             if chrome_use_data == "":
                 chrome_use_data = None
 
@@ -253,9 +240,7 @@ async def run_custom_agent(
                 llm=llm,
                 browser_context=browser_context,
                 controller=controller,
-                system_prompt_class=CustomSystemPrompt,
-                max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content
+                system_prompt_class=CustomSystemPrompt
             )
             history = await agent.run(max_steps=max_steps)
             final_result = history.final_result()
@@ -270,38 +255,41 @@ async def run_custom_agent(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
-                    extra_chromium_args=[f'--window-size={window_w},{window_h}'],
+                    extra_chromium_args=[f"--window-size={window_w},{window_h}"],
                 )
             )
             async with await browser.new_context(
                     config=BrowserContextConfig(
-                        trace_path='./tmp/result_processing',
-                        save_recording_path=save_recording_path if save_recording_path else None,
+                        trace_path=save_trace_path if save_trace_path else None,
+                        save_recording_path=save_recording_path
+                        if save_recording_path
+                        else None,
                         no_viewport=False,
-                        browser_window_size=BrowserContextWindowSize(width=window_w, height=window_h),
+                        browser_window_size=BrowserContextWindowSize(
+                            width=window_w, height=window_h
+                        ),
                     ),
-                    context=browser_context_
-            ) as browser_context_in:
+                    context=browser_context_,
+            ) as browser_context:
                 agent = CustomAgent(
                     task=task,
                     add_infos=add_infos,
                     use_vision=use_vision,
                     llm=llm,
-                    browser_context=browser_context_in,
+                    browser_context=browser_context,
                     controller=controller,
                     system_prompt_class=CustomSystemPrompt,
                     max_actions_per_step=max_actions_per_step,
                     tool_call_in_content=tool_call_in_content
                 )
                 history = await agent.run(max_steps=max_steps)
-
                 final_result = history.final_result()
                 errors = history.errors()
                 model_actions = history.model_actions()
                 model_thoughts = history.model_thoughts()
-                
                 recorded_files = get_latest_files(save_recording_path)
                 trace_file = get_latest_files(save_recording_path + "/../traces")
+                return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
 
     except Exception as e:
         import traceback
@@ -338,6 +326,8 @@ async def run_with_stream(
     window_w,
     window_h,
     save_recording_path,
+    save_trace_path,
+    enable_recording,
     task,
     add_infos,
     max_steps,
@@ -360,8 +350,8 @@ async def run_with_stream(
         # Create a new browser context
         async with await browser.new_context(
             config=BrowserContextConfig(
-                trace_path="./tmp/traces",
-                save_recording_path=save_recording_path,
+                trace_path=save_trace_path if save_trace_path else None,
+                save_recording_path=save_recording_path if save_recording_path else None,
                 no_viewport=False,
                 browser_window_size=BrowserContextWindowSize(
                     width=window_w, height=window_h
@@ -383,7 +373,8 @@ async def run_with_stream(
                     window_w=window_w,
                     window_h=window_h,
                     save_recording_path=save_recording_path,
-                    enable_recording=True,  # Add this parameter
+                    save_trace_path=save_trace_path,
+                    enable_recording=enable_recording,
                     task=task,
                     add_infos=add_infos,
                     max_steps=max_steps,
@@ -575,7 +566,7 @@ def create_ui(theme_name="Ocean"):
                             value=os.getenv(f"{llm_provider.value.upper()}_API_KEY", ""),  # Default to .env value
                             info="Your API key (leave blank to use .env)"
                         )
-                    
+
             with gr.TabItem("🌐 Browser Settings", id=3):
                 with gr.Group():
                     with gr.Row():
@@ -620,6 +611,14 @@ def create_ui(theme_name="Ocean"):
                         interactive=True,  # Allow editing only if recording is enabled
                     )
 
+                    save_trace_path = gr.Textbox(
+                        label="Trace Path",
+                        placeholder="e.g. ./tmp/traces",
+                        value="./tmp/traces",
+                        info="Path to save Agent traces",
+                        interactive=True,
+                    )
+
             with gr.TabItem("🤖 Run Agent", id=4):
                 task = gr.Textbox(
                     lines=4,
@@ -647,24 +646,9 @@ def create_ui(theme_name="Ocean"):
         run_button.click(
             fn=run_with_stream,
             inputs=[
-                agent_type,
-                llm_provider,
-                llm_model_name,
-                llm_temperature,
-                llm_base_url,
-                llm_api_key,
-                use_own_browser,
-                headless,
-                disable_security,
-                window_w,
-                window_h,
-                save_recording_path,
-                task,
-                add_infos,
-                max_steps,
-                use_vision,
-                max_actions_per_step,
-                tool_call_in_content,
+                agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                use_own_browser, headless, disable_security, window_w, window_h, save_recording_path, save_trace_path,
+                enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
             ],
             outputs=[
                 browser_view,
