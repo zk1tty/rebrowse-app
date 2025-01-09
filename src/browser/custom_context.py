@@ -3,33 +3,27 @@
 # @Author  : wenshao
 # @Email   : wenshaoguo1026@gmail.com
 # @Project : browser-use-webui
-# @FileName: merged_context.py
+# @FileName: context.py
 
-import asyncio
-import base64
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
 
 from playwright.async_api import Browser as PlaywrightBrowser, Page, BrowserContext as PlaywrightContext
 from browser_use.browser.browser import Browser
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
-
-if TYPE_CHECKING:
-    from .custom_browser import CustomBrowser
 
 logger = logging.getLogger(__name__)
 
 class CustomBrowserContext(BrowserContext):
     def __init__(
         self,
-        browser: "Browser",  # Forward declaration for CustomBrowser
+        browser: "Browser",
         config: BrowserContextConfig = BrowserContextConfig(),
-        context: BrowserContext  = None
+        context: BrowserContext = None,
     ):
         super(CustomBrowserContext, self).__init__(browser=browser, config=config)
-        self.context = context  # Rename to avoid confusion
+        self.context = context
         self._page = None
 
     @property
@@ -37,7 +31,7 @@ class CustomBrowserContext(BrowserContext):
         """Returns the underlying Playwright context implementation"""
         return self.context
 
-    async def _create_context(self, browser: PlaywrightBrowser = None):
+    async def _create_context(self, browser: PlaywrightBrowser):
         """Creates a new browser context with anti-detection measures and loads cookies if available."""
         if self.context:
             return self.context
