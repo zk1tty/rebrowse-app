@@ -7,6 +7,7 @@
 from browser_use.browser.browser import Browser
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
 
+from .config import BrowserPersistenceConfig
 from .custom_context import CustomBrowserContext
 
 
@@ -18,3 +19,9 @@ class CustomBrowser(Browser):
     ) -> BrowserContext:
         """Create a browser context"""
         return CustomBrowserContext(config=config, browser=self, context=context)
+    async def close(self):
+        """Override close to respect persistence setting"""
+        # Check if persistence is enabled before closing
+        persistence_config = BrowserPersistenceConfig.from_env()
+        if not persistence_config.persistent_session:
+            await super().close()
