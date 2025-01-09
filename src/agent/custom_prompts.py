@@ -148,12 +148,12 @@ class CustomSystemPrompt(SystemPrompt):
 
 class CustomAgentMessagePrompt:
     def __init__(
-        self,
-        state: BrowserState,
-        result: Optional[List[ActionResult]] = None,
-        include_attributes: list[str] = [],
-        max_error_length: int = 400,
-        step_info: Optional[CustomAgentStepInfo] = None,
+            self,
+            state: BrowserState,
+            result: Optional[List[ActionResult]] = None,
+            include_attributes: list[str] = [],
+            max_error_length: int = 400,
+            step_info: Optional[CustomAgentStepInfo] = None,
     ):
         self.state = state
         self.result = result
@@ -162,19 +162,14 @@ class CustomAgentMessagePrompt:
         self.step_info = step_info
 
     def get_user_message(self) -> HumanMessage:
-        task = self.step_info.task if self.step_info else "No task provided"
-        add_infos = self.step_info.add_infos if self.step_info else "No hints provided"
-        memory = self.step_info.memory if self.step_info else "No memory available"
-        task_progress = self.step_info.task_progress if self.step_info else "No progress recorded"
-        
         state_description = f"""
-    1. Task: {task}
+    1. Task: {self.step_info.task}
     2. Hints(Optional): 
-    {add_infos}
+    {self.step_info.add_infos}
     3. Memory: 
-    {memory}
+    {self.step_info.memory}
     4. Task Progress: 
-    {task_progress}
+    {self.step_info.task_progress}
     5. Current url: {self.state.url}
     6. Available tabs:
     {self.state.tabs}

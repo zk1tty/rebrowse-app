@@ -7,7 +7,6 @@
 
 import base64
 import os
-from pydantic import SecretStr
 
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -37,9 +36,7 @@ def get_llm_model(provider: str, **kwargs):
             model_name=kwargs.get("model_name", "claude-3-5-sonnet-20240620"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
-            api_key=SecretStr(api_key or ""),
-            timeout=kwargs.get("timeout", 60),
-            stop=kwargs.get("stop", None),
+            api_key=api_key,
         )
     elif provider == "openai":
         if not kwargs.get("base_url", ""):
@@ -56,7 +53,7 @@ def get_llm_model(provider: str, **kwargs):
             model=kwargs.get("model_name", "gpt-4o"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
-            api_key=SecretStr(api_key or ""),
+            api_key=api_key,
         )
     elif provider == "deepseek":
         if not kwargs.get("base_url", ""):
@@ -73,7 +70,7 @@ def get_llm_model(provider: str, **kwargs):
             model=kwargs.get("model_name", "deepseek-chat"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
-            api_key=SecretStr(api_key or ""),
+            api_key=api_key,
         )
     elif provider == "gemini":
         if not kwargs.get("api_key", ""):
@@ -83,7 +80,7 @@ def get_llm_model(provider: str, **kwargs):
         return ChatGoogleGenerativeAI(
             model=kwargs.get("model_name", "gemini-2.0-flash-exp"),
             temperature=kwargs.get("temperature", 0.0),
-            api_key=SecretStr(api_key or ""),
+            google_api_key=api_key,
         )
     elif provider == "ollama":
         return ChatOllama(
@@ -105,7 +102,7 @@ def get_llm_model(provider: str, **kwargs):
             temperature=kwargs.get("temperature", 0.0),
             api_version="2024-05-01-preview",
             azure_endpoint=base_url,
-            api_key=SecretStr(api_key or ""),
+            api_key=api_key,
         )
     else:
         raise ValueError(f"Unsupported provider: {provider}")

@@ -3,100 +3,94 @@
 # @Author  : wenshao
 # @Email   : wenshaoguo1026@gmail.com
 # @Project : browser-use-webui
-# @FileName: custom_context.py
+# @FileName: context.py
 
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
 
-from playwright.async_api import Browser as PlaywrightBrowser, Page, BrowserContext as PlaywrightContext
+from browser_use.browser.browser import Browser
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
-
-if TYPE_CHECKING:
-    from .custom_browser import CustomBrowser
+from playwright.async_api import Browser as PlaywrightBrowser
 
 logger = logging.getLogger(__name__)
 
+
 class CustomBrowserContext(BrowserContext):
     def __init__(
-            self,
-            browser: 'CustomBrowser',  # Forward declaration for CustomBrowser
-            config: BrowserContextConfig = BrowserContextConfig(),
-            context: 'PlaywrightContext | None' = None
+        self,
+        browser: "Browser",
+        config: BrowserContextConfig = BrowserContextConfig(),
+        context: BrowserContext = None,
     ):
-        super().__init__(browser=browser, config=config)  # Add proper inheritance
-        self._impl_context = context  # Rename to avoid confusion
-        self._page = None
-        self.session = None  # Add session attribute
+        super(CustomBrowserContext, self).__init__(browser=browser, config=config)
+        self.context = context
 
-    @property
-    def impl_context(self) -> PlaywrightContext:
-        """Returns the underlying Playwright context implementation"""
-        if self._impl_context is None:
-            raise RuntimeError("Browser context has not been initialized")
-        return self._impl_context
+    async def _create_context(self, browser: PlaywrightBrowser):
+        """Creates a new browser context with anti-detection measures and loads cookies if available."""
+        # If we have a context, return it directly
+        if self.context:
+            return self.context
+        if self.browser.config.chrome_instance_path and len(browser.contexts) > 0:
+            # Connect to existing Chrome instance instead of creating new one
+            context = browser.contexts[0]
+        else:
+            # Original code for creating new context
+            context = await browser.new_context(
+                viewport=self.config.browser_window_size,
+                no_viewport=False,
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
+                ),
+                java_script_enabled=True,
+                bypass_csp=self.config.disable_security,
+                ignore_https_errors=self.config.disable_security,
+                record_video_dir=self.config.save_recording_path,
+                record_video_size=self.config.browser_window_size,  # set record video size, same as windows size
+            )
 
-    async def _create_context(self, config: BrowserContextConfig | None = None):
-        """Creates a new browser context"""
-        if self._impl_context:
-            return self._impl_context
+        if self.config.trace_path:
+            await context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
-        # Get the Playwright browser from our custom browser
-        pw_browser = await self.browser.get_playwright_browser()
-        
-        context_args = {
-            'viewport': self.config.browser_window_size,
-            'no_viewport': False, 
-            'bypass_csp': self.config.disable_security,
-            'ignore_https_errors': self.config.disable_security
-        }
-        
-        if self.config.save_recording_path:
-            context_args.update({
-                'record_video_dir': self.config.save_recording_path,
-                'record_video_size': self.config.browser_window_size
-            })
+        # Load cookies if they exist
+        if self.config.cookies_file and os.path.exists(self.config.cookies_file):
+            with open(self.config.cookies_file, "r") as f:
+                cookies = json.load(f)
+                logger.info(
+                    f"Loaded {len(cookies)} cookies from {self.config.cookies_file}"
+                )
+                await context.add_cookies(cookies)
 
-        self._impl_context = await pw_browser.new_context(**context_args)
-        
-        # Create an initial page
-        self._page = await self._impl_context.new_page()
-        await self._page.goto('about:blank')  # Ensure page is ready
-        
-        return self._impl_context
+        # Expose anti-detection scripts
+        await context.add_init_script(
+            """
+            // Webdriver property
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
 
-    async def new_page(self) -> Page:
-        """Creates and returns a new page in this context"""
-        context = await self._create_context()
-        return await context.new_page()
+            // Languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
 
-    async def __aenter__(self):
-        if not self._impl_context:
-            await self._create_context()
-        return self
+            // Plugins
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
 
-    async def __aexit__(self, *args):
-        if self._impl_context:
-            await self._impl_context.close()
-            self._impl_context = None
+            // Chrome runtime
+            window.chrome = { runtime: {} };
 
-    @property
-    def pages(self):
-        """Returns list of pages in context"""
-        return self._impl_context.pages if self._impl_context else []
+            // Permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
+            """
+        )
 
-    async def get_state(self, **kwargs):
-        if self._impl_context:
-            # pages() is a synchronous property, not an async method:
-            pages = self._impl_context.pages
-            if pages:
-                return await super().get_state(**kwargs)
-        return None
-
-    async def get_pages(self):
-        """Get pages in a way that works"""
-        if not self._impl_context:
-            return []
-        # Again, pages() is a property:
-        return self._impl_context.pages
+        return context

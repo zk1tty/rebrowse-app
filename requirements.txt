@@ -2,6 +2,5 @@ browser-use>=0.1.18
 langchain-google-genai>=2.0.8
 pyperclip
 gradio
-python-dotenv
-argparse
 langchain-ollama
+
