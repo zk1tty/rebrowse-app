@@ -642,6 +642,20 @@ def create_ui(theme_name="Ocean"):
         with gr.Row():
             run_button = gr.Button("▶️ Run Agent", variant="primary")
 
+        # Attach the callback to the LLM provider dropdown
+        llm_provider.change(
+            lambda provider, api_key, base_url: update_model_dropdown(provider, api_key, base_url),
+            inputs=[llm_provider, llm_api_key, llm_base_url],
+            outputs=llm_model_name
+        )
+
+        # Add this after defining the components
+        enable_recording.change(
+            lambda enabled: gr.update(interactive=enabled),
+            inputs=enable_recording,
+            outputs=save_recording_path
+        )
+        
         # Button logic
         run_button.click(
             fn=run_with_stream,
