@@ -69,6 +69,11 @@ class CustomAgent(Agent):
             max_actions_per_step: int = 10,
             tool_call_in_content: bool = True,
     ):
+        # Store tool_call_in_content before calling parent's __init__
+        self.tool_call_in_content = tool_call_in_content
+        self.add_infos = add_infos
+        
+        # Call parent's __init__ without tool_call_in_content
         super().__init__(
             task=task,
             llm=llm,
@@ -85,9 +90,9 @@ class CustomAgent(Agent):
             include_attributes=include_attributes,
             max_error_length=max_error_length,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
         )
-        self.add_infos = add_infos
+        
+        # Initialize message manager with tool_call_in_content
         self.message_manager = CustomMassageManager(
             llm=self.llm,
             task=self.task,
@@ -97,7 +102,7 @@ class CustomAgent(Agent):
             include_attributes=self.include_attributes,
             max_error_length=self.max_error_length,
             max_actions_per_step=self.max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
+            tool_call_in_content=self.tool_call_in_content,
         )
 
     def _setup_action_models(self) -> None:

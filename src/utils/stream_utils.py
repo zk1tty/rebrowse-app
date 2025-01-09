@@ -29,17 +29,3 @@ async def capture_screenshot(browser_context: BrowserContext) -> str:
             return f"<div class='error'>Screenshot failed: {str(e)}</div>"
     except Exception as e:
         return f"<div class='error'>Screenshot error: {str(e)}</div>"
-
-async def stream_browser_view(browser_context: BrowserContext) -> AsyncGenerator[str, None]:
-    """Stream browser view to the UI"""
-    try:
-        while True:
-            try:
-                screenshot_html = await capture_screenshot(browser_context)
-                yield screenshot_html
-                await asyncio.sleep(0.2)  # 5 FPS
-            except Exception as e:
-                yield f"<div class='error'>Screenshot error: {str(e)}</div>"
-                await asyncio.sleep(1)  # Wait before retrying
-    except Exception as e:
-        yield f"<div class='error'>Stream error: {str(e)}</div>"
