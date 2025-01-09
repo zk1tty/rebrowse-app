@@ -24,24 +24,23 @@ logger = logging.getLogger(__name__)
 class CustomBrowserContext(BrowserContext):
     def __init__(
         self,
-        browser: "CustomBrowser",  # Forward declaration for CustomBrowser
+        browser: "Browser",  # Forward declaration for CustomBrowser
         config: BrowserContextConfig = BrowserContextConfig(),
-        context: PlaywrightContext = None
+        context: BrowserContext  = None
     ):
         super(CustomBrowserContext, self).__init__(browser=browser, config=config)
-        self._impl_context = context  # Rename to avoid confusion
+        self.context = context  # Rename to avoid confusion
         self._page = None
-        self.session = None  # Add session attribute
 
     @property
     def impl_context(self) -> PlaywrightContext:
         """Returns the underlying Playwright context implementation"""
-        return self._impl_context
+        return self.context
 
     async def _create_context(self, browser: PlaywrightBrowser = None):
         """Creates a new browser context with anti-detection measures and loads cookies if available."""
-        if self._impl_context:
-            return self._impl_context
+        if self.context:
+            return self.context
 
         # If a Playwright browser is not provided, get it from our custom browser
         pw_browser = browser or await self.browser.get_playwright_browser()
@@ -59,10 +58,10 @@ class CustomBrowserContext(BrowserContext):
                 'record_video_size': self.config.browser_window_size
             })
 
-        self._impl_context = await pw_browser.new_context(**context_args)
+        self.context = await pw_browser.new_context(**context_args)
 
         if self.config.trace_path:
-            await self._impl_context.tracing.start(screenshots=True, snapshots=True, sources=True)
+            await self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
         # Load cookies if they exist
         if self.config.cookies_file and os.path.exists(self.config.cookies_file):
@@ -71,10 +70,10 @@ class CustomBrowserContext(BrowserContext):
                 logger.info(
                     f"Loaded {len(cookies)} cookies from {self.config.cookies_file}"
                 )
-                await self._impl_context.add_cookies(cookies)
+                await self.context.add_cookies(cookies)
 
         # Expose anti-detection scripts
-        await self._impl_context.add_init_script(
+        await self.context.add_init_script(
             """
             // Webdriver property
             Object.defineProperty(navigator, 'webdriver', {
@@ -105,41 +104,41 @@ class CustomBrowserContext(BrowserContext):
         )
 
         # Create an initial page
-        self._page = await self._impl_context.new_page()
+        self._page = await self.context.new_page()
         await self._page.goto('about:blank')  # Ensure page is ready
         
-        return self._impl_context
+        return self.context
 
     async def new_page(self) -> Page:
         """Creates and returns a new page in this context"""
-        if not self._impl_context:
+        if not self.context:
             await self._create_context()
-        return await self._impl_context.new_page()
+        return await self.context.new_page()
 
     async def __aenter__(self):
-        if not self._impl_context:
+        if not self.context:
             await self._create_context()
         return self
 
     async def __aexit__(self, *args):
-        if self._impl_context:
-            await self._impl_context.close()
-            self._impl_context = None
+        if self.context:
+            await self.context.close()
+            self.context = None
 
     @property
     def pages(self):
         """Returns list of pages in context"""
-        return self._impl_context.pages if self._impl_context else []
+        return self.context.pages if self.context else []
 
     async def get_state(self, **kwargs):
-        if self._impl_context:
-            pages = self._impl_context.pages
+        if self.context:
+            pages = self.context.pages
             if pages:
                 return await super().get_state(**kwargs)
         return None
 
     async def get_pages(self):
         """Get pages in a way that works"""
-        if not self._impl_context:
+        if not self.context:
             return []
-        return self._impl_context.pages
+        return self.context.pages

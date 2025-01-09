@@ -655,7 +655,7 @@ def create_ui(theme_name="Ocean"):
             inputs=enable_recording,
             outputs=save_recording_path
         )
-        
+
         # Button logic
         run_button.click(
             fn=run_with_stream,
@@ -689,4 +689,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ui = create_ui(theme_name=args.theme)
-    ui.launch(server_name=args.ip, server_port=args.port, share=True)
+    ui.launch(server_name=args.ip, server_port=args.port)
