@@ -199,7 +199,6 @@ async def run_custom_agent(
     controller = CustomController()
     playwright = None
     browser_context_ = None
-    browser = None  # Initialize browser to None
     try:
         if use_own_browser:
             playwright = await async_playwright().start()
@@ -279,17 +278,15 @@ async def run_custom_agent(
         model_actions = ""
         model_thoughts = ""
     finally:
-        # Close persistent context if it was initialized
+        # 显式关闭持久化上下文
         if browser_context_:
             await browser_context_.close()
 
-        # Stop Playwright if it was started
+        # 关闭 Playwright 对象
         if playwright:
             await playwright.stop()
+        await browser.close()
 
-        # Close the browser if it was initialized
-        if browser:
-            await browser.close()
 
     return final_result, errors, model_actions, model_thoughts
 
