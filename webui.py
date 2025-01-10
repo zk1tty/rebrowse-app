@@ -639,6 +639,9 @@ def create_ui(theme_name="Ocean"):
 
             with gr.TabItem("📊 Results", id=5):
                 with gr.Group():
+                    
+                    recording_file = gr.Video(label="Latest Recording")
+
                     gr.Markdown("### Results")
                     with gr.Row():
                         with gr.Column():
@@ -659,8 +662,7 @@ def create_ui(theme_name="Ocean"):
                                 label="Model Thoughts", lines=3, show_label=True
                             )
                         
-                        recording_file = gr.Video(label="Latest Recording")
-                        trace_file = gr.File(label="Trace File")
+                    trace_file = gr.File(label="Trace File")
             with gr.TabItem("🎥 Recordings", id=6):
                 def list_recordings(save_recording_path):
                     if not os.path.exists(save_recording_path):
