@@ -620,21 +620,26 @@ def create_ui(theme_name="Ocean"):
                     )
 
             with gr.TabItem("🤖 Run Agent", id=4):
-                task = gr.Textbox(
-                    lines=4,
-                    value="go to google.com and type 'OpenAI' click search and give me the first url",
-                    info="Describe what you want the agent to do",
-                )
-                add_infos = gr.Textbox(lines=3, label="Additional Information")
-
-            with gr.TabItem("📊 Results", id=5):
-                with gr.Group():
-                    gr.Markdown("### Results")
+                    task = gr.Textbox(
+                        lines=4,
+                        value="go to google.com and type 'OpenAI' click search and give me the first url",
+                        info="Describe what you want the agent to do",
+                    )
+                    add_infos = gr.Textbox(lines=3, label="Additional Information")
+                    
+                    with gr.Row():
+                        run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
+                        stop_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
+                        
                     with gr.Row():
                         browser_view = gr.HTML(
                             value="<div>Waiting for browser session...</div>",
                             label="Live Browser View",
-                        )
+                    )
+
+            with gr.TabItem("📊 Results", id=5):
+                with gr.Group():
+                    gr.Markdown("### Results")
                     with gr.Row():
                         with gr.Column():
                             final_result_output = gr.Textbox(
@@ -688,9 +693,7 @@ def create_ui(theme_name="Ocean"):
                     fn=list_recordings,
                     inputs=save_recording_path,
                     outputs=recordings_gallery
-                )
-        with gr.Row():
-            run_button = gr.Button("▶️ Run Agent", variant="primary")
+                )            
 
         # Attach the callback to the LLM provider dropdown
         llm_provider.change(
