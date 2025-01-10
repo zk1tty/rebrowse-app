@@ -5,43 +5,36 @@
 # @Project : browser-use-webui
 # @FileName: webui.py
 
-import pdb
+import os
 import glob
-
-from dotenv import load_dotenv
-load_dotenv()
+import asyncio
 import argparse
 import gradio as gr
-import os
-import asyncio
+
+from browser_use.agent.service import Agent
 from playwright.async_api import async_playwright
 from browser_use.browser.browser import Browser, BrowserConfig
 from browser_use.browser.context import (
     BrowserContextConfig,
     BrowserContextWindowSize,
 )
-from browser_use.agent.service import Agent
-from src.browser.custom_browser import CustomBrowser
-from src.controller.custom_controller import CustomController
+
+from src.utils import utils
 from src.agent.custom_agent import CustomAgent
-from src.agent.custom_prompts import CustomSystemPrompt
 from src.browser.custom_browser import CustomBrowser
+from src.agent.custom_prompts import CustomSystemPrompt
+from src.browser.config import BrowserPersistenceConfig
 from src.browser.custom_context import BrowserContextConfig
 from src.controller.custom_controller import CustomController
-from src.utils import utils
-from src.utils.utils import update_model_dropdown
-from src.browser.config import BrowserPersistenceConfig
-from src.browser.custom_browser import CustomBrowser
-from browser_use.browser.browser import BrowserConfig
-from browser_use.browser.context import BrowserContextConfig, BrowserContextWindowSize
+from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # Global variables for persistence
 _global_browser = None
 _global_browser_context = None
 _global_playwright = None
-from src.utils.file_utils import get_latest_files
-from src.utils.stream_utils import capture_screenshot
-
 
 async def run_browser_agent(
         agent_type,
