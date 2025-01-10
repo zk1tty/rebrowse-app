@@ -26,6 +26,7 @@ from src.agent.custom_prompts import CustomSystemPrompt
 from src.browser.config import BrowserPersistenceConfig
 from src.browser.custom_context import BrowserContextConfig
 from src.controller.custom_controller import CustomController
+from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot
 
 from dotenv import load_dotenv
@@ -202,8 +203,6 @@ async def run_custom_agent(
     global _global_browser, _global_browser_context, _global_playwright
     
     controller = CustomController()
-    playwright = None
-    browser = None
     persistence_config = BrowserPersistenceConfig.from_env()
     
     try:
@@ -463,8 +462,6 @@ def main():
     finally:
         asyncio.get_event_loop().run_until_complete(cleanup())
 
-from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
-
 # Define the theme map globally
 theme_map = {
     "Default": Default(),
@@ -477,7 +474,6 @@ theme_map = {
     "Base": Base()
 }
 
-# Create the Gradio UI
 def create_ui(theme_name="Ocean"):
     css = """
     .gradio-container {
@@ -495,9 +491,19 @@ def create_ui(theme_name="Ocean"):
         border-radius: 10px;
     }
     """
+    js = """
+    function refresh() {
+        const url = new URL(window.location);
+        if (url.searchParams.get('__theme') !== 'dark') {
+            url.searchParams.set('__theme', 'dark');
+            window.location.href = url.href;
+        }
+    }
+    """
 
-    with gr.Blocks(title="Browser Use WebUI", theme=theme_map[theme_name], css=css) as demo:
-        # Header
+    with gr.Blocks(
+            title="Browser Use WebUI", theme=theme_map[theme_name], css=css, js=js
+    ) as demo:
         with gr.Row():
             gr.Markdown(
                 """
@@ -673,7 +679,7 @@ def create_ui(theme_name="Ocean"):
                             model_thoughts_output = gr.Textbox(
                                 label="Model Thoughts", lines=3, show_label=True
                             )
-                        
+
                     trace_file = gr.File(label="Trace File")
             with gr.TabItem("🎥 Recordings", id=6):
                 def list_recordings(save_recording_path):
@@ -707,7 +713,7 @@ def create_ui(theme_name="Ocean"):
                     fn=list_recordings,
                     inputs=save_recording_path,
                     outputs=recordings_gallery
-                )            
+                )
 
         # Attach the callback to the LLM provider dropdown
         llm_provider.change(
