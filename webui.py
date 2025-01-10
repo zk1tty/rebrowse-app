@@ -387,12 +387,12 @@ def create_ui(theme_name="Ocean"):
                     llm_provider = gr.Dropdown(
                         ["anthropic", "openai", "deepseek", "gemini", "ollama", "azure_openai"],
                         label="LLM Provider",
-                        value="",
+                        value="deepseek",
                         info="Select your preferred language model provider"
                     )
                     llm_model_name = gr.Dropdown(
                         label="Model Name",
-                        value="",
+                        value="deepseek-chat",
                         interactive=True,
                         allow_custom_value=True,  # Allow users to input custom model names
                         info="Select a model from the dropdown or type a custom model name"
