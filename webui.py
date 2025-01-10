@@ -58,7 +58,6 @@ async def run_browser_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content,
-        browser_context=None  
 ):
     # Disable recording if the checkbox is unchecked
     if not enable_recording:
@@ -84,7 +83,6 @@ async def run_browser_agent(
         base_url=llm_base_url,
         api_key=llm_api_key,
     )
-
     if agent_type == "org":
         final_result, errors, model_actions, model_thoughts = await run_org_agent(
             llm=llm,
@@ -115,7 +113,7 @@ async def run_browser_agent(
             max_steps=max_steps,
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
+            tool_call_in_content=tool_call_in_content
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
@@ -144,7 +142,7 @@ async def run_org_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content,
+        tool_call_in_content
 ):
     browser = Browser(
         config=BrowserConfig(
@@ -378,8 +376,7 @@ async def run_with_stream(
                 max_steps=max_steps,
                 use_vision=use_vision,
                 max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content,
-                browser_context=_global_browser_context
+                tool_call_in_content=tool_call_in_content
             )
         )
 
@@ -467,6 +464,7 @@ def create_ui(theme_name="Ocean"):
         border-radius: 10px;
     }
     """
+
     js = """
     function refresh() {
         const url = new URL(window.location);
@@ -615,11 +613,18 @@ def create_ui(theme_name="Ocean"):
 
             with gr.TabItem("🤖 Run Agent", id=4):
                 task = gr.Textbox(
+                    label="Task Description",
                     lines=4,
+                    placeholder="Enter your task here...",
                     value="go to google.com and type 'OpenAI' click search and give me the first url",
                     info="Describe what you want the agent to do",
                 )
-                add_infos = gr.Textbox(lines=3, label="Additional Information")
+                add_infos = gr.Textbox(
+                    label="Additional Information",
+                    lines=3,
+                    placeholder="Add any helpful context or instructions...",
+                    info="Optional hints to help the LLM complete the task",
+                )
                 
                 with gr.Row():
                     run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
@@ -705,7 +710,7 @@ def create_ui(theme_name="Ocean"):
             outputs=save_recording_path
         )
 
-        # Button logic
+        # Run button click handler
         run_button.click(
             fn=run_with_stream,
             inputs=[
@@ -727,8 +732,6 @@ def create_ui(theme_name="Ocean"):
 
     return demo
 
-
-# Update the main function to handle cleanup
 def main():
     parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
     parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
