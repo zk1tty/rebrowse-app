@@ -30,6 +30,16 @@ from src.browser.custom_context import BrowserContextConfig
 from src.controller.custom_controller import CustomController
 from src.utils import utils
 from src.utils.utils import update_model_dropdown
+from src.browser.config import BrowserPersistenceConfig
+from src.browser.custom_browser import CustomBrowser
+from src.browser.custom_context import CustomBrowserContext
+from browser_use.browser.browser import BrowserConfig
+from browser_use.browser.context import BrowserContextConfig, BrowserContextWindowSize
+
+# Global variables for persistence
+_global_browser = None
+_global_browser_context = None
+_global_playwright = None
 from src.utils.file_utils import get_latest_files
 from src.utils.stream_utils import capture_screenshot
 
@@ -196,121 +206,113 @@ async def run_custom_agent(
         tool_call_in_content,
         browser_context=None,  # receive context
 ):
+    global _global_browser, _global_browser_context, _global_playwright
+    
     controller = CustomController()
     playwright = None
     browser = None
+    persistence_config = BrowserPersistenceConfig.from_env()
+    
     try:
-        if use_own_browser:
-            playwright = await async_playwright().start()
-            chrome_exe = os.getenv("CHROME_PATH", "")
-            chrome_use_data = os.getenv("CHROME_USER_DATA", "")
-
-            if chrome_exe == "":
-                chrome_exe = None
-            elif not os.path.exists(chrome_exe):
-                raise ValueError(f"Chrome executable not found at {chrome_exe}")
-
-            if chrome_use_data == "":
-                chrome_use_data = None
-
-            browser_context_ = await playwright.chromium.launch_persistent_context(
-                user_data_dir=chrome_use_data if chrome_use_data else "",
-                executable_path=chrome_exe,
-                no_viewport=False,
-                headless=headless,  # 保持浏览器窗口可见
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
-                ),
-                java_script_enabled=True,
-                bypass_csp=disable_security,
-                ignore_https_errors=disable_security,
-                record_video_dir=save_recording_path if save_recording_path else None,
-                record_video_size={"width": window_w, "height": window_h},
-            )
-        else:
-            browser_context_ = None
-
-        if browser_context is not None:
-            # Reuse context
-            agent = CustomAgent(
-                task=task,
-                add_infos=add_infos,
-                use_vision=use_vision,
-                llm=llm,
-                browser_context=browser_context,
-                controller=controller,
-                system_prompt_class=CustomSystemPrompt
-            )
-            history = await agent.run(max_steps=max_steps)
-            final_result = history.final_result()
-            errors = history.errors()
-            model_actions = history.model_actions()
-            model_thoughts = history.model_thoughts()
-            recorded_files = get_latest_files(save_recording_path)
-            trace_file = get_latest_files(save_recording_path + "/../traces")
-            return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
-        else:
-            browser = CustomBrowser(
+        # Initialize global browser if needed
+        if _global_browser is None:
+            _global_browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
                     extra_chromium_args=[f"--window-size={window_w},{window_h}"],
                 )
             )
-            async with await browser.new_context(
+
+        # Handle browser context based on configuration
+        if use_own_browser:
+            if _global_browser_context is None:
+                _global_playwright = await async_playwright().start()
+                chrome_exe = os.getenv("CHROME_PATH", "")
+                chrome_use_data = os.getenv("CHROME_USER_DATA", "")
+
+                browser_context = await _global_playwright.chromium.launch_persistent_context(
+                    user_data_dir=chrome_use_data,
+                    executable_path=chrome_exe,
+                    no_viewport=False,
+                    headless=headless,
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
+                    ),
+                    java_script_enabled=True,
+                    bypass_csp=disable_security,
+                    ignore_https_errors=disable_security,
+                    record_video_dir=save_recording_path if save_recording_path else None,
+                    record_video_size={"width": window_w, "height": window_h},
+                )
+                _global_browser_context = await _global_browser.new_context(
                     config=BrowserContextConfig(
                         trace_path=save_trace_path if save_trace_path else None,
-                        save_recording_path=save_recording_path
-                        if save_recording_path
-                        else None,
+                        save_recording_path=save_recording_path if save_recording_path else None,
                         no_viewport=False,
                         browser_window_size=BrowserContextWindowSize(
                             width=window_w, height=window_h
                         ),
                     ),
-                    context=browser_context_,
-            ) as browser_context:
-                agent = CustomAgent(
-                    task=task,
-                    add_infos=add_infos,
-                    use_vision=use_vision,
-                    llm=llm,
-                    browser_context=browser_context,
-                    controller=controller,
-                    system_prompt_class=CustomSystemPrompt,
-                    max_actions_per_step=max_actions_per_step,
-                    tool_call_in_content=tool_call_in_content
+                    context=browser_context,
                 )
-                history = await agent.run(max_steps=max_steps)
-                final_result = history.final_result()
-                errors = history.errors()
-                model_actions = history.model_actions()
-                model_thoughts = history.model_thoughts()
-                recorded_files = get_latest_files(save_recording_path)
-                trace_file = get_latest_files(save_recording_path + "/../traces")
-                return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
+        else:
+            if _global_browser_context is None:
+                _global_browser_context = await _global_browser.new_context(
+                    config=BrowserContextConfig(
+                        trace_path=save_trace_path if save_trace_path else None,
+                        save_recording_path=save_recording_path if save_recording_path else None,
+                        no_viewport=False,
+                        browser_window_size=BrowserContextWindowSize(
+                            width=window_w, height=window_h
+                        ),
+                    ),
+                )
+
+        # Create and run agent
+        agent = CustomAgent(
+            task=task,
+            add_infos=add_infos,
+            use_vision=use_vision,
+            llm=llm,
+            browser_context=_global_browser_context,
+            controller=controller,
+            system_prompt_class=CustomSystemPrompt,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
+        )
+        history = await agent.run(max_steps=max_steps)
+
+        final_result = history.final_result()
+        errors = history.errors()
+        model_actions = history.model_actions()
+        model_thoughts = history.model_thoughts()
+        recorded_files = get_latest_files(save_recording_path)
+        trace_file = get_latest_files(save_trace_path)        
 
     except Exception as e:
         import traceback
-
         traceback.print_exc()
-        final_result = ""
         errors = str(e) + "\n" + traceback.format_exc()
         model_actions = ""
         model_thoughts = ""
         recorded_files = {}
         trace_file = {}
     finally:
-        # 显式关闭持久化上下文
-        if browser_context_:
-            await browser_context_.close()
+        # Handle cleanup based on persistence configuration
+        if not persistence_config.persistent_session:
+            if _global_browser_context:
+                await _global_browser_context.close()
+                _global_browser_context = None
 
-        # 关闭 Playwright 对象
-        if playwright:
-            await playwright.stop()
-        if browser:
-            await browser.close()
+            if _global_playwright:
+                await _global_playwright.stop()
+                _global_playwright = None
+
+            if _global_browser:
+                await _global_browser.close()
+                _global_browser = None
     return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
 
 async def run_with_stream(
@@ -336,95 +338,71 @@ async def run_with_stream(
     tool_call_in_content,
 ):
     """Wrapper to run the agent and handle streaming."""
-    browser = None
+    global _global_browser, _global_browser_context
+    
     try:
-        # Initialize the browser
-        browser = CustomBrowser(
-            config=BrowserConfig(
-                headless=False,
-                disable_security=disable_security,
-                extra_chromium_args=[f"--window-size={window_w},{window_h}"],
-            )
-        )
-
-        # Create a new browser context
-        async with await browser.new_context(
-            config=BrowserContextConfig(
-                trace_path=save_trace_path if save_trace_path else None,
-                save_recording_path=save_recording_path if save_recording_path else None,
-                no_viewport=False,
-                browser_window_size=BrowserContextWindowSize(
-                    width=window_w, height=window_h
-                ),
-            )
-        ) as browser_context:
-            # Run the browser agent in the background
-            agent_task = asyncio.create_task(
-                run_browser_agent(
-                    agent_type=agent_type,
-                    llm_provider=llm_provider,
-                    llm_model_name=llm_model_name,
-                    llm_temperature=llm_temperature,
-                    llm_base_url=llm_base_url,
-                    llm_api_key=llm_api_key,
-                    use_own_browser=use_own_browser,
-                    headless=headless,
+        # Initialize the global browser if it doesn't exist
+        if _global_browser is None:
+            _global_browser = CustomBrowser(
+                config=BrowserConfig(
+                    headless=False,
                     disable_security=disable_security,
-                    window_w=window_w,
-                    window_h=window_h,
-                    save_recording_path=save_recording_path,
-                    save_trace_path=save_trace_path,
-                    enable_recording=enable_recording,
-                    task=task,
-                    add_infos=add_infos,
-                    max_steps=max_steps,
-                    use_vision=use_vision,
-                    max_actions_per_step=max_actions_per_step,
-                    tool_call_in_content=tool_call_in_content,
-                    browser_context=browser_context  # Explicit keyword argument
+                    extra_chromium_args=[f"--window-size={window_w},{window_h}"],
                 )
             )
 
-            # Initialize values for streaming
-            html_content = "<div>Starting browser...</div>"
-            final_result = errors = model_actions = model_thoughts = ""
-            recording = trace = None
+        # Create or reuse browser context
+        if _global_browser_context is None:
+            _global_browser_context = await _global_browser.new_context(
+                config=BrowserContextConfig(
+                    trace_path=save_trace_path if save_trace_path else None,
+                    save_recording_path=save_recording_path if save_recording_path else None,
+                    no_viewport=False,
+                    browser_window_size=BrowserContextWindowSize(
+                        width=window_w, height=window_h
+                    ),
+                )
+            )
 
-            # Periodically update the stream while the agent task is running
-            while not agent_task.done():
-                try:
-                    html_content = await capture_screenshot(browser_context)
-                except Exception as e:
-                    html_content = f"<div class='error'>Screenshot error: {str(e)}</div>"
-                
-                yield [
-                    html_content,
-                    final_result,
-                    errors,
-                    model_actions,
-                    model_thoughts,
-                    recording,
-                    trace,
-                ]
-                await asyncio.sleep(0.01)
+        # Run the browser agent in the background
+        agent_task = asyncio.create_task(
+            run_browser_agent(
+                agent_type=agent_type,
+                llm_provider=llm_provider,
+                llm_model_name=llm_model_name,
+                llm_temperature=llm_temperature,
+                llm_base_url=llm_base_url,
+                llm_api_key=llm_api_key,
+                use_own_browser=use_own_browser,
+                headless=headless,
+                disable_security=disable_security,
+                window_w=window_w,
+                window_h=window_h,
+                save_recording_path=save_recording_path,
+                save_trace_path=save_trace_path,
+                enable_recording=enable_recording,
+                task=task,
+                add_infos=add_infos,
+                max_steps=max_steps,
+                use_vision=use_vision,
+                max_actions_per_step=max_actions_per_step,
+                tool_call_in_content=tool_call_in_content,
+                browser_context=_global_browser_context
+            )
+        )
 
-            # Once the agent task completes, get the results
+        # Initialize values for streaming
+        html_content = "<div>Using browser...</div>"
+        final_result = errors = model_actions = model_thoughts = ""
+        recording = trace = None
+
+        # Periodically update the stream while the agent task is running
+        while not agent_task.done():
             try:
-                result = await agent_task
-                if isinstance(result, tuple) and len(result) == 6:
-                    (
-                        final_result,
-                        errors,
-                        model_actions,
-                        model_thoughts,
-                        recording,
-                        trace,
-                    ) = result
-                else:
-                    errors = "Unexpected result format from agent"
+                html_content = await capture_screenshot(_global_browser_context)
             except Exception as e:
-                errors = f"Agent error: {str(e)}"
-
+                html_content = f"<div class='error'>Screenshot error: {str(e)}</div>"
+            
             yield [
                 html_content,
                 final_result,
@@ -434,10 +412,30 @@ async def run_with_stream(
                 recording,
                 trace,
             ]
+            await asyncio.sleep(0.01)
+
+        # Once the agent task completes, get the results
+        try:
+            result = await agent_task
+            if isinstance(result, tuple) and len(result) == 6:
+                final_result, errors, model_actions, model_thoughts, recording, trace = result
+            else:
+                errors = "Unexpected result format from agent"
+        except Exception as e:
+            errors = f"Agent error: {str(e)}"
+
+        yield [
+            html_content,
+            final_result,
+            errors,
+            model_actions,
+            model_thoughts,
+            recording,
+            trace,
+        ]
 
     except Exception as e:
         import traceback
-
         yield [
             f"<div class='error'>Browser error: {str(e)}</div>",
             "",
@@ -447,9 +445,30 @@ async def run_with_stream(
             None,
             None,
         ]
+
+# Update the main function to handle cleanup
+def main():
+    async def cleanup():
+        global _global_browser, _global_browser_context
+        if _global_browser_context:
+            await _global_browser_context.close()
+        if _global_browser:
+            await _global_browser.close()
+        _global_browser = None
+        _global_browser_context = None
+
+    parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
+    parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
+    parser.add_argument("--port", type=int, default=7788, help="Port to listen on")
+    parser.add_argument("--theme", type=str, default="Ocean", choices=theme_map.keys(), help="Theme to use for the UI")
+    parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
+    args = parser.parse_args()
+
+    try:
+        demo = create_ui(theme_name=args.theme)
+        demo.launch(server_name=args.ip, server_port=args.port)
     finally:
-        if browser:
-            await browser.close()
+        asyncio.get_event_loop().run_until_complete(cleanup())
 
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 
@@ -732,17 +751,6 @@ def create_ui(theme_name="Ocean"):
         )
 
     return demo
-
-def main():
-    parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
-    parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
-    parser.add_argument("--port", type=int, default=7788, help="Port to listen on")
-    parser.add_argument("--theme", type=str, default="Ocean", choices=theme_map.keys(), help="Theme to use for the UI")
-    parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
-    args = parser.parse_args()
-
-    demo = create_ui(theme_name=args.theme)
-    demo.launch(server_name=args.ip, server_port=args.port)
 
 if __name__ == '__main__':
     main()
