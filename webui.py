@@ -32,7 +32,6 @@ from src.utils import utils
 from src.utils.utils import update_model_dropdown
 from src.browser.config import BrowserPersistenceConfig
 from src.browser.custom_browser import CustomBrowser
-from src.browser.custom_context import CustomBrowserContext
 from browser_use.browser.browser import BrowserConfig
 from browser_use.browser.context import BrowserContextConfig, BrowserContextWindowSize
 
@@ -87,6 +86,7 @@ async def run_browser_agent(
                 window_w=window_w,
                 window_h=window_h,
                 save_recording_path=save_recording_path,
+                save_trace_path=save_trace_path,
                 task=task,
                 max_steps=max_steps,
                 use_vision=use_vision,
@@ -119,7 +119,7 @@ async def run_browser_agent(
 
     finally:
         if browser:
-            await browser.close()
+            browser.close()
 
 async def run_org_agent(
         llm,

@@ -24,7 +24,7 @@ class CustomBrowserContext(BrowserContext):
         self,
         browser: "Browser",
         config: BrowserContextConfig = BrowserContextConfig(),
-        context: PlaywrightBrowserContext = None,
+        context: PlaywrightBrowserContext | None = None,
     ):
         super(CustomBrowserContext, self).__init__(browser=browser, config=config)
         self.context = context
@@ -34,6 +34,8 @@ class CustomBrowserContext(BrowserContext):
     @property
     def impl_context(self) -> PlaywrightBrowserContext:
         """Returns the underlying Playwright context implementation"""
+        if self.context is None:
+            raise RuntimeError("Failed to create or retrieve a browser context.")
         return self.context
 
     async def _create_context(self, browser: PlaywrightBrowser) -> PlaywrightBrowserContext:
@@ -106,6 +108,8 @@ class CustomBrowserContext(BrowserContext):
         """Returns the current page or creates one if none exists."""
         if not self.context:
             await self._create_context(await self.browser.get_playwright_browser())
+        if not self.context:
+            raise RuntimeError("Browser context is not initialized.")
         pages = self.context.pages
         if not pages:
             logger.warning("No existing pages in the context. Creating a new page.")
