@@ -12,8 +12,7 @@ from typing import List, Optional, Type
 from browser_use.agent.message_manager.service import MessageManager
 from browser_use.agent.message_manager.views import MessageHistory
 from browser_use.agent.prompts import SystemPrompt
-from browser_use.agent.views import ActionResult
-from .custom_views import CustomAgentStepInfo
+from browser_use.agent.views import ActionResult, AgentStepInfo
 from browser_use.browser.views import BrowserState
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -41,7 +40,6 @@ class CustomMassageManager(MessageManager):
             max_actions_per_step: int = 10,
             tool_call_in_content: bool = False,
     ):
-        self.tool_call_in_content = tool_call_in_content
         super().__init__(
             llm=llm,
             task=task,
@@ -53,17 +51,13 @@ class CustomMassageManager(MessageManager):
             include_attributes=include_attributes,
             max_error_length=max_error_length,
             max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
         )
 
         # Custom: Move Task info to state_message
         self.history = MessageHistory()
         self._add_message_with_tokens(self.system_prompt)
-        tool_calls = self._create_tool_calls()
-        example_tool_call = self._create_example_tool_call(tool_calls)
-        self._add_message_with_tokens(example_tool_call)
-
-    def _create_tool_calls(self):
-        return [
+        tool_calls = [
             {
                 'name': 'CustomAgentOutput',
                 'args': {
@@ -80,25 +74,25 @@ class CustomMassageManager(MessageManager):
                 'type': 'tool_call',
             }
         ]
-
-    def _create_example_tool_call(self, tool_calls):
         if self.tool_call_in_content:
             # openai throws error if tool_calls are not responded -> move to content
-            return AIMessage(
+            example_tool_call = AIMessage(
                 content=f'{tool_calls}',
                 tool_calls=[],
             )
         else:
-            return AIMessage(
+            example_tool_call = AIMessage(
                 content=f'',
                 tool_calls=tool_calls,
             )
 
+        self._add_message_with_tokens(example_tool_call)
+
     def add_state_message(
-        self,
-        state: BrowserState,
-        result: Optional[List[ActionResult]] = None,
-        step_info: Optional[CustomAgentStepInfo] = None,
+            self,
+            state: BrowserState,
+            result: Optional[List[ActionResult]] = None,
+            step_info: Optional[AgentStepInfo] = None,
     ) -> None:
         """Add browser state as human message"""
 
@@ -111,7 +105,7 @@ class CustomMassageManager(MessageManager):
                         self._add_message_with_tokens(msg)
                     if r.error:
                         msg = HumanMessage(
-                            content=str(r.error)[-self.max_error_length :]
+                            content=str(r.error)[-self.max_error_length:]
                         )
                         self._add_message_with_tokens(msg)
                     result = None  # if result in history, we dont want to add it again
