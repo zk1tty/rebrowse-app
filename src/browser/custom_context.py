@@ -24,7 +24,7 @@ class CustomBrowserContext(BrowserContext):
         self,
         browser: "Browser",
         config: BrowserContextConfig = BrowserContextConfig(),
-        context: PlaywrightBrowserContext | None = None,
+        context: PlaywrightBrowserContext = None,
     ):
         super(CustomBrowserContext, self).__init__(browser=browser, config=config)
         self.context = context
@@ -41,10 +41,9 @@ class CustomBrowserContext(BrowserContext):
     async def _create_context(self, browser: PlaywrightBrowser) -> PlaywrightBrowserContext:
         """Creates a new browser context with anti-detection measures and loads cookies if available."""
         if self.context:
-            logger.info("Browser context already exists, returning existing context.")
             return self.context
 
-        # Check for persistent context
+        # Check if we should use existing context for persistence
         if self._persistence_config.persistent_session and len(browser.contexts) > 0:
             logger.info("Using existing persistent context.")
             self.context = browser.contexts[0]
@@ -68,20 +67,35 @@ class CustomBrowserContext(BrowserContext):
         if self.config.trace_path:
             await self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
-        # Load cookies
+        # Load cookies if they exist
         if self.config.cookies_file and os.path.exists(self.config.cookies_file):
             with open(self.config.cookies_file, "r") as f:
                 cookies = json.load(f)
                 logger.info(f"Loaded {len(cookies)} cookies from {self.config.cookies_file}.")
                 await self.context.add_cookies(cookies)
 
-        # Inject anti-detection scripts
+        # Expose anti-detection scripts
         await self.context.add_init_script(
             """
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            // Webdriver property
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+
+            // Languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+
+            // Plugins
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+
+            // Chrome runtime
             window.chrome = { runtime: {} };
+
+            // Permissions
             const originalQuery = window.navigator.permissions.query;
             window.navigator.permissions.query = (parameters) => (
                 parameters.name === 'notifications' ?
