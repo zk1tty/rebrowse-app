@@ -60,60 +60,79 @@ async def run_browser_agent(
         tool_call_in_content,
         browser_context=None  
 ):
-    """Run the browser agent with proper browser context initialization"""
-    browser = None
-    try:
-        # Run the agent
-        llm = utils.get_llm_model(
-            provider=llm_provider,
-            model_name=llm_model_name,
-            temperature=llm_temperature,
-            base_url=llm_base_url,
-            api_key=llm_api_key,
+    # Disable recording if the checkbox is unchecked
+    if not enable_recording:
+        save_recording_path = None
+
+    # Ensure the recording directory exists if recording is enabled
+    if save_recording_path:
+        os.makedirs(save_recording_path, exist_ok=True)
+
+    # Get the list of existing videos before the agent runs
+    existing_videos = set()
+    if save_recording_path:
+        existing_videos = set(
+            glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
+            + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
         )
 
-        if agent_type == "org":
-            result = await run_org_agent(
-                llm=llm,
-                headless=headless,
-                disable_security=disable_security,
-                window_w=window_w,
-                window_h=window_h,
-                save_recording_path=save_recording_path,
-                save_trace_path=save_trace_path,
-                task=task,
-                max_steps=max_steps,
-                use_vision=use_vision,
-                max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content,
-                browser_context=browser_context,
-            )
-        elif agent_type == "custom":
-            result = await run_custom_agent(
-                llm=llm,
-                use_own_browser=use_own_browser,
-                headless=headless,
-                disable_security=disable_security,
-                window_w=window_w,
-                window_h=window_h,
-                save_recording_path=save_recording_path,
-                save_trace_path=save_trace_path,
-                task=task,
-                add_infos=add_infos,
-                max_steps=max_steps,
-                use_vision=use_vision,
-                max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content,
-                browser_context=browser_context,
-            )
-        else:
-            raise ValueError(f"Invalid agent type: {agent_type}")
-        
-        return result
+    # Run the agent
+    llm = utils.get_llm_model(
+        provider=llm_provider,
+        model_name=llm_model_name,
+        temperature=llm_temperature,
+        base_url=llm_base_url,
+        api_key=llm_api_key,
+    )
 
-    finally:
-        if browser:
-            browser.close()
+    if agent_type == "org":
+        final_result, errors, model_actions, model_thoughts = await run_org_agent(
+            llm=llm,
+            headless=headless,
+            disable_security=disable_security,
+            window_w=window_w,
+            window_h=window_h,
+            save_recording_path=save_recording_path,
+            save_trace_path=save_trace_path,
+            task=task,
+            max_steps=max_steps,
+            use_vision=use_vision,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
+            browser_context=browser_context,
+        )
+    elif agent_type == "custom":
+        final_result, errors, model_actions, model_thoughts = await run_custom_agent(
+            llm=llm,
+            use_own_browser=use_own_browser,
+            headless=headless,
+            disable_security=disable_security,
+            window_w=window_w,
+            window_h=window_h,
+            save_recording_path=save_recording_path,
+            save_trace_path=save_trace_path,
+            task=task,
+            add_infos=add_infos,
+            max_steps=max_steps,
+            use_vision=use_vision,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
+            browser_context=browser_context,
+        )
+    else:
+        raise ValueError(f"Invalid agent type: {agent_type}")
+    
+    # Get the list of videos after the agent runs (if recording is enabled)
+    latest_video = None
+    if save_recording_path:
+        new_videos = set(
+            glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
+            + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
+        )
+        if new_videos - existing_videos:
+            latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
+
+    return final_result, errors, model_actions, model_thoughts, latest_video
 
 async def run_org_agent(
         llm,
@@ -151,6 +170,8 @@ async def run_org_agent(
                 task=task,
                 llm=llm,
                 use_vision=use_vision,
+                max_actions_per_step=max_actions_per_step,
+                tool_call_in_content=tool_call_in_content,
                 browser_context=browser_context_in,
             )
             history = await agent.run(max_steps=max_steps)
@@ -180,7 +201,7 @@ async def run_org_agent(
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
         recorded_files = get_latest_files(save_recording_path)
-        trace_file = get_latest_files(save_recording_path + "/../traces")
+        trace_file = get_latest_files(save_trace_path)
         return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
 
 async def run_custom_agent(
