@@ -286,8 +286,6 @@ async def run_custom_agent(
         if playwright:
             await playwright.stop()
         await browser.close()
-
-
     return final_result, errors, model_actions, model_thoughts
 
 # Define the theme map globally
