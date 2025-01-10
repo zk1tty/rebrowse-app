@@ -148,9 +148,9 @@ async def run_org_agent(
 ):
     browser = Browser(
         config=BrowserConfig(
-            headless=headless,  # Force non-headless for streaming
+            headless=headless,
             disable_security=disable_security,
-            extra_chromium_args=[f'--window-size={window_w},{window_h}'],
+            extra_chromium_args=[f"--window-size={window_w},{window_h}"],
         )
     )
     async with await browser.new_context(
@@ -181,8 +181,8 @@ async def run_org_agent(
         recorded_files = get_latest_files(save_recording_path)
         trace_file = get_latest_files(save_trace_path)
         
-        await browser.close()
-        return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
+    await browser.close()
+    return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
 
 async def run_custom_agent(
         llm,
@@ -437,30 +437,6 @@ async def run_with_stream(
             None,
             None,
         ]
-
-# Update the main function to handle cleanup
-def main():
-    async def cleanup():
-        global _global_browser, _global_browser_context
-        if _global_browser_context:
-            await _global_browser_context.close()
-        if _global_browser:
-            await _global_browser.close()
-        _global_browser = None
-        _global_browser_context = None
-
-    parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
-    parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
-    parser.add_argument("--port", type=int, default=7788, help="Port to listen on")
-    parser.add_argument("--theme", type=str, default="Ocean", choices=theme_map.keys(), help="Theme to use for the UI")
-    parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
-    args = parser.parse_args()
-
-    try:
-        demo = create_ui(theme_name=args.theme)
-        demo.launch(server_name=args.ip, server_port=args.port)
-    finally:
-        asyncio.get_event_loop().run_until_complete(cleanup())
 
 # Define the theme map globally
 theme_map = {
@@ -750,6 +726,19 @@ def create_ui(theme_name="Ocean"):
         )
 
     return demo
+
+
+# Update the main function to handle cleanup
+def main():
+    parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
+    parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
+    parser.add_argument("--port", type=int, default=7788, help="Port to listen on")
+    parser.add_argument("--theme", type=str, default="Ocean", choices=theme_map.keys(), help="Theme to use for the UI")
+    parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
+    args = parser.parse_args()
+
+    demo = create_ui(theme_name=args.theme)
+    demo.launch(server_name=args.ip, server_port=args.port)
 
 if __name__ == '__main__':
     main()
