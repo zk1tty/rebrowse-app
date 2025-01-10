@@ -86,7 +86,7 @@ async def run_browser_agent(
     )
 
     if agent_type == "org":
-        final_result, errors, model_actions, model_thoughts = await run_org_agent(
+        final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_org_agent(
             llm=llm,
             headless=headless,
             disable_security=disable_security,
@@ -99,7 +99,6 @@ async def run_browser_agent(
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
             tool_call_in_content=tool_call_in_content,
-            browser_context=browser_context,
         )
     elif agent_type == "custom":
         final_result, errors, model_actions, model_thoughts = await run_custom_agent(
@@ -117,11 +116,10 @@ async def run_browser_agent(
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
             tool_call_in_content=tool_call_in_content,
-            browser_context=browser_context,
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
-    
+
     # Get the list of videos after the agent runs (if recording is enabled)
     latest_video = None
     if save_recording_path:
@@ -147,61 +145,41 @@ async def run_org_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content,
-        browser_context=None,  # receive context
 ):
-    browser = None
-    if browser_context is None:
-        browser = Browser(
-            config=BrowserConfig(
-                headless=headless,  # Force non-headless for streaming
-                disable_security=disable_security,
-                extra_chromium_args=[f'--window-size={window_w},{window_h}'],
-            )
+    browser = Browser(
+        config=BrowserConfig(
+            headless=headless,  # Force non-headless for streaming
+            disable_security=disable_security,
+            extra_chromium_args=[f'--window-size={window_w},{window_h}'],
         )
-        async with await browser.new_context(
-                config=BrowserContextConfig(
-                    trace_path=save_trace_path if save_trace_path else None,
-                    save_recording_path=save_recording_path if save_recording_path else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(width=window_w, height=window_h),
-                )
-        ) as browser_context_in:
-            agent = Agent(
-                task=task,
-                llm=llm,
-                use_vision=use_vision,
-                max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content,
-                browser_context=browser_context_in,
+    )
+    async with await browser.new_context(
+            config=BrowserContextConfig(
+                trace_path=save_trace_path if save_trace_path else None,
+                save_recording_path=save_recording_path if save_recording_path else None,
+                no_viewport=False,
+                browser_window_size=BrowserContextWindowSize(width=window_w, height=window_h),
             )
-            history = await agent.run(max_steps=max_steps)
-            
-            final_result = history.final_result()
-            errors = history.errors()
-            model_actions = history.model_actions()
-            model_thoughts = history.model_thoughts()
-        
-        recorded_files = get_latest_files(save_recording_path)
-        trace_file = get_latest_files(save_recording_path + "/../traces")
-        
-        await browser.close()
-        return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
-    else:
-        # Reuse existing context
+    ) as browser_context:
         agent = Agent(
             task=task,
             llm=llm,
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content,
             browser_context=browser_context,
         )
         history = await agent.run(max_steps=max_steps)
+        
         final_result = history.final_result()
         errors = history.errors()
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
+        
         recorded_files = get_latest_files(save_recording_path)
         trace_file = get_latest_files(save_trace_path)
+        
+        await browser.close()
         return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
 
 async def run_custom_agent(
@@ -219,7 +197,6 @@ async def run_custom_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content,
-        browser_context=None,  # receive context
 ):
     global _global_browser, _global_browser_context, _global_playwright
     
@@ -431,7 +408,7 @@ async def run_with_stream(
         try:
             result = await agent_task
             if isinstance(result, tuple) and len(result) == 6:
-                final_result, errors, model_actions, model_thoughts, recording, trace = result
+                final_result, errors, model_actions, model_thoughts, recording, trace = agent_task
             else:
                 errors = "Unexpected result format from agent"
         except Exception as e:
