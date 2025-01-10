@@ -86,7 +86,7 @@ async def run_browser_agent(
     )
 
     if agent_type == "org":
-        final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_org_agent(
+        final_result, errors, model_actions, model_thoughts = await run_org_agent(
             llm=llm,
             headless=headless,
             disable_security=disable_security,
@@ -158,19 +158,21 @@ async def run_org_agent(
                 trace_path=save_trace_path if save_trace_path else None,
                 save_recording_path=save_recording_path if save_recording_path else None,
                 no_viewport=False,
-                browser_window_size=BrowserContextWindowSize(width=window_w, height=window_h),
+                browser_window_size=BrowserContextWindowSize(
+                    width=window_w, height=window_h
+                ),
             )
     ) as browser_context:
         agent = Agent(
             task=task,
             llm=llm,
             use_vision=use_vision,
-            max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
             browser_context=browser_context,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
         )
         history = await agent.run(max_steps=max_steps)
-        
+
         final_result = history.final_result()
         errors = history.errors()
         model_actions = history.model_actions()
@@ -196,7 +198,7 @@ async def run_custom_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content,
+        tool_call_in_content
 ):
     global _global_browser, _global_browser_context, _global_playwright
     
@@ -636,22 +638,22 @@ def create_ui(theme_name="Ocean"):
                     )
 
             with gr.TabItem("🤖 Run Agent", id=4):
-                    task = gr.Textbox(
-                        lines=4,
-                        value="go to google.com and type 'OpenAI' click search and give me the first url",
-                        info="Describe what you want the agent to do",
-                    )
-                    add_infos = gr.Textbox(lines=3, label="Additional Information")
+                task = gr.Textbox(
+                    lines=4,
+                    value="go to google.com and type 'OpenAI' click search and give me the first url",
+                    info="Describe what you want the agent to do",
+                )
+                add_infos = gr.Textbox(lines=3, label="Additional Information")
+                
+                with gr.Row():
+                    run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
+                    stop_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
                     
-                    with gr.Row():
-                        run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
-                        stop_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
-                        
-                    with gr.Row():
-                        browser_view = gr.HTML(
-                            value="<div>Waiting for browser session...</div>",
-                            label="Live Browser View",
-                    )
+                with gr.Row():
+                    browser_view = gr.HTML(
+                        value="<div>Waiting for browser session...</div>",
+                        label="Live Browser View",
+                )
 
             with gr.TabItem("📊 Results", id=5):
                 with gr.Group():
