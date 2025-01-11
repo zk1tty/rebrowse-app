@@ -22,22 +22,17 @@ class CustomBrowserContext(BrowserContext):
     def __init__(
         self,
         browser: "Browser",
-        config: BrowserContextConfig = BrowserContextConfig(),
-        context: PlaywrightBrowserContext = None,
+        config: BrowserContextConfig = BrowserContextConfig()
     ):
         super(CustomBrowserContext, self).__init__(browser=browser, config=config)
-        self.context = context
-        self._persistence_config = BrowserPersistenceConfig.from_env()
 
     async def _create_context(self, browser: PlaywrightBrowser) -> PlaywrightBrowserContext:
         """Creates a new browser context with anti-detection measures and loads cookies if available."""
         # If we have a context, return it directly
-        if self.context:
-            return self.context
 
         # Check if we should use existing context for persistence
-        if self._persistence_config.persistent_session and len(browser.contexts) > 0:
-            logger.info("Using existing persistent context")
+        if self.browser.config.chrome_instance_path and len(browser.contexts) > 0:
+            # Connect to existing Chrome instance instead of creating new one
             context = browser.contexts[0]
         else:
             # Original code for creating new context
@@ -99,8 +94,3 @@ class CustomBrowserContext(BrowserContext):
         )
 
         return context
-
-    async def close(self):
-        """Override close to respect persistence setting"""
-        if not self._persistence_config.persistent_session:
-            await super().close()
