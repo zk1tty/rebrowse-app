@@ -9,6 +9,10 @@ import logging
 import pdb
 import traceback
 from typing import Optional, Type
+from PIL import Image, ImageDraw, ImageFont
+import os
+import base64
+import io
 
 from browser_use.agent.prompts import SystemPrompt
 from browser_use.agent.service import Agent
@@ -227,6 +231,119 @@ class CustomAgent(Agent):
                     )
             if state:
                 self._make_history_item(model_output, state, result)
+    def create_history_gif(
+            self,
+            output_path: str = 'agent_history.gif',
+            duration: int = 3000,
+            show_goals: bool = True,
+            show_task: bool = True,
+            show_logo: bool = False,
+            font_size: int = 40,
+            title_font_size: int = 56,
+            goal_font_size: int = 44,
+            margin: int = 40,
+            line_spacing: float = 1.5,
+    ) -> None:
+        """Create a GIF from the agent's history with overlaid task and goal text."""
+        if not self.history.history:
+            logger.warning('No history to create GIF from')
+            return
+
+        images = []
+        # if history is empty or first screenshot is None, we can't create a gif
+        if not self.history.history or not self.history.history[0].state.screenshot:
+            logger.warning('No history or first screenshot to create GIF from')
+            return
+
+        # Try to load nicer fonts
+        try:
+            # Try different font options in order of preference
+            font_options = ['Helvetica', 'Arial', 'DejaVuSans', 'Verdana']
+            font_loaded = False
+
+            for font_name in font_options:
+                try:
+                    import platform
+                    if platform.system() == "Windows":
+                        # Need to specify the abs font path on Windows
+                        font_name = os.path.join(os.getenv("WIN_FONT_DIR", "C:\\Windows\\Fonts"), font_name + ".ttf")
+                    regular_font = ImageFont.truetype(font_name, font_size)
+                    title_font = ImageFont.truetype(font_name, title_font_size)
+                    goal_font = ImageFont.truetype(font_name, goal_font_size)
+                    font_loaded = True
+                    break
+                except OSError:
+                    continue
+
+            if not font_loaded:
+                raise OSError('No preferred fonts found')
+
+        except OSError:
+            regular_font = ImageFont.load_default()
+            title_font = ImageFont.load_default()
+
+            goal_font = regular_font
+
+        # Load logo if requested
+        logo = None
+        if show_logo:
+            try:
+                logo = Image.open('./static/browser-use.png')
+                # Resize logo to be small (e.g., 40px height)
+                logo_height = 150
+                aspect_ratio = logo.width / logo.height
+                logo_width = int(logo_height * aspect_ratio)
+                logo = logo.resize((logo_width, logo_height), Image.Resampling.LANCZOS)
+            except Exception as e:
+                logger.warning(f'Could not load logo: {e}')
+
+        # Create task frame if requested
+        if show_task and self.task:
+            task_frame = self._create_task_frame(
+                self.task,
+                self.history.history[0].state.screenshot,
+                title_font,
+                regular_font,
+                logo,
+                line_spacing,
+            )
+            images.append(task_frame)
+
+        # Process each history item
+        for i, item in enumerate(self.history.history, 1):
+            if not item.state.screenshot:
+                continue
+
+            # Convert base64 screenshot to PIL Image
+            img_data = base64.b64decode(item.state.screenshot)
+            image = Image.open(io.BytesIO(img_data))
+
+            if show_goals and item.model_output:
+                image = self._add_overlay_to_image(
+                    image=image,
+                    step_number=i,
+                    goal_text=item.model_output.current_state.thought,
+                    regular_font=regular_font,
+                    title_font=title_font,
+                    margin=margin,
+                    logo=logo,
+                )
+
+            images.append(image)
+
+        if images:
+            # Save the GIF
+            images[0].save(
+                output_path,
+                save_all=True,
+                append_images=images[1:],
+                duration=duration,
+                loop=0,
+                optimize=False,
+            )
+            logger.info(f'Created GIF at {output_path}')
+        else:
+            logger.warning('No images found in history to create GIF')
 
     async def run(self, max_steps: int = 100) -> AgentHistoryList:
         """Execute the task with maximum number of steps"""
@@ -283,3 +400,6 @@ class CustomAgent(Agent):
 
             if not self.injected_browser and self.browser:
                 await self.browser.close()
+
+            if self.generate_gif:
+                self.create_history_gif()
