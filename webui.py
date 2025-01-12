@@ -148,7 +148,7 @@ async def run_org_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content,
+        tool_call_in_content
 ):
     try:
         global _global_browser, _global_browser_context
@@ -234,10 +234,7 @@ async def run_custom_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content
-):    
-    controller = CustomController()
-    persistence_config = BrowserPersistenceConfig.from_env()
-    
+):  
     try:
         global _global_browser, _global_browser_context
 
@@ -252,7 +249,7 @@ async def run_custom_agent(
 
         # Initialize global browser if needed
         if _global_browser is None:
-            browser = CustomBrowser(
+            _global_browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
@@ -283,7 +280,7 @@ async def run_custom_agent(
                     record_video_dir=save_recording_path if save_recording_path else None,
                     record_video_size={"width": window_w, "height": window_h},
                 )
-                browser_context = await browser.new_context(
+                browser_context = await _global_browser.new_context(
                     config=BrowserContextConfig(
                         trace_path=save_trace_path if save_trace_path else None,
                         save_recording_path=save_recording_path if save_recording_path else None,
@@ -295,7 +292,7 @@ async def run_custom_agent(
                 )
         else:
             if _global_browser_context is None:
-                browser_context = await browser.new_context(
+                browser_context = await _global_browser.new_context(
                     config=BrowserContextConfig(
                         trace_path=save_trace_path if save_trace_path else None,
                         save_recording_path=save_recording_path if save_recording_path else None,
@@ -346,8 +343,8 @@ async def run_custom_agent(
                 await playwright.stop()
                 playwright = None
 
-            if browser:
-                await browser.close()
+            if _global_browser:
+                await _global_browser.close()
                 browser = None
     return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
 
