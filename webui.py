@@ -131,7 +131,7 @@ async def run_browser_agent(
         if new_videos - existing_videos:
             latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
 
-    return final_result, errors, model_actions, model_thoughts, latest_video
+    return final_result, errors, model_actions, model_thoughts, latest_video, trace_file
 
 async def run_org_agent(
         llm,
@@ -666,7 +666,7 @@ def create_ui(theme_name="Ocean"):
 
             with gr.TabItem("📊 Results", id=5):
                 with gr.Group():
-                    
+
                     recording_display = gr.Video(label="Latest Recording")
 
                     gr.Markdown("### Results")
@@ -755,7 +755,7 @@ def create_ui(theme_name="Ocean"):
                 errors_output,
                 model_actions_output,
                 model_thoughts_output,
-                recording_file,
+                recording_display,
                 trace_file
             ],
             queue=True,
