@@ -35,7 +35,6 @@ load_dotenv()
 # Global variables for persistence
 _global_browser = None
 _global_browser_context = None
-_global_playwright = None
 
 async def run_browser_agent(
         agent_type,
@@ -45,6 +44,7 @@ async def run_browser_agent(
         llm_base_url,
         llm_api_key,
         use_own_browser,
+        keep_browser_open,
         headless,
         disable_security,
         window_w,
@@ -89,6 +89,8 @@ async def run_browser_agent(
     if agent_type == "org":
         final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_org_agent(
             llm=llm,
+            use_own_browser=use_own_browser,
+            keep_browser_open=keep_browser_open,
             headless=headless,
             disable_security=disable_security,
             window_w=window_w,
@@ -108,6 +110,7 @@ async def run_browser_agent(
         final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_custom_agent(
             llm=llm,
             use_own_browser=use_own_browser,
+            keep_browser_open=keep_browser_open,
             headless=headless,
             disable_security=disable_security,
             window_w=window_w,
@@ -141,6 +144,8 @@ async def run_browser_agent(
 
 async def run_org_agent(
         llm,
+        use_own_browser,
+        keep_browser_open,
         headless,
         disable_security,
         window_w,
@@ -156,28 +161,43 @@ async def run_org_agent(
         browser_context,
         playwright
 ):
-    browser = Browser(
-        config=BrowserConfig(
-            headless=headless,
-            disable_security=disable_security,
-            extra_chromium_args=[f"--window-size={window_w},{window_h}"],
-        )
-    )
-    async with await browser.new_context(
-            config=BrowserContextConfig(
-                trace_path=save_trace_path if save_trace_path else None,
-                save_recording_path=save_recording_path if save_recording_path else None,
-                no_viewport=False,
-                browser_window_size=BrowserContextWindowSize(
-                    width=window_w, height=window_h
-                ),
+    try:
+        global _global_browser, _global_browser_context
+        if use_own_browser:
+            chrome_path = os.getenv("CHROME_PATH", None)
+            if chrome_path == "":
+                chrome_path = None
+        else:
+            chrome_path = None
+
+        if _global_browser is None:
+            _global_browser = Browser(
+                config=BrowserConfig(
+                    headless=headless,
+                    disable_security=disable_security,
+                    chrome_instance_path=chrome_path,
+                    extra_chromium_args=[f"--window-size={window_w},{window_h}"],
+                )
             )
-    ) as browser_context:
+
+        if _global_browser_context is None:
+            _global_browser_context = await _global_browser.new_context(
+                config=BrowserContextConfig(
+                    trace_path=save_trace_path if save_trace_path else None,
+                    save_recording_path=save_recording_path if save_recording_path else None,
+                    no_viewport=False,
+                    browser_window_size=BrowserContextWindowSize(
+                        width=window_w, height=window_h
+                    ),
+                )
+            )
+
         agent = Agent(
             task=task,
             llm=llm,
             use_vision=use_vision,
-            browser_context=browser_context,
+            browser=_global_browser,
+            browser_context=_global_browser_context,
             max_actions_per_step=max_actions_per_step,
             tool_call_in_content=tool_call_in_content
         )
@@ -191,12 +211,28 @@ async def run_org_agent(
         recorded_files = get_latest_files(save_recording_path)
         trace_file = get_latest_files(save_trace_path)
         
-    await browser.close()
-    return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
+        return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        errors = str(e) + "\n" + traceback.format_exc()
+        return '', errors, '', ''
+    finally:
+        # Handle cleanup based on persistence configuration
+        if not keep_browser_open:
+            if _global_browser_context:
+                await _global_browser_context.close()
+                _global_browser_context = None
+
+            if _global_browser:
+                await _global_browser.close()
+                _global_browser = None
+
 
 async def run_custom_agent(
         llm,
         use_own_browser,
+        keep_browser_open,
         headless,
         disable_security,
         window_w,
@@ -217,12 +253,24 @@ async def run_custom_agent(
     persistence_config = BrowserPersistenceConfig.from_env()
     
     try:
+        global _global_browser, _global_browser_context
+
+        if use_own_browser:
+            chrome_path = os.getenv("CHROME_PATH", None)
+            if chrome_path == "":
+                chrome_path = None
+        else:
+            chrome_path = None
+
+        controller = CustomController()
+
         # Initialize global browser if needed
         if browser is None:
             browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
+                    chrome_instance_path=chrome_path,
                     extra_chromium_args=[f"--window-size={window_w},{window_h}"],
                 )
             )
@@ -271,6 +319,7 @@ async def run_custom_agent(
                         ),
                     ),
                 )
+            )
 
         # Create and run agent
         agent = CustomAgent(
@@ -462,6 +511,17 @@ theme_map = {
     "Base": Base()
 }
 
+async def close_global_browser():
+    global _global_browser, _global_browser_context
+
+    if _global_browser_context:
+        await _global_browser_context.close()
+        _global_browser_context = None
+
+    if _global_browser:
+        await _global_browser.close()
+        _global_browser = None
+
 def create_ui(theme_name="Ocean"):
     css = """
     .gradio-container {
@@ -541,14 +601,15 @@ def create_ui(theme_name="Ocean"):
             with gr.TabItem("🔧 LLM Configuration", id=2):
                 with gr.Group():
                     llm_provider = gr.Dropdown(
-                        ["anthropic", "openai", "deepseek", "gemini", "ollama", "azure_openai"],
+                        choices=[provider for provider,model in utils.model_names.items()],
                         label="LLM Provider",
-                        value="",
+                        value="openai",
                         info="Select your preferred language model provider"
                     )
                     llm_model_name = gr.Dropdown(
                         label="Model Name",
-                        value="",
+                        choices=utils.model_names['openai'],
+                        value="gpt-4o",
                         interactive=True,
                         allow_custom_value=True,  # Allow users to input custom model names
                         info="Select a model from the dropdown or type a custom model name"
@@ -564,13 +625,13 @@ def create_ui(theme_name="Ocean"):
                     with gr.Row():
                         llm_base_url = gr.Textbox(
                             label="Base URL",
-                            value=os.getenv(f"{llm_provider.value.upper()}_BASE_URL ", ""),  # Default to .env value
+                            value='',
                             info="API endpoint URL (if required)"
                         )
                         llm_api_key = gr.Textbox(
                             label="API Key",
                             type="password",
-                            value=os.getenv(f"{llm_provider.value.upper()}_API_KEY", ""),  # Default to .env value
+                            value='',
                             info="Your API key (leave blank to use .env)"
                         )
 
@@ -581,6 +642,11 @@ def create_ui(theme_name="Ocean"):
                             label="Use Own Browser",
                             value=False,
                             info="Use your existing browser instance",
+                        )
+                        keep_browser_open = gr.Checkbox(
+                            label="Keep Browser Open",
+                            value=os.getenv("CHROME_PERSISTENT_SESSION", "False").lower() == "true",
+                            info="Keep Browser Open between Tasks",
                         )
                         headless = gr.Checkbox(
                             label="Headless Mode",
@@ -725,12 +791,15 @@ def create_ui(theme_name="Ocean"):
             outputs=save_recording_path
         )
 
+        use_own_browser.change(fn=close_global_browser)
+        keep_browser_open.change(fn=close_global_browser)
+
         # Run button click handler
         run_button.click(
             fn=run_with_stream,
             inputs=[
                 agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
-                use_own_browser, headless, disable_security, window_w, window_h, save_recording_path, save_trace_path,
+                use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h, save_recording_path, save_trace_path,
                 enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
             ],
             outputs=[
