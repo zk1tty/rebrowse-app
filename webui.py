@@ -58,6 +58,9 @@ async def run_browser_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content,
+        browser,
+        browser_context,
+        playwright
 ):
     # Disable recording if the checkbox is unchecked
     if not enable_recording:
@@ -84,7 +87,7 @@ async def run_browser_agent(
         api_key=llm_api_key,
     )
     if agent_type == "org":
-        final_result, errors, model_actions, model_thoughts = await run_org_agent(
+        final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_org_agent(
             llm=llm,
             headless=headless,
             disable_security=disable_security,
@@ -97,9 +100,12 @@ async def run_browser_agent(
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
             tool_call_in_content=tool_call_in_content,
+            browser=browser,
+            browser_context=browser_context,
+            playwright=playwright
         )
     elif agent_type == "custom":
-        final_result, errors, model_actions, model_thoughts = await run_custom_agent(
+        final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_custom_agent(
             llm=llm,
             use_own_browser=use_own_browser,
             headless=headless,
@@ -113,7 +119,10 @@ async def run_browser_agent(
             max_steps=max_steps,
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content
+            tool_call_in_content=tool_call_in_content,
+            browser=browser,
+            browser_context=browser_context,
+            playwright=playwright
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
@@ -142,7 +151,10 @@ async def run_org_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content
+        tool_call_in_content,
+        browser,
+        browser_context,
+        playwright
 ):
     browser = Browser(
         config=BrowserConfig(
@@ -196,17 +208,18 @@ async def run_custom_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content
-):
-    global _global_browser, _global_browser_context, _global_playwright
-    
+        tool_call_in_content,
+        browser,
+        browser_context,
+        playwright
+):    
     controller = CustomController()
     persistence_config = BrowserPersistenceConfig.from_env()
     
     try:
         # Initialize global browser if needed
-        if _global_browser is None:
-            _global_browser = CustomBrowser(
+        if browser is None:
+            browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
@@ -216,12 +229,12 @@ async def run_custom_agent(
 
         # Handle browser context based on configuration
         if use_own_browser:
-            if _global_browser_context is None:
-                _global_playwright = await async_playwright().start()
+            if browser_context is None:
+                playwright = await async_playwright().start()
                 chrome_exe = os.getenv("CHROME_PATH", "")
                 chrome_use_data = os.getenv("CHROME_USER_DATA", "")
 
-                browser_context = await _global_playwright.chromium.launch_persistent_context(
+                browser_context = await playwright.chromium.launch_persistent_context(
                     user_data_dir=chrome_use_data,
                     executable_path=chrome_exe,
                     no_viewport=False,
@@ -236,7 +249,7 @@ async def run_custom_agent(
                     record_video_dir=save_recording_path if save_recording_path else None,
                     record_video_size={"width": window_w, "height": window_h},
                 )
-                _global_browser_context = await _global_browser.new_context(
+                browser_context = await browser.new_context(
                     config=BrowserContextConfig(
                         trace_path=save_trace_path if save_trace_path else None,
                         save_recording_path=save_recording_path if save_recording_path else None,
@@ -245,11 +258,10 @@ async def run_custom_agent(
                             width=window_w, height=window_h
                         ),
                     ),
-                    context=browser_context,
                 )
         else:
-            if _global_browser_context is None:
-                _global_browser_context = await _global_browser.new_context(
+            if browser_context is None:
+                browser_context = await browser.new_context(
                     config=BrowserContextConfig(
                         trace_path=save_trace_path if save_trace_path else None,
                         save_recording_path=save_recording_path if save_recording_path else None,
@@ -266,7 +278,7 @@ async def run_custom_agent(
             add_infos=add_infos,
             use_vision=use_vision,
             llm=llm,
-            browser_context=_global_browser_context,
+            browser_context=browser_context,
             controller=controller,
             system_prompt_class=CustomSystemPrompt,
             max_actions_per_step=max_actions_per_step,
@@ -292,17 +304,17 @@ async def run_custom_agent(
     finally:
         # Handle cleanup based on persistence configuration
         if not persistence_config.persistent_session:
-            if _global_browser_context:
-                await _global_browser_context.close()
-                _global_browser_context = None
+            if browser_context:
+                await browser_context.close()
+                browser_context = None
 
-            if _global_playwright:
-                await _global_playwright.stop()
-                _global_playwright = None
+            if playwright:
+                await playwright.stop()
+                playwright = None
 
-            if _global_browser:
-                await _global_browser.close()
-                _global_browser = None
+            if browser:
+                await browser.close()
+                browser = None
     return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
 
 async def run_with_stream(
@@ -325,7 +337,7 @@ async def run_with_stream(
     max_steps,
     use_vision,
     max_actions_per_step,
-    tool_call_in_content,
+    tool_call_in_content
 ):
     """Wrapper to run the agent and handle streaming."""
     global _global_browser, _global_browser_context
@@ -376,12 +388,15 @@ async def run_with_stream(
                 max_steps=max_steps,
                 use_vision=use_vision,
                 max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content
+                tool_call_in_content=tool_call_in_content,
+                browser=_global_browser,
+                browser_context=_global_browser_context,
+                playwright=_global_playwright if use_own_browser else None
             )
         )
 
         # Initialize values for streaming
-        html_content = "<div>Using browser...</div>"
+        html_content = "<div style='width:80vw; height:90vh'>Using browser...</div>"
         final_result = errors = model_actions = model_thoughts = ""
         recording = trace = None
 
@@ -390,7 +405,7 @@ async def run_with_stream(
             try:
                 html_content = await capture_screenshot(_global_browser_context)
             except Exception as e:
-                html_content = f"<div class='error'>Screenshot error: {str(e)}</div>"
+                html_content = f"<div class='error' style='width:80vw; height:90vh'>Screenshot error: {str(e)}</div>"
             
             yield [
                 html_content,
@@ -426,7 +441,7 @@ async def run_with_stream(
     except Exception as e:
         import traceback
         yield [
-            f"<div class='error'>Browser error: {str(e)}</div>",
+            f"<div class='error' style='width:80vw; height:90vh'>Browser error: {str(e)}</div>",
             "",
             f"Error: {str(e)}\n{traceback.format_exc()}",
             "",
@@ -625,14 +640,14 @@ def create_ui(theme_name="Ocean"):
                     placeholder="Add any helpful context or instructions...",
                     info="Optional hints to help the LLM complete the task",
                 )
-                
+
                 with gr.Row():
                     run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
                     stop_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
                     
                 with gr.Row():
                     browser_view = gr.HTML(
-                        value="<div>Waiting for browser session...</div>",
+                        value="<div style='width:80vw; height:90vh'>Waiting for browser session...</div>",
                         label="Live Browser View",
                 )
 

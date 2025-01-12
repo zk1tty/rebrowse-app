@@ -15,6 +15,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 import gradio as gr
+from src.browser.custom_context import CustomBrowserContext
 
 def get_llm_model(provider: str, **kwargs):
     """
@@ -164,36 +165,30 @@ def get_latest_files(directory: str, file_types: list = ['.webm', '.zip']) -> Di
             print(f"Error getting latest {file_type} file: {e}")
             
     return latest_files
-
-async def capture_screenshot(browser_context) -> str:
+async def capture_screenshot(browser_context: CustomBrowserContext) -> str:
     """Capture and encode a screenshot"""
+    latest_screenshot = ""
     try:
-        # Get the implementation context - handle both direct Playwright context and wrapped context
-        context = browser_context
-        if hasattr(browser_context, 'context'):
-            context = browser_context.context
-        
-        if not context:
-            return "<div>No browser context available</div>"
-            
-        # Get all pages
-        pages = context.pages
-        if not pages:
-            return "<div>Waiting for page to be available...</div>"
+        # Extract the Playwright browser instance
+        playwright_browser = browser_context.browser.playwright_browser  # Ensure this is correct.
 
-        # Use the first non-blank page or fallback to first page
-        active_page = None
-        for page in pages:
-            if page.url != 'about:blank':
-                active_page = page
-                break
-        
-        if not active_page and pages:
+        # Check if the browser instance is valid and if an existing context can be reused
+        if playwright_browser and playwright_browser.contexts:
+            playwright_context = playwright_browser.contexts[0]
+        else:
+            return latest_screenshot
+
+        # Access pages in the context
+        if playwright_context:
+            pages = playwright_context.pages
+
+        # Use an existing page or create a new one if none exist
+        if pages:
             active_page = pages[0]
-            
-        if not active_page:
-            return "<div>No active page available</div>"
-
+            for page in pages:
+                if page.url != "about:blank":
+                    active_page = page
+        
         # Take screenshot
         try:
             screenshot = await active_page.screenshot(
@@ -202,9 +197,9 @@ async def capture_screenshot(browser_context) -> str:
                 scale="css"
             )
             encoded = base64.b64encode(screenshot).decode('utf-8')
-            return f'<img src="data:image/jpeg;base64,{encoded}" style="width:100%; max-width:1200px; border:1px solid #ccc;">'
+            return f'<img src="data:image/jpeg;base64,{encoded}" style="width:80vw; height:90vh ; border:1px solid #ccc;">'
         except Exception as e:
-            return f"<div class='error'>Screenshot failed: {str(e)}</div>"
-            
+            return f"<div class='error' style='width:80vw; height:90vh'>Screenshot failed: {str(e)}</div>"
+
     except Exception as e:
-        return f"<div class='error'>Screenshot error: {str(e)}</div>"
+        return f"<div class='error' style='width:80vw; height:90vh'>Screenshot error: {str(e)}</div>"
