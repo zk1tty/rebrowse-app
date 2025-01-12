@@ -35,7 +35,6 @@ load_dotenv()
 # Global variables for persistence
 _global_browser = None
 _global_browser_context = None
-_global_playwright = None
 
 async def run_browser_agent(
         agent_type,
@@ -258,8 +257,6 @@ async def run_custom_agent(
                 )
             )
 
-        # Handle browser context based on configuration
-        
         if _global_browser_context is None:
             _global_browser_context = await _global_browser.new_context(
                 config=BrowserContextConfig(
@@ -670,7 +667,7 @@ def create_ui(theme_name="Ocean"):
             with gr.TabItem("📊 Results", id=5):
                 with gr.Group():
                     
-                    recording_file = gr.Video(label="Latest Recording")
+                    recording_display = gr.Video(label="Latest Recording")
 
                     gr.Markdown("### Results")
                     with gr.Row():
