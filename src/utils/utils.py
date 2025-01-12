@@ -165,9 +165,8 @@ def get_latest_files(directory: str, file_types: list = ['.webm', '.zip']) -> Di
             print(f"Error getting latest {file_type} file: {e}")
             
     return latest_files
-async def capture_screenshot(browser_context: CustomBrowserContext) -> str:
+async def capture_screenshot(browser_context) -> str:
     """Capture and encode a screenshot"""
-    latest_screenshot = ""
     try:
         # Extract the Playwright browser instance
         playwright_browser = browser_context.browser.playwright_browser  # Ensure this is correct.
@@ -175,8 +174,6 @@ async def capture_screenshot(browser_context: CustomBrowserContext) -> str:
         # Check if the browser instance is valid and if an existing context can be reused
         if playwright_browser and playwright_browser.contexts:
             playwright_context = playwright_browser.contexts[0]
-        else:
-            return latest_screenshot
 
         # Access pages in the context
         if playwright_context:
@@ -199,7 +196,7 @@ async def capture_screenshot(browser_context: CustomBrowserContext) -> str:
             encoded = base64.b64encode(screenshot).decode('utf-8')
             return f'<img src="data:image/jpeg;base64,{encoded}" style="width:80vw; height:90vh ; border:1px solid #ccc;">'
         except Exception as e:
-            return f"<div class='error' style='width:80vw; height:90vh'>Screenshot failed: {str(e)}</div>"
+            return f"<div class='error' style='width:80vw; height:90vh'>Waiting for browser session...</div>"
 
     except Exception as e:
-        return f"<div class='error' style='width:80vw; height:90vh'>Screenshot error: {str(e)}</div>"
+        return f"<div class='error' style='width:80vw; height:90vh'>Waiting for browser session...</div>"

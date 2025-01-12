@@ -216,7 +216,6 @@ async def run_org_agent(
                 await _global_browser.close()
                 _global_browser = None
 
-
 async def run_custom_agent(
         llm,
         use_own_browser,
@@ -332,72 +331,94 @@ async def run_with_stream(
     max_actions_per_step,
     tool_call_in_content
 ):
-    """Wrapper to run the agent and handle streaming."""
-    global _global_browser, _global_browser_context
-    
-    try:
-        # Initialize the global browser if it doesn't exist
-        if _global_browser is None:
-            _global_browser = CustomBrowser(
-                config=BrowserConfig(
-                    headless=False,
-                    disable_security=disable_security,
-                    extra_chromium_args=[f"--window-size={window_w},{window_h}"],
-                )
-            )
-
-        # Create or reuse browser context
-        if _global_browser_context is None:
-            _global_browser_context = await _global_browser.new_context(
-                config=BrowserContextConfig(
-                    trace_path=save_trace_path if save_trace_path else None,
-                    save_recording_path=save_recording_path if save_recording_path else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(
-                        width=window_w, height=window_h
-                    ),
-                )
-            )
-
-        # Run the browser agent in the background
-        agent_task = asyncio.create_task(
-            run_browser_agent(
-                agent_type=agent_type,
-                llm_provider=llm_provider,
-                llm_model_name=llm_model_name,
-                llm_temperature=llm_temperature,
-                llm_base_url=llm_base_url,
-                llm_api_key=llm_api_key,
-                use_own_browser=use_own_browser,
-                keep_browser_open=keep_browser_open,
-                headless=headless,
-                disable_security=disable_security,
-                window_w=window_w,
-                window_h=window_h,
-                save_recording_path=save_recording_path,
-                save_trace_path=save_trace_path,
-                enable_recording=enable_recording,
-                task=task,
-                add_infos=add_infos,
-                max_steps=max_steps,
-                use_vision=use_vision,
-                max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content
-            )
+    print(headless)
+    if not headless:
+        result = await run_browser_agent(
+            agent_type=agent_type,
+            llm_provider=llm_provider,
+            llm_model_name=llm_model_name,
+            llm_temperature=llm_temperature,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+            use_own_browser=use_own_browser,
+            keep_browser_open=keep_browser_open,
+            headless=headless,
+            disable_security=disable_security,
+            window_w=window_w,
+            window_h=window_h,
+            save_recording_path=save_recording_path,
+            save_trace_path=save_trace_path,
+            enable_recording=enable_recording,
+            task=task,
+            add_infos=add_infos,
+            max_steps=max_steps,
+            use_vision=use_vision,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
         )
+        yield result
+    else:
+        try:
+            # Run the browser agent in the background
+            agent_task = asyncio.create_task(
+                run_browser_agent(
+                    agent_type=agent_type,
+                    llm_provider=llm_provider,
+                    llm_model_name=llm_model_name,
+                    llm_temperature=llm_temperature,
+                    llm_base_url=llm_base_url,
+                    llm_api_key=llm_api_key,
+                    use_own_browser=use_own_browser,
+                    keep_browser_open=keep_browser_open,
+                    headless=headless,
+                    disable_security=disable_security,
+                    window_w=window_w,
+                    window_h=window_h,
+                    save_recording_path=save_recording_path,
+                    save_trace_path=save_trace_path,
+                    enable_recording=enable_recording,
+                    task=task,
+                    add_infos=add_infos,
+                    max_steps=max_steps,
+                    use_vision=use_vision,
+                    max_actions_per_step=max_actions_per_step,
+                    tool_call_in_content=tool_call_in_content
+                )
+            )
 
-        # Initialize values for streaming
-        html_content = "<div style='width:80vw; height:90vh'>Using browser...</div>"
-        final_result = errors = model_actions = model_thoughts = ""
-        latest_videos = trace = None
+            # Initialize values for streaming
+            html_content = "<div style='width:80vw; height:90vh'>Using browser...</div>"
+            final_result = errors = model_actions = model_thoughts = ""
+            latest_videos = trace = None
 
-        # Periodically update the stream while the agent task is running
-        while not agent_task.done():
+            # Periodically update the stream while the agent task is running
+            while not agent_task.done():
+                try:
+                    html_content = await capture_screenshot(_global_browser_context)
+                except Exception as e:
+                    html_content = f"<div style='width:80vw; height:90vh'>Waiting for browser session...</div>"
+                
+                yield [
+                    html_content,
+                    final_result,
+                    errors,
+                    model_actions,
+                    model_thoughts,
+                    latest_videos,
+                    trace,
+                ]
+                await asyncio.sleep(0.01)
+
+            # Once the agent task completes, get the results
             try:
-                html_content = await capture_screenshot(_global_browser_context)
+                result = await agent_task
+                if isinstance(result, tuple) and len(result) == 6:
+                    final_result, errors, model_actions, model_thoughts, latest_videos, trace = result
+                else:
+                    errors = "Unexpected result format from agent"
             except Exception as e:
-                html_content = f"<div style='width:80vw; height:90vh'>Waiting for browser session...</div>"
-            
+                errors = f"Agent error: {str(e)}"
+
             yield [
                 html_content,
                 final_result,
@@ -407,39 +428,18 @@ async def run_with_stream(
                 latest_videos,
                 trace,
             ]
-            await asyncio.sleep(0.01)
 
-        # Once the agent task completes, get the results
-        try:
-            result = await agent_task
-            if isinstance(result, tuple) and len(result) == 6:
-                final_result, errors, model_actions, model_thoughts, latest_videos, trace = result
-            else:
-                errors = "Unexpected result format from agent"
         except Exception as e:
-            errors = f"Agent error: {str(e)}"
-
-        yield [
-            html_content,
-            final_result,
-            errors,
-            model_actions,
-            model_thoughts,
-            latest_videos,
-            trace,
-        ]
-
-    except Exception as e:
-        import traceback
-        yield [
-            f"<div style='width:80vw; height:90vh'>Waiting for browser session...</div>",
-            "",
-            f"Error: {str(e)}\n{traceback.format_exc()}",
-            "",
-            "",
-            None,
-            None,
-        ]
+            import traceback
+            yield [
+                f"<div style='width:80vw; height:90vh'>Waiting for browser session...</div>",
+                "",
+                f"Error: {str(e)}\n{traceback.format_exc()}",
+                "",
+                "",
+                None,
+                None,
+            ]
 
 # Define the theme map globally
 theme_map = {
@@ -735,7 +735,6 @@ def create_ui(theme_name="Ocean"):
 
         use_own_browser.change(fn=close_global_browser)
         keep_browser_open.change(fn=close_global_browser)
-
         # Run button click handler
         run_button.click(
             fn=run_with_stream,
