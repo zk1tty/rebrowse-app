@@ -331,7 +331,6 @@ async def run_with_stream(
     max_actions_per_step,
     tool_call_in_content
 ):
-    print(headless)
     if not headless:
         result = await run_browser_agent(
             agent_type=agent_type,
