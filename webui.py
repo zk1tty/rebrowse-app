@@ -131,7 +131,7 @@ async def run_browser_agent(
         if new_videos - existing_videos:
             latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
 
-    return final_result, errors, model_actions, model_thoughts, latest_video
+    return final_result, errors, model_actions, model_thoughts, latest_video, trace_file
 
 async def run_org_agent(
         llm,
@@ -292,7 +292,7 @@ async def run_custom_agent(
         recorded_files = get_latest_files(save_recording_path)
         trace_file = get_latest_files(save_trace_path)        
 
-        return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
+        return final_result, errors, model_actions, model_thoughts, recorded_files.get('.webm'), trace_file.get('.zip')
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -389,14 +389,14 @@ async def run_with_stream(
         # Initialize values for streaming
         html_content = "<div style='width:80vw; height:90vh'>Using browser...</div>"
         final_result = errors = model_actions = model_thoughts = ""
-        recording = trace = None
+        latest_videos = trace = None
 
         # Periodically update the stream while the agent task is running
         while not agent_task.done():
             try:
                 html_content = await capture_screenshot(_global_browser_context)
             except Exception as e:
-                html_content = f"<div class='error' style='width:80vw; height:90vh'>Screenshot error: {str(e)}</div>"
+                html_content = f"<div style='width:80vw; height:90vh'>Waiting for browser session...</div>"
             
             yield [
                 html_content,
@@ -404,7 +404,7 @@ async def run_with_stream(
                 errors,
                 model_actions,
                 model_thoughts,
-                recording,
+                latest_videos,
                 trace,
             ]
             await asyncio.sleep(0.01)
@@ -413,7 +413,7 @@ async def run_with_stream(
         try:
             result = await agent_task
             if isinstance(result, tuple) and len(result) == 6:
-                final_result, errors, model_actions, model_thoughts, recording, trace = agent_task
+                final_result, errors, model_actions, model_thoughts, latest_videos, trace = result
             else:
                 errors = "Unexpected result format from agent"
         except Exception as e:
@@ -425,14 +425,14 @@ async def run_with_stream(
             errors,
             model_actions,
             model_thoughts,
-            recording,
+            latest_videos,
             trace,
         ]
 
     except Exception as e:
         import traceback
         yield [
-            f"<div class='error' style='width:80vw; height:90vh'>Browser error: {str(e)}</div>",
+            f"<div style='width:80vw; height:90vh'>Waiting for browser session...</div>",
             "",
             f"Error: {str(e)}\n{traceback.format_exc()}",
             "",
@@ -745,13 +745,13 @@ def create_ui(theme_name="Ocean"):
                 enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
             ],
             outputs=[
-                browser_view,
-                final_result_output,
-                errors_output,
-                model_actions_output,
-                model_thoughts_output,
-                recording_display,
-                trace_file
+                browser_view,          # HTML view
+                final_result_output,   # Final result
+                errors_output,         # Errors
+                model_actions_output,  # Model actions
+                model_thoughts_output, # Model thoughts
+                recording_display,     # Video file (.webm)
+                trace_file            # Trace file (.zip)
             ],
             queue=True,
         )
