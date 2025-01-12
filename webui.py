@@ -383,7 +383,8 @@ async def run_with_stream(
                 use_vision=use_vision,
                 max_actions_per_step=max_actions_per_step,
                 tool_call_in_content=tool_call_in_content
-        ))
+            )
+        )
 
         # Initialize values for streaming
         html_content = "<div style='width:80vw; height:90vh'>Using browser...</div>"
