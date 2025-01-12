@@ -234,7 +234,7 @@ async def run_custom_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content
-):  
+):
     try:
         global _global_browser, _global_browser_context
 
@@ -259,49 +259,18 @@ async def run_custom_agent(
             )
 
         # Handle browser context based on configuration
-        if use_own_browser:
-            if _global_browser_context is None:
-                playwright = await async_playwright().start()
-                chrome_exe = os.getenv("CHROME_PATH", "")
-                chrome_use_data = os.getenv("CHROME_USER_DATA", "")
-
-                browser_context = await playwright.chromium.launch_persistent_context(
-                    user_data_dir=chrome_use_data,
-                    executable_path=chrome_exe,
+        
+        if _global_browser_context is None:
+            _global_browser_context = await _global_browser.new_context(
+                config=BrowserContextConfig(
+                    trace_path=save_trace_path if save_trace_path else None,
+                    save_recording_path=save_recording_path if save_recording_path else None,
                     no_viewport=False,
-                    headless=headless,
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36"
-                    ),
-                    java_script_enabled=True,
-                    bypass_csp=disable_security,
-                    ignore_https_errors=disable_security,
-                    record_video_dir=save_recording_path if save_recording_path else None,
-                    record_video_size={"width": window_w, "height": window_h},
-                )
-                browser_context = await _global_browser.new_context(
-                    config=BrowserContextConfig(
-                        trace_path=save_trace_path if save_trace_path else None,
-                        save_recording_path=save_recording_path if save_recording_path else None,
-                        no_viewport=False,
-                        browser_window_size=BrowserContextWindowSize(
-                            width=window_w, height=window_h
-                        ),
+                    browser_window_size=BrowserContextWindowSize(
+                        width=window_w, height=window_h
                     ),
                 )
-        else:
-            if _global_browser_context is None:
-                browser_context = await _global_browser.new_context(
-                    config=BrowserContextConfig(
-                        trace_path=save_trace_path if save_trace_path else None,
-                        save_recording_path=save_recording_path if save_recording_path else None,
-                        no_viewport=False,
-                        browser_window_size=BrowserContextWindowSize(
-                            width=window_w, height=window_h
-                        ),
-                    ),
-                )
+            )
 
         # Create and run agent
         agent = CustomAgent(
@@ -309,7 +278,8 @@ async def run_custom_agent(
             add_infos=add_infos,
             use_vision=use_vision,
             llm=llm,
-            browser_context=browser_context,
+            browser=_global_browser,
+            browser_context=_global_browser_context,
             controller=controller,
             system_prompt_class=CustomSystemPrompt,
             max_actions_per_step=max_actions_per_step,
@@ -334,18 +304,14 @@ async def run_custom_agent(
         trace_file = {}
     finally:
         # Handle cleanup based on persistence configuration
-        if not persistence_config.persistent_session:
-            if browser_context:
-                await browser_context.close()
-                browser_context = None
-
-            if playwright:
-                await playwright.stop()
-                playwright = None
+        if not keep_browser_open:
+            if _global_browser_context:
+                await _global_browser_context.close()
+                _global_browser_context = None
 
             if _global_browser:
                 await _global_browser.close()
-                browser = None
+                _global_browser = None
     return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
 
 async def run_with_stream(
