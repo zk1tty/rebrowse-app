@@ -24,7 +24,7 @@ from src.agent.custom_agent import CustomAgent
 from src.browser.custom_browser import CustomBrowser
 from src.agent.custom_prompts import CustomSystemPrompt
 from src.browser.config import BrowserPersistenceConfig
-from src.browser.custom_context import BrowserContextConfig
+from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
 from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot
@@ -35,6 +35,7 @@ load_dotenv()
 # Global variables for persistence
 _global_browser = None
 _global_browser_context = None
+_global_playwright = None
 
 async def run_browser_agent(
         agent_type,
@@ -57,10 +58,7 @@ async def run_browser_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content,
-        browser,
-        browser_context,
-        playwright
+        tool_call_in_content
 ):
     # Disable recording if the checkbox is unchecked
     if not enable_recording:
@@ -101,10 +99,7 @@ async def run_browser_agent(
             max_steps=max_steps,
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
-            browser=browser,
-            browser_context=browser_context,
-            playwright=playwright
+            tool_call_in_content=tool_call_in_content
         )
     elif agent_type == "custom":
         final_result, errors, model_actions, model_thoughts, recorded_files, trace_file = await run_custom_agent(
@@ -122,10 +117,7 @@ async def run_browser_agent(
             max_steps=max_steps,
             use_vision=use_vision,
             max_actions_per_step=max_actions_per_step,
-            tool_call_in_content=tool_call_in_content,
-            browser=browser,
-            browser_context=browser_context,
-            playwright=playwright
+            tool_call_in_content=tool_call_in_content
         )
     else:
         raise ValueError(f"Invalid agent type: {agent_type}")
@@ -157,9 +149,6 @@ async def run_org_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content,
-        browser,
-        browser_context,
-        playwright
 ):
     try:
         global _global_browser, _global_browser_context
@@ -244,10 +233,7 @@ async def run_custom_agent(
         max_steps,
         use_vision,
         max_actions_per_step,
-        tool_call_in_content,
-        browser,
-        browser_context,
-        playwright
+        tool_call_in_content
 ):    
     controller = CustomController()
     persistence_config = BrowserPersistenceConfig.from_env()
@@ -265,7 +251,7 @@ async def run_custom_agent(
         controller = CustomController()
 
         # Initialize global browser if needed
-        if browser is None:
+        if _global_browser is None:
             browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
@@ -277,7 +263,7 @@ async def run_custom_agent(
 
         # Handle browser context based on configuration
         if use_own_browser:
-            if browser_context is None:
+            if _global_browser_context is None:
                 playwright = await async_playwright().start()
                 chrome_exe = os.getenv("CHROME_PATH", "")
                 chrome_use_data = os.getenv("CHROME_USER_DATA", "")
@@ -308,7 +294,7 @@ async def run_custom_agent(
                     ),
                 )
         else:
-            if browser_context is None:
+            if _global_browser_context is None:
                 browser_context = await browser.new_context(
                     config=BrowserContextConfig(
                         trace_path=save_trace_path if save_trace_path else None,
@@ -319,7 +305,6 @@ async def run_custom_agent(
                         ),
                     ),
                 )
-            )
 
         # Create and run agent
         agent = CustomAgent(
@@ -369,6 +354,7 @@ async def run_custom_agent(
 async def run_with_stream(
     agent_type,
     llm_provider,
+    keep_browser_open,
     llm_model_name,
     llm_temperature,
     llm_base_url,
@@ -389,7 +375,7 @@ async def run_with_stream(
     tool_call_in_content
 ):
     """Wrapper to run the agent and handle streaming."""
-    global _global_browser, _global_browser_context
+    global _global_browser, _global_browser_context, _global_playwright
     
     try:
         # Initialize the global browser if it doesn't exist
@@ -421,6 +407,7 @@ async def run_with_stream(
                 agent_type=agent_type,
                 llm_provider=llm_provider,
                 llm_model_name=llm_model_name,
+                keep_browser_open=keep_browser_open,
                 llm_temperature=llm_temperature,
                 llm_base_url=llm_base_url,
                 llm_api_key=llm_api_key,
@@ -437,10 +424,7 @@ async def run_with_stream(
                 max_steps=max_steps,
                 use_vision=use_vision,
                 max_actions_per_step=max_actions_per_step,
-                tool_call_in_content=tool_call_in_content,
-                browser=_global_browser,
-                browser_context=_global_browser_context,
-                playwright=_global_playwright if use_own_browser else None
+                tool_call_in_content=tool_call_in_content
             )
         )
 
@@ -452,7 +436,10 @@ async def run_with_stream(
         # Periodically update the stream while the agent task is running
         while not agent_task.done():
             try:
-                html_content = await capture_screenshot(_global_browser_context)
+                if isinstance(_global_browser_context, CustomBrowserContext):
+                    html_content = await capture_screenshot(_global_browser_context)
+                else:
+                    html_content = "<div class='error' style='width:80vw; height:90vh'>Invalid browser context type</div>"
             except Exception as e:
                 html_content = f"<div class='error' style='width:80vw; height:90vh'>Screenshot error: {str(e)}</div>"
             
