@@ -131,7 +131,7 @@ async def run_browser_agent(
         if new_videos - existing_videos:
             latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
 
-    return final_result, errors, model_actions, model_thoughts, latest_video, trace_file
+    return final_result, errors, model_actions, model_thoughts, latest_video
 
 async def run_org_agent(
         llm,
@@ -204,7 +204,7 @@ async def run_org_agent(
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        return '', errors, '', ''
+        return '', errors, '', '', None, None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
@@ -288,17 +288,16 @@ async def run_custom_agent(
         errors = history.errors()
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
+
         recorded_files = get_latest_files(save_recording_path)
         trace_file = get_latest_files(save_trace_path)        
 
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
     except Exception as e:
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        model_actions = ""
-        model_thoughts = ""
-        recorded_files = {}
-        trace_file = {}
+        return '', errors, '', '', None, None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
@@ -309,17 +308,16 @@ async def run_custom_agent(
             if _global_browser:
                 await _global_browser.close()
                 _global_browser = None
-    return final_result, errors, model_actions, model_thoughts, trace_file.get('.webm'), recorded_files.get('.zip')
 
 async def run_with_stream(
     agent_type,
     llm_provider,
-    keep_browser_open,
     llm_model_name,
     llm_temperature,
     llm_base_url,
     llm_api_key,
     use_own_browser,
+    keep_browser_open,
     headless,
     disable_security,
     window_w,
@@ -335,7 +333,7 @@ async def run_with_stream(
     tool_call_in_content
 ):
     """Wrapper to run the agent and handle streaming."""
-    global _global_browser, _global_browser_context, _global_playwright
+    global _global_browser, _global_browser_context
     
     try:
         # Initialize the global browser if it doesn't exist
@@ -367,11 +365,11 @@ async def run_with_stream(
                 agent_type=agent_type,
                 llm_provider=llm_provider,
                 llm_model_name=llm_model_name,
-                keep_browser_open=keep_browser_open,
                 llm_temperature=llm_temperature,
                 llm_base_url=llm_base_url,
                 llm_api_key=llm_api_key,
                 use_own_browser=use_own_browser,
+                keep_browser_open=keep_browser_open,
                 headless=headless,
                 disable_security=disable_security,
                 window_w=window_w,
@@ -385,8 +383,7 @@ async def run_with_stream(
                 use_vision=use_vision,
                 max_actions_per_step=max_actions_per_step,
                 tool_call_in_content=tool_call_in_content
-            )
-        )
+        ))
 
         # Initialize values for streaming
         html_content = "<div style='width:80vw; height:90vh'>Using browser...</div>"
@@ -396,10 +393,7 @@ async def run_with_stream(
         # Periodically update the stream while the agent task is running
         while not agent_task.done():
             try:
-                if isinstance(_global_browser_context, CustomBrowserContext):
-                    html_content = await capture_screenshot(_global_browser_context)
-                else:
-                    html_content = "<div class='error' style='width:80vw; height:90vh'>Invalid browser context type</div>"
+                html_content = await capture_screenshot(_global_browser_context)
             except Exception as e:
                 html_content = f"<div class='error' style='width:80vw; height:90vh'>Screenshot error: {str(e)}</div>"
             
