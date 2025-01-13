@@ -16,6 +16,8 @@ import glob
 import asyncio
 import argparse
 import os
+import warnings
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,19 @@ _global_browser_context = None
 
 # Create the global agent state instance
 _global_agent_state = AgentState()
+
+def suppress_connection_reset(func):
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except ConnectionResetError:
+            # Suppress the ConnectionResetError
+            warnings.warn("Connection was reset. This is usually harmless.", RuntimeWarning)
+            pass
+        except socket.error as e:
+            if e.winerror != 10054:  # If it's not the specific connection reset error
+                raise
+    return wrapper
 
 async def stop_agent():
     """Request the agent to stop and update UI with enhanced feedback"""
@@ -538,6 +553,7 @@ theme_map = {
     "Base": Base()
 }
 
+@suppress_connection_reset
 async def close_global_browser():
     global _global_browser, _global_browser_context
 
@@ -853,6 +869,9 @@ def create_ui(theme_name="Ocean"):
     return demo
 
 def main():
+    # Suppress asyncio connection reset warnings
+    warnings.filterwarnings("ignore", message=".*forcibly closed.*")
+    
     parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
     parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
     parser.add_argument("--port", type=int, default=7788, help="Port to listen on")

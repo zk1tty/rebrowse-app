@@ -15,7 +15,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 import gradio as gr
-from src.browser.custom_context import CustomBrowserContext
 
 def get_llm_model(provider: str, **kwargs):
     """
