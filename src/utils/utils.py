@@ -4,9 +4,11 @@
 # @Email   : wenshaoguo1026@gmail.com
 # @Project : browser-use-webui
 # @FileName: utils.py
-
 import base64
 import os
+import time
+from pathlib import Path
+from typing import Dict, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -140,3 +142,60 @@ def encode_image(img_path):
     with open(img_path, "rb") as fin:
         image_data = base64.b64encode(fin.read()).decode("utf-8")
     return image_data
+
+
+def get_latest_files(directory: str, file_types: list = ['.webm', '.zip']) -> Dict[str, Optional[str]]:
+    """Get the latest recording and trace files"""
+    latest_files: Dict[str, Optional[str]] = {ext: None for ext in file_types}
+    
+    if not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+        return latest_files
+
+    for file_type in file_types:
+        try:
+            matches = list(Path(directory).rglob(f"*{file_type}"))
+            if matches:
+                latest = max(matches, key=lambda p: p.stat().st_mtime)
+                # Only return files that are complete (not being written)
+                if time.time() - latest.stat().st_mtime > 1.0:
+                    latest_files[file_type] = str(latest)
+        except Exception as e:
+            print(f"Error getting latest {file_type} file: {e}")
+            
+    return latest_files
+async def capture_screenshot(browser_context) -> str:
+    """Capture and encode a screenshot"""
+    try:
+        # Extract the Playwright browser instance
+        playwright_browser = browser_context.browser.playwright_browser  # Ensure this is correct.
+
+        # Check if the browser instance is valid and if an existing context can be reused
+        if playwright_browser and playwright_browser.contexts:
+            playwright_context = playwright_browser.contexts[0]
+
+        # Access pages in the context
+        if playwright_context:
+            pages = playwright_context.pages
+
+        # Use an existing page or create a new one if none exist
+        if pages:
+            active_page = pages[0]
+            for page in pages:
+                if page.url != "about:blank":
+                    active_page = page
+        
+        # Take screenshot
+        try:
+            screenshot = await active_page.screenshot(
+                type='jpeg',
+                quality=75,
+                scale="css"
+            )
+            encoded = base64.b64encode(screenshot).decode('utf-8')
+            return f'<img src="data:image/jpeg;base64,{encoded}" style="width:80vw; height:90vh ; border:1px solid #ccc;">'
+        except Exception as e:
+            return f"<h1 class='error' style='width:80vw; height:90vh'>Waiting for browser session...</h1>"
+
+    except Exception as e:
+        return f"<h1 class='error' style='width:80vw; height:90vh'>Waiting for browser session...</h1>"

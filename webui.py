@@ -11,19 +11,18 @@ import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+import os
+import glob
+import asyncio
 import argparse
 import os
 
 logger = logging.getLogger(__name__)
 
 import gradio as gr
-import argparse
 
-
-from gradio.themes import Base, Default, Soft, Monochrome, Glass, Origin, Citrus, Ocean
-import asyncio
-import os, glob
 from browser_use.agent.service import Agent
+from playwright.async_api import async_playwright
 from browser_use.browser.browser import Browser, BrowserConfig
 from browser_use.browser.context import (
     BrowserContextConfig,
@@ -32,18 +31,18 @@ from browser_use.browser.context import (
 from playwright.async_api import async_playwright
 from src.utils.agent_state import AgentState
 
-from src.agent.custom_agent import CustomAgent
-from src.agent.custom_prompts import CustomSystemPrompt
-from src.browser.custom_browser import CustomBrowser
-from src.browser.custom_context import BrowserContextConfig
-from src.controller.custom_controller import CustomController
 from src.utils import utils
-from src.utils.utils import update_model_dropdown
-from src.browser.config import BrowserPersistenceConfig
+from src.agent.custom_agent import CustomAgent
 from src.browser.custom_browser import CustomBrowser
-from src.browser.custom_context import CustomBrowserContext
-from browser_use.browser.browser import BrowserConfig
-from browser_use.browser.context import BrowserContextConfig, BrowserContextWindowSize
+from src.agent.custom_prompts import CustomSystemPrompt
+from src.browser.config import BrowserPersistenceConfig
+from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
+from src.controller.custom_controller import CustomController
+from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
+from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # Global variables for persistence
 _global_browser = None
@@ -131,7 +130,7 @@ async def run_browser_agent(
             api_key=llm_api_key,
         )
         if agent_type == "org":
-            final_result, errors, model_actions, model_thoughts = await run_org_agent(
+            final_result, errors, model_actions, model_thoughts, trace_file = await run_org_agent(
                 llm=llm,
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
@@ -148,7 +147,7 @@ async def run_browser_agent(
                 tool_call_in_content=tool_call_in_content
             )
         elif agent_type == "custom":
-            final_result, errors, model_actions, model_thoughts = await run_custom_agent(
+            final_result, errors, model_actions, model_thoughts, trace_file = await run_custom_agent(
                 llm=llm,
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
@@ -184,6 +183,7 @@ async def run_browser_agent(
             model_actions,
             model_thoughts,
             latest_video,
+            trace_file,
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
         )
@@ -198,6 +198,7 @@ async def run_browser_agent(
             '',                                         # model_actions
             '',                                         # model_thoughts
             None,                                       # latest_video
+            None,                                       # trace_file
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
         )
@@ -218,7 +219,6 @@ async def run_org_agent(
         use_vision,
         max_actions_per_step,
         tool_call_in_content
-
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent_state
@@ -270,12 +270,15 @@ async def run_org_agent(
         errors = history.errors()
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
-        return final_result, errors, model_actions, model_thoughts
+        
+        trace_file = get_latest_files(save_trace_path)
+        
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip')    
     except Exception as e:
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        return '', errors, '', ''
+        return '', errors, '', '', None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
@@ -286,7 +289,6 @@ async def run_org_agent(
             if _global_browser:
                 await _global_browser.close()
                 _global_browser = None
-
 
 async def run_custom_agent(
         llm,
@@ -363,13 +365,15 @@ async def run_custom_agent(
         errors = history.errors()
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
-        return final_result, errors, model_actions, model_thoughts
 
+        trace_file = get_latest_files(save_trace_path)        
+
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip')
     except Exception as e:
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        return '', errors, '', ''
+        return '', errors, '', '', None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
@@ -381,6 +385,146 @@ async def run_custom_agent(
                 await _global_browser.close()
                 _global_browser = None
 
+async def run_with_stream(
+    agent_type,
+    llm_provider,
+    llm_model_name,
+    llm_temperature,
+    llm_base_url,
+    llm_api_key,
+    use_own_browser,
+    keep_browser_open,
+    headless,
+    disable_security,
+    window_w,
+    window_h,
+    save_recording_path,
+    save_trace_path,
+    enable_recording,
+    task,
+    add_infos,
+    max_steps,
+    use_vision,
+    max_actions_per_step,
+    tool_call_in_content
+):
+    if not headless:
+        result = await run_browser_agent(
+            agent_type=agent_type,
+            llm_provider=llm_provider,
+            llm_model_name=llm_model_name,
+            llm_temperature=llm_temperature,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+            use_own_browser=use_own_browser,
+            keep_browser_open=keep_browser_open,
+            headless=headless,
+            disable_security=disable_security,
+            window_w=window_w,
+            window_h=window_h,
+            save_recording_path=save_recording_path,
+            save_trace_path=save_trace_path,
+            enable_recording=enable_recording,
+            task=task,
+            add_infos=add_infos,
+            max_steps=max_steps,
+            use_vision=use_vision,
+            max_actions_per_step=max_actions_per_step,
+            tool_call_in_content=tool_call_in_content
+        )
+        # Add HTML content at the start of the result array
+        html_content = "<h1 style='width:80vw; height:90vh'>Using browser...</h1>"
+        yield [html_content] + list(result)
+    else:
+        try:
+            # Run the browser agent in the background
+            agent_task = asyncio.create_task(
+                run_browser_agent(
+                    agent_type=agent_type,
+                    llm_provider=llm_provider,
+                    llm_model_name=llm_model_name,
+                    llm_temperature=llm_temperature,
+                    llm_base_url=llm_base_url,
+                    llm_api_key=llm_api_key,
+                    use_own_browser=use_own_browser,
+                    keep_browser_open=keep_browser_open,
+                    headless=headless,
+                    disable_security=disable_security,
+                    window_w=window_w,
+                    window_h=window_h,
+                    save_recording_path=save_recording_path,
+                    save_trace_path=save_trace_path,
+                    enable_recording=enable_recording,
+                    task=task,
+                    add_infos=add_infos,
+                    max_steps=max_steps,
+                    use_vision=use_vision,
+                    max_actions_per_step=max_actions_per_step,
+                    tool_call_in_content=tool_call_in_content
+                )
+            )
+
+            # Initialize values for streaming
+            html_content = "<h1 style='width:80vw; height:90vh'>Using browser...</h1>"
+            final_result = errors = model_actions = model_thoughts = ""
+            latest_videos = trace = None
+
+
+            # Periodically update the stream while the agent task is running
+            while not agent_task.done():
+                try:
+                    html_content = await capture_screenshot(_global_browser_context)
+                except Exception as e:
+                    html_content = f"<h1 style='width:80vw; height:90vh'>Waiting for browser session...</h1>"
+                
+                yield [
+                    html_content,
+                    final_result,
+                    errors,
+                    model_actions,
+                    model_thoughts,
+                    latest_videos,
+                    trace,
+                    gr.update(value="Stop", interactive=True),  # Re-enable stop button
+                    gr.update(value="Run", interactive=True)    # Re-enable run button
+                ]
+                await asyncio.sleep(0.01)
+
+            # Once the agent task completes, get the results
+            try:
+                result = await agent_task
+                if isinstance(result, tuple) and len(result) == 8:
+                    final_result, errors, model_actions, model_thoughts, latest_videos, trace, stop_button, run_button = result
+                else:
+                    errors = "Unexpected result format from agent"
+            except Exception as e:
+                errors = f"Agent error: {str(e)}"
+
+            yield [
+                html_content,
+                final_result,
+                errors,
+                model_actions,
+                model_thoughts,
+                latest_videos,
+                trace,
+                stop_button,
+                run_button
+            ]
+
+        except Exception as e:
+            import traceback
+            yield [
+                f"<h1 style='width:80vw; height:90vh'>Waiting for browser session...</h1>",
+                "",
+                f"Error: {str(e)}\n{traceback.format_exc()}",
+                "",
+                "",
+                None,
+                None,
+                gr.update(value="Stop", interactive=True),  # Re-enable stop button
+                gr.update(value="Run", interactive=True)    # Re-enable run button
+            ]
 
 # Define the theme map globally
 theme_map = {
@@ -593,11 +737,18 @@ def create_ui(theme_name="Ocean"):
                 with gr.Row():
                     run_button = gr.Button("▶️ Run Agent", variant="primary", scale=2)
                     stop_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
+                    
+                with gr.Row():
+                    browser_view = gr.HTML(
+                        value="<h1 style='width:80vw; height:90vh'>Waiting for browser session...</h1>",
+                        label="Live Browser View",
+                )
 
             with gr.TabItem("📊 Results", id=5):
-                recording_display = gr.Video(label="Latest Recording")
-
                 with gr.Group():
+
+                    recording_display = gr.Video(label="Latest Recording")
+
                     gr.Markdown("### Results")
                     with gr.Row():
                         with gr.Column():
@@ -618,6 +769,8 @@ def create_ui(theme_name="Ocean"):
                                 label="Model Thoughts", lines=3, show_label=True
                             )
 
+                    trace_file = gr.File(label="Trace File")
+
                 # Bind the stop button click event after errors_output is defined
                 stop_button.click(
                     fn=stop_agent,
@@ -627,13 +780,23 @@ def create_ui(theme_name="Ocean"):
 
                 # Run button click handler
                 run_button.click(
-                    fn=run_browser_agent,
+                    fn=run_with_stream,
                     inputs=[
                         agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
                         use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h, save_recording_path, save_trace_path,
                         enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
                     ],
-                    outputs=[final_result_output, errors_output, model_actions_output, model_thoughts_output, recording_display, stop_button, run_button],
+                    outputs=[
+                        browser_view,           # Browser view
+                        final_result_output,    # Final result
+                        errors_output,          # Errors
+                        model_actions_output,   # Model actions
+                        model_thoughts_output,  # Model thoughts
+                        recording_display,      # Latest recording
+                        trace_file,             # Trace file
+                        stop_button,            # Stop button
+                        run_button              # Run button
+                    ],
                 )
 
             with gr.TabItem("🎥 Recordings", id=6):
