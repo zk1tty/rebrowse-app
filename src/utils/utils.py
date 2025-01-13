@@ -196,7 +196,7 @@ async def capture_screenshot(browser_context) -> str:
             encoded = base64.b64encode(screenshot).decode('utf-8')
             return f'<img src="data:image/jpeg;base64,{encoded}" style="width:80vw; height:90vh ; border:1px solid #ccc;">'
         except Exception as e:
-            return f"<div class='error' style='width:80vw; height:90vh'>Waiting for browser session...</div>"
+            return f"<h1 class='error' style='width:80vw; height:90vh'>Waiting for browser session...</h1>"
 
     except Exception as e:
-        return f"<div class='error' style='width:80vw; height:90vh'>Waiting for browser session...</div>"
+        return f"<h1 class='error' style='width:80vw; height:90vh'>Waiting for browser session...</h1>"
