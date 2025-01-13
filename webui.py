@@ -408,6 +408,8 @@ async def run_with_stream(
     max_actions_per_step,
     tool_call_in_content
 ):
+    stream_vw = 80
+    stream_vh = int(80 * window_h // window_w)
     if not headless:
         result = await run_browser_agent(
             agent_type=agent_type,
@@ -433,7 +435,7 @@ async def run_with_stream(
             tool_call_in_content=tool_call_in_content
         )
         # Add HTML content at the start of the result array
-        html_content = "<h1 style='width:80vw; height:90vh'>Using browser...</h1>"
+        html_content = f"<h1 style='width:{stream_vw}vw; height:{stream_vh}vh'>Using browser...</h1>"
         yield [html_content] + list(result)
     else:
         try:
@@ -465,7 +467,7 @@ async def run_with_stream(
             )
 
             # Initialize values for streaming
-            html_content = "<h1 style='width:80vw; height:90vh'>Using browser...</h1>"
+            html_content = f"<h1 style='width:{stream_vw}vw; height:{stream_vh}vh'>Using browser...</h1>"
             final_result = errors = model_actions = model_thoughts = ""
             latest_videos = trace = None
 
@@ -473,9 +475,13 @@ async def run_with_stream(
             # Periodically update the stream while the agent task is running
             while not agent_task.done():
                 try:
-                    html_content = await capture_screenshot(_global_browser_context)
+                    encoded_screenshot = await capture_screenshot(_global_browser_context)
+                    if encoded_screenshot is not None:
+                        html_content = f'<img src="data:image/jpeg;base64,{encoded_screenshot}" style="width:{stream_vw}vw; height:{stream_vh}vh ; border:1px solid #ccc;">'
+                    else:
+                        html_content = f"<h1 style='width:{stream_vw}vw; height:{stream_vh}vh'>Waiting for browser session...</h1>"
                 except Exception as e:
-                    html_content = f"<h1 style='width:80vw; height:90vh'>Waiting for browser session...</h1>"
+                    html_content = f"<h1 style='width:{stream_vw}vw; height:{stream_vh}vh'>Waiting for browser session...</h1>"
                 
                 yield [
                     html_content,
@@ -488,7 +494,7 @@ async def run_with_stream(
                     gr.update(value="Stop", interactive=True),  # Re-enable stop button
                     gr.update(value="Run", interactive=True)    # Re-enable run button
                 ]
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.05)
 
             # Once the agent task completes, get the results
             try:
@@ -515,7 +521,7 @@ async def run_with_stream(
         except Exception as e:
             import traceback
             yield [
-                f"<h1 style='width:80vw; height:90vh'>Waiting for browser session...</h1>",
+                f"<h1 style='width:{stream_vw}vw; height:{stream_vh}vh'>Waiting for browser session...</h1>",
                 "",
                 f"Error: {str(e)}\n{traceback.format_exc()}",
                 "",
@@ -740,7 +746,7 @@ def create_ui(theme_name="Ocean"):
                     
                 with gr.Row():
                     browser_view = gr.HTML(
-                        value="<h1 style='width:80vw; height:90vh'>Waiting for browser session...</h1>",
+                        value="<h1 style='width:80vw; height:50vh'>Waiting for browser session...</h1>",
                         label="Live Browser View",
                 )
 
