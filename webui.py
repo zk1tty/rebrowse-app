@@ -148,7 +148,7 @@ async def run_browser_agent(
                 tool_call_in_content=tool_call_in_content
             )
         elif agent_type == "custom":
-            final_result, errors, model_actions, model_thoughts, trace_file = await run_custom_agent(
+            final_result, errors, model_actions, model_thoughts, trace_file, history_file = await run_custom_agent(
                 llm=llm,
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
@@ -186,6 +186,7 @@ async def run_browser_agent(
             model_thoughts,
             latest_video,
             trace_file,
+            history_file,
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
         )
@@ -201,6 +202,7 @@ async def run_browser_agent(
             '',                                         # model_thoughts
             None,                                       # latest_video
             None,                                       # trace_file
+            None,                                       # history_file
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
         )
@@ -374,7 +376,7 @@ async def run_custom_agent(
 
         trace_file = get_latest_files(save_trace_path)        
 
-        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip')
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip'), history_file
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -794,13 +796,7 @@ def create_ui(theme_name="Ocean"):
 
                     trace_file = gr.File(label="Trace File")
 
-                    history_download_button = gr.Button("⬇️ Download Agent History")
-
-                    history_download_button.click(
-                        fn=utils.download_agent_history,
-                        inputs=save_agent_history_path,
-                        outputs=gr.File(),
-                    )
+                    agent_history_file = gr.File(label="Agent History")
 
                 # Bind the stop button click event after errors_output is defined
                 stop_button.click(
@@ -826,6 +822,7 @@ def create_ui(theme_name="Ocean"):
                         model_thoughts_output,  # Model thoughts
                         recording_display,      # Latest recording
                         trace_file,             # Trace file
+                        agent_history_file,     # Agent history file
                         stop_button,            # Stop button
                         run_button              # Run button
                     ],

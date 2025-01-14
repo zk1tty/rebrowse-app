@@ -200,11 +200,3 @@ async def capture_screenshot(browser_context):
         return encoded
     except Exception as e:
         return None
-
-def download_agent_history(save_agent_history_path):
-    history_file = os.path.join(save_agent_history_path, "AgentHistory.json")
-    history_file = os.path.abspath(history_file)  # Convert to absolute path
-    if os.path.exists(history_file):
-        return history_file
-    else:
-        return None
