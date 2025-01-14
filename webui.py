@@ -287,7 +287,7 @@ async def run_org_agent(
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        return '', errors, '', '', None
+        return '', errors, '', '', None, None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
