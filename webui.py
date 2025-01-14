@@ -92,6 +92,7 @@ async def run_browser_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_agent_history_path,
         save_trace_path,
         enable_recording,
         task,
@@ -130,7 +131,7 @@ async def run_browser_agent(
             api_key=llm_api_key,
         )
         if agent_type == "org":
-            final_result, errors, model_actions, model_thoughts, trace_file = await run_org_agent(
+            final_result, errors, model_actions, model_thoughts, trace_file, history_file = await run_org_agent(
                 llm=llm,
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
@@ -139,6 +140,7 @@ async def run_browser_agent(
                 window_w=window_w,
                 window_h=window_h,
                 save_recording_path=save_recording_path,
+                save_agent_history_path=save_agent_history_path,
                 save_trace_path=save_trace_path,
                 task=task,
                 max_steps=max_steps,
@@ -147,7 +149,7 @@ async def run_browser_agent(
                 tool_call_in_content=tool_call_in_content
             )
         elif agent_type == "custom":
-            final_result, errors, model_actions, model_thoughts, trace_file = await run_custom_agent(
+            final_result, errors, model_actions, model_thoughts, trace_file, history_file = await run_custom_agent(
                 llm=llm,
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
@@ -156,6 +158,7 @@ async def run_browser_agent(
                 window_w=window_w,
                 window_h=window_h,
                 save_recording_path=save_recording_path,
+                save_agent_history_path=save_agent_history_path,
                 save_trace_path=save_trace_path,
                 task=task,
                 add_infos=add_infos,
@@ -184,6 +187,7 @@ async def run_browser_agent(
             model_thoughts,
             latest_video,
             trace_file,
+            history_file,
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
         )
@@ -198,6 +202,7 @@ async def run_browser_agent(
             '',                                         # model_actions
             '',                                         # model_thoughts
             None,                                       # latest_video
+            None,                                       # history_file
             None,                                       # trace_file
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
@@ -213,6 +218,7 @@ async def run_org_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_agent_history_path,
         save_trace_path,
         task,
         max_steps,
@@ -266,14 +272,17 @@ async def run_org_agent(
         )
         history = await agent.run(max_steps=max_steps)
 
+        history_file = os.path.join(save_agent_history_path, f"{agent.agent_id}.json")
+        agent.save_history(history_file)
+
         final_result = history.final_result()
         errors = history.errors()
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
-        
+
         trace_file = get_latest_files(save_trace_path)
-        
-        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip')    
+
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip'), history_file
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -299,6 +308,7 @@ async def run_custom_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_agent_history_path,
         save_trace_path,
         task,
         add_infos,
@@ -361,6 +371,9 @@ async def run_custom_agent(
         )
         history = await agent.run(max_steps=max_steps)
 
+        history_file = os.path.join(save_agent_history_path, f"{agent.agent_id}.json")
+        agent.save_history(history_file)
+
         final_result = history.final_result()
         errors = history.errors()
         model_actions = history.model_actions()
@@ -368,12 +381,12 @@ async def run_custom_agent(
 
         trace_file = get_latest_files(save_trace_path)        
 
-        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip')
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip'), history_file
     except Exception as e:
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        return '', errors, '', '', None
+        return '', errors, '', '', None, None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
@@ -399,6 +412,7 @@ async def run_with_stream(
     window_w,
     window_h,
     save_recording_path,
+    save_agent_history_path,
     save_trace_path,
     enable_recording,
     task,
@@ -425,6 +439,7 @@ async def run_with_stream(
             window_w=window_w,
             window_h=window_h,
             save_recording_path=save_recording_path,
+            save_agent_history_path=save_agent_history_path,
             save_trace_path=save_trace_path,
             enable_recording=enable_recording,
             task=task,
@@ -455,6 +470,7 @@ async def run_with_stream(
                     window_w=window_w,
                     window_h=window_h,
                     save_recording_path=save_recording_path,
+                    save_agent_history_path=save_agent_history_path,
                     save_trace_path=save_trace_path,
                     enable_recording=enable_recording,
                     task=task,
@@ -725,6 +741,14 @@ def create_ui(theme_name="Ocean"):
                         interactive=True,
                     )
 
+                    save_agent_history_path = gr.Textbox(
+                        label="Agent History Save Path",
+                        placeholder="e.g., ./tmp/agent_history",
+                        value="./tmp/agent_history",
+                        info="Specify the directory where agent history should be saved.",
+                        interactive=True,
+                    )
+
             with gr.TabItem("🤖 Run Agent", id=4):
                 task = gr.Textbox(
                     label="Task Description",
@@ -777,6 +801,8 @@ def create_ui(theme_name="Ocean"):
 
                     trace_file = gr.File(label="Trace File")
 
+                    agent_history_file = gr.File(label="Agent History")
+
                 # Bind the stop button click event after errors_output is defined
                 stop_button.click(
                     fn=stop_agent,
@@ -787,11 +813,12 @@ def create_ui(theme_name="Ocean"):
                 # Run button click handler
                 run_button.click(
                     fn=run_with_stream,
-                    inputs=[
-                        agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
-                        use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h, save_recording_path, save_trace_path,
-                        enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
-                    ],
+                        inputs=[
+                            agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                            use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h,
+                            save_recording_path, save_agent_history_path, save_trace_path,  # Include the new path
+                            enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_call_in_content
+                        ],
                     outputs=[
                         browser_view,           # Browser view
                         final_result_output,    # Final result
@@ -800,6 +827,7 @@ def create_ui(theme_name="Ocean"):
                         model_thoughts_output,  # Model thoughts
                         recording_display,      # Latest recording
                         trace_file,             # Trace file
+                        agent_history_file,     # Agent history file
                         stop_button,            # Stop button
                         run_button              # Run button
                     ],
