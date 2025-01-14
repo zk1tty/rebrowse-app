@@ -131,7 +131,7 @@ async def run_browser_agent(
             api_key=llm_api_key,
         )
         if agent_type == "org":
-            final_result, errors, model_actions, model_thoughts, trace_file = await run_org_agent(
+            final_result, errors, model_actions, model_thoughts, trace_file, history_file = await run_org_agent(
                 llm=llm,
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
@@ -140,6 +140,7 @@ async def run_browser_agent(
                 window_w=window_w,
                 window_h=window_h,
                 save_recording_path=save_recording_path,
+                save_agent_history_path=save_agent_history_path,
                 save_trace_path=save_trace_path,
                 task=task,
                 max_steps=max_steps,
@@ -201,8 +202,8 @@ async def run_browser_agent(
             '',                                         # model_actions
             '',                                         # model_thoughts
             None,                                       # latest_video
-            None,                                       # trace_file
             None,                                       # history_file
+            None,                                       # trace_file
             gr.update(value="Stop", interactive=True),  # Re-enable stop button
             gr.update(value="Run", interactive=True)    # Re-enable run button
         )
@@ -217,6 +218,7 @@ async def run_org_agent(
         window_w,
         window_h,
         save_recording_path,
+        save_agent_history_path,
         save_trace_path,
         task,
         max_steps,
@@ -270,14 +272,17 @@ async def run_org_agent(
         )
         history = await agent.run(max_steps=max_steps)
 
+        history_file = os.path.join(save_agent_history_path, f"{agent.agent_id}.json")
+        agent.save_history(history_file)
+
         final_result = history.final_result()
         errors = history.errors()
         model_actions = history.model_actions()
         model_thoughts = history.model_thoughts()
-        
+
         trace_file = get_latest_files(save_trace_path)
-        
-        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip')    
+
+        return final_result, errors, model_actions, model_thoughts, trace_file.get('.zip'), history_file
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -381,7 +386,7 @@ async def run_custom_agent(
         import traceback
         traceback.print_exc()
         errors = str(e) + "\n" + traceback.format_exc()
-        return '', errors, '', '', None
+        return '', errors, '', '', None, None
     finally:
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
