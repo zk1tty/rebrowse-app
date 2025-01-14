@@ -364,7 +364,7 @@ async def run_custom_agent(
         )
         history = await agent.run(max_steps=max_steps)
 
-        history_file = os.path.join(save_agent_history_path, "AgentHistory.json")
+        history_file = os.path.join(save_agent_history_path, f"{agent.agent_id}.json")
         agent.save_history(history_file)
 
         final_result = history.final_result()
