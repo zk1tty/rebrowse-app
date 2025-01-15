@@ -89,6 +89,7 @@ def get_llm_model(provider: str, **kwargs):
             model=kwargs.get("model_name", "qwen2.5:7b"),
             temperature=kwargs.get("temperature", 0.0),
             num_ctx=128000,
+            base_url=kwargs.get("base_url", "http://localhost:11434"),
         )
     elif provider == "azure_openai":
         if not kwargs.get("base_url", ""):
