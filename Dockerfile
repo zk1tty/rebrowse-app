@@ -35,6 +35,10 @@ RUN apt-get update && apt-get install -y \
     procps \
     git \
     python3-numpy \
+    fontconfig \
+    fonts-dejavu \
+    fonts-dejavu-core \
+    fonts-dejavu-extra \
     && rm -rf /var/lib/apt/lists/*
 
 # Install noVNC
