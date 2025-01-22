@@ -39,7 +39,7 @@ from src.browser.config import BrowserPersistenceConfig
 from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
 from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
-from src.utils.default_config_settings import load_config_from_file, save_config_to_file
+from src.utils.default_config_settings import default_config, load_config_from_file, save_config_to_file
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot
 
 from dotenv import load_dotenv
@@ -1024,7 +1024,7 @@ def main():
     parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
     args = parser.parse_args()
 
-    config_dict = load_config_from_file("./default_config.pkl") or {}
+    config_dict = default_config()
 
     demo = create_ui(config_dict, theme_name=args.theme)
     demo.launch(server_name=args.ip, server_port=args.port)

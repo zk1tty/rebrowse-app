@@ -3,6 +3,33 @@ import pickle
 import uuid
 
 
+def default_config():
+    """Prepare the default configuration"""
+    return {
+        "agent_type": "custom",
+        "max_steps": 100,
+        "max_actions_per_step": 10,
+        "use_vision": True,
+        "tool_call_in_content": True,
+        "llm_provider": "openai",
+        "llm_model_name": "gpt-4o",
+        "llm_temperature": 1.0,
+        "llm_base_url": "",
+        "llm_api_key": "",
+        "use_own_browser": False,
+        "keep_browser_open": False,
+        "headless": False,
+        "disable_security": True,
+        "enable_recording": True,
+        "window_w": 1280,
+        "window_h": 1100,
+        "save_recording_path": "./tmp/record_videos",
+        "save_trace_path": "./tmp/traces",
+        "save_agent_history_path": "./tmp/agent_history",
+        "task": "go to google.com and type 'OpenAI' click search and give me the first url",
+    }
+
+
 def load_config_from_file(config_file):
     """Load settings from a UUID.pkl file."""
     try:
