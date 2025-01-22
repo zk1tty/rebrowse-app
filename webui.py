@@ -423,7 +423,6 @@ async def run_with_stream(
     max_actions_per_step,
     tool_call_in_content
 ):
-    save_config_to_file(locals())
     global _global_agent_state
     stream_vw = 80
     stream_vh = int(80 * window_h // window_w)
