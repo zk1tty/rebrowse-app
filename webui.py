@@ -793,7 +793,118 @@ def create_ui(config, theme_name="Ocean"):
                         label="Live Browser View",
                 )
 
-            with gr.TabItem("📊 Results", id=5):
+            with gr.TabItem("📁 Configuration", id=5):
+                with gr.Group():
+                    config_file_input = gr.File(
+                        label="Load Config File",
+                        file_types=[".pkl"],
+                        interactive=True
+                    )
+
+                    load_config_button = gr.Button("Load Existing Config From File", variant="primary")
+                    save_config_button = gr.Button("Save Current Config", variant="primary")
+
+                    config_status = gr.Textbox(
+                        label="Status",
+                        lines=2,
+                        interactive=False
+                    )
+
+                def update_ui_from_config(config_file):
+                    if config_file is not None:
+                        loaded_config = load_config_from_file(config_file.name)
+                        if isinstance(loaded_config, dict):
+                            return (
+                                gr.update(value=loaded_config.get("agent_type", "custom")),
+                                gr.update(value=loaded_config.get("max_steps", 100)),
+                                gr.update(value=loaded_config.get("max_actions_per_step", 10)),
+                                gr.update(value=loaded_config.get("use_vision", True)),
+                                gr.update(value=loaded_config.get("tool_call_in_content", True)),
+                                gr.update(value=loaded_config.get("llm_provider", "openai")),
+                                gr.update(value=loaded_config.get("llm_model_name", "gpt-4o")),
+                                gr.update(value=loaded_config.get("llm_temperature", 1.0)),
+                                gr.update(value=loaded_config.get("llm_base_url", "")),
+                                gr.update(value=loaded_config.get("llm_api_key", "")),
+                                gr.update(value=loaded_config.get("use_own_browser", False)),
+                                gr.update(value=loaded_config.get("keep_browser_open", False)),
+                                gr.update(value=loaded_config.get("headless", False)),
+                                gr.update(value=loaded_config.get("disable_security", True)),
+                                gr.update(value=loaded_config.get("enable_recording", True)),
+                                gr.update(value=loaded_config.get("window_w", 1280)),
+                                gr.update(value=loaded_config.get("window_h", 1100)),
+                                gr.update(value=loaded_config.get("save_recording_path", "./tmp/record_videos")),
+                                gr.update(value=loaded_config.get("save_trace_path", "./tmp/traces")),
+                                gr.update(value=loaded_config.get("save_agent_history_path", "./tmp/agent_history")),
+                                gr.update(value=loaded_config.get("task", "")),
+                                "Configuration loaded successfully."
+                            )
+                        else:
+                            return (
+                                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                                gr.update(), "Error: Invalid configuration file."
+                            )
+                    return (
+                        gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                        gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                        gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                        gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                        gr.update(), "No file selected."
+                    )
+                
+                load_config_button.click(
+                    fn=update_ui_from_config,
+                    inputs=[config_file_input],
+                    outputs=[
+                        agent_type, max_steps, max_actions_per_step, use_vision, tool_call_in_content,
+                        llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                        use_own_browser, keep_browser_open, headless, disable_security, enable_recording,
+                        window_w, window_h, save_recording_path, save_trace_path, save_agent_history_path,
+                        task, config_status
+                    ]
+                )
+
+                def save_current_config(*args):
+                    current_config = {
+                        "agent_type": args[0],
+                        "max_steps": args[1],
+                        "max_actions_per_step": args[2],
+                        "use_vision": args[3],
+                        "tool_call_in_content": args[4],
+                        "llm_provider": args[5],
+                        "llm_model_name": args[6],
+                        "llm_temperature": args[7],
+                        "llm_base_url": args[8],
+                        "llm_api_key": args[9],
+                        "use_own_browser": args[10],
+                        "keep_browser_open": args[11],
+                        "headless": args[12],
+                        "disable_security": args[13],
+                        "enable_recording": args[14],
+                        "window_w": args[15],
+                        "window_h": args[16],
+                        "save_recording_path": args[17],
+                        "save_trace_path": args[18],
+                        "save_agent_history_path": args[19],
+                        "task": args[20],
+                    }
+                    return save_config_to_file(current_config)
+
+                save_config_button.click(
+                    fn=save_current_config,
+                    inputs=[
+                        agent_type, max_steps, max_actions_per_step, use_vision, tool_call_in_content,
+                        llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                        use_own_browser, keep_browser_open, headless, disable_security,
+                        enable_recording, window_w, window_h, save_recording_path, save_trace_path,
+                        save_agent_history_path, task,
+                    ],  
+                    outputs=[config_status]
+                )
+
+            with gr.TabItem("📊 Results", id=6):
                 with gr.Group():
 
                     recording_display = gr.Video(label="Latest Recording")
@@ -852,7 +963,7 @@ def create_ui(config, theme_name="Ocean"):
                     ],
                 )
 
-            with gr.TabItem("🎥 Recordings", id=6):
+            with gr.TabItem("🎥 Recordings", id=7):
                 def list_recordings(save_recording_path):
                     if not os.path.exists(save_recording_path):
                         return []
@@ -913,7 +1024,7 @@ def main():
     parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
     args = parser.parse_args()
 
-    config_dict = load_config_from_file()
+    config_dict = load_config_from_file("./default_config.pkl") or {}
 
     demo = create_ui(config_dict, theme_name=args.theme)
     demo.launch(server_name=args.ip, server_port=args.port)
