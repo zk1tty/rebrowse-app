@@ -754,7 +754,7 @@ def create_ui(config, theme_name="Ocean"):
                     save_trace_path = gr.Textbox(
                         label="Trace Path",
                         placeholder="e.g. ./tmp/traces",
-                        value=config['save_recording_path'],
+                        value=config['save_trace_path'],
                         info="Path to save Agent traces",
                         interactive=True,
                     )
