@@ -913,7 +913,6 @@ def main():
     parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
     args = parser.parse_args()
 
-    # Ensure that the config file exists
     config_dict = load_config_from_file()
 
     demo = create_ui(config_dict, theme_name=args.theme)
