@@ -39,6 +39,7 @@ from src.browser.config import BrowserPersistenceConfig
 from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
 from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
+from src.utils.default_config_settings import default_config, load_config_from_file, save_config_to_file, save_current_config, update_ui_from_config
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot
 
 from dotenv import load_dotenv
@@ -588,7 +589,7 @@ async def close_global_browser():
         await _global_browser.close()
         _global_browser = None
 
-def create_ui(theme_name="Ocean"):
+def create_ui(config, theme_name="Ocean"):
     css = """
     .gradio-container {
         max-width: 1200px !important;
@@ -634,13 +635,13 @@ def create_ui(theme_name="Ocean"):
                     agent_type = gr.Radio(
                         ["org", "custom"],
                         label="Agent Type",
-                        value="custom",
+                        value=config['agent_type'],
                         info="Select the type of agent to use",
                     )
                     max_steps = gr.Slider(
                         minimum=1,
                         maximum=200,
-                        value=100,
+                        value=config['max_steps'],
                         step=1,
                         label="Max Run Steps",
                         info="Maximum number of steps the agent will take",
@@ -648,19 +649,19 @@ def create_ui(theme_name="Ocean"):
                     max_actions_per_step = gr.Slider(
                         minimum=1,
                         maximum=20,
-                        value=10,
+                        value=config['max_actions_per_step'],
                         step=1,
                         label="Max Actions per Step",
                         info="Maximum number of actions the agent will take per step",
                     )
                     use_vision = gr.Checkbox(
                         label="Use Vision",
-                        value=True,
+                        value=config['use_vision'],
                         info="Enable visual processing capabilities",
                     )
                     tool_call_in_content = gr.Checkbox(
                         label="Use Tool Calls in Content",
-                        value=True,
+                        value=config['tool_call_in_content'],
                         info="Enable Tool Calls in content",
                     )
 
@@ -669,13 +670,13 @@ def create_ui(theme_name="Ocean"):
                     llm_provider = gr.Dropdown(
                         choices=[provider for provider,model in utils.model_names.items()],
                         label="LLM Provider",
-                        value="openai",
+                        value=config['llm_provider'],
                         info="Select your preferred language model provider"
                     )
                     llm_model_name = gr.Dropdown(
                         label="Model Name",
                         choices=utils.model_names['openai'],
-                        value="gpt-4o",
+                        value=config['llm_model_name'],
                         interactive=True,
                         allow_custom_value=True,  # Allow users to input custom model names
                         info="Select a model from the dropdown or type a custom model name"
@@ -683,7 +684,7 @@ def create_ui(theme_name="Ocean"):
                     llm_temperature = gr.Slider(
                         minimum=0.0,
                         maximum=2.0,
-                        value=1.0,
+                        value=config['llm_temperature'],
                         step=0.1,
                         label="Temperature",
                         info="Controls randomness in model outputs"
@@ -691,13 +692,13 @@ def create_ui(theme_name="Ocean"):
                     with gr.Row():
                         llm_base_url = gr.Textbox(
                             label="Base URL",
-                            value='',
+                            value=config['llm_base_url'],
                             info="API endpoint URL (if required)"
                         )
                         llm_api_key = gr.Textbox(
                             label="API Key",
                             type="password",
-                            value='',
+                            value=config['llm_api_key'],
                             info="Your API key (leave blank to use .env)"
                         )
 
@@ -706,46 +707,46 @@ def create_ui(theme_name="Ocean"):
                     with gr.Row():
                         use_own_browser = gr.Checkbox(
                             label="Use Own Browser",
-                            value=False,
+                            value=config['use_own_browser'],
                             info="Use your existing browser instance",
                         )
                         keep_browser_open = gr.Checkbox(
                             label="Keep Browser Open",
-                            value=os.getenv("CHROME_PERSISTENT_SESSION", "False").lower() == "true",
+                            value=config['keep_browser_open'],
                             info="Keep Browser Open between Tasks",
                         )
                         headless = gr.Checkbox(
                             label="Headless Mode",
-                            value=False,
+                            value=config['headless'],
                             info="Run browser without GUI",
                         )
                         disable_security = gr.Checkbox(
                             label="Disable Security",
-                            value=True,
+                            value=config['disable_security'],
                             info="Disable browser security features",
                         )
                         enable_recording = gr.Checkbox(
                             label="Enable Recording",
-                            value=True,
+                            value=config['enable_recording'],
                             info="Enable saving browser recordings",
                         )
 
                     with gr.Row():
                         window_w = gr.Number(
                             label="Window Width",
-                            value=1280,
+                            value=config['window_w'],
                             info="Browser window width",
                         )
                         window_h = gr.Number(
                             label="Window Height",
-                            value=1100,
+                            value=config['window_h'],
                             info="Browser window height",
                         )
 
                     save_recording_path = gr.Textbox(
                         label="Recording Path",
                         placeholder="e.g. ./tmp/record_videos",
-                        value="./tmp/record_videos",
+                        value=config['save_recording_path'],
                         info="Path to save browser recordings",
                         interactive=True,  # Allow editing only if recording is enabled
                     )
@@ -753,7 +754,7 @@ def create_ui(theme_name="Ocean"):
                     save_trace_path = gr.Textbox(
                         label="Trace Path",
                         placeholder="e.g. ./tmp/traces",
-                        value="./tmp/traces",
+                        value=config['save_trace_path'],
                         info="Path to save Agent traces",
                         interactive=True,
                     )
@@ -761,7 +762,7 @@ def create_ui(theme_name="Ocean"):
                     save_agent_history_path = gr.Textbox(
                         label="Agent History Save Path",
                         placeholder="e.g., ./tmp/agent_history",
-                        value="./tmp/agent_history",
+                        value=config['save_agent_history_path'],
                         info="Specify the directory where agent history should be saved.",
                         interactive=True,
                     )
@@ -771,7 +772,7 @@ def create_ui(theme_name="Ocean"):
                     label="Task Description",
                     lines=4,
                     placeholder="Enter your task here...",
-                    value="go to google.com and type 'OpenAI' click search and give me the first url",
+                    value=config['task'],
                     info="Describe what you want the agent to do",
                 )
                 add_infos = gr.Textbox(
@@ -791,7 +792,48 @@ def create_ui(theme_name="Ocean"):
                         label="Live Browser View",
                 )
 
-            with gr.TabItem("📊 Results", id=5):
+            with gr.TabItem("📁 Configuration", id=5):
+                with gr.Group():
+                    config_file_input = gr.File(
+                        label="Load Config File",
+                        file_types=[".pkl"],
+                        interactive=True
+                    )
+
+                    load_config_button = gr.Button("Load Existing Config From File", variant="primary")
+                    save_config_button = gr.Button("Save Current Config", variant="primary")
+
+                    config_status = gr.Textbox(
+                        label="Status",
+                        lines=2,
+                        interactive=False
+                    )
+
+                load_config_button.click(
+                    fn=update_ui_from_config,
+                    inputs=[config_file_input],
+                    outputs=[
+                        agent_type, max_steps, max_actions_per_step, use_vision, tool_call_in_content,
+                        llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                        use_own_browser, keep_browser_open, headless, disable_security, enable_recording,
+                        window_w, window_h, save_recording_path, save_trace_path, save_agent_history_path,
+                        task, config_status
+                    ]
+                )
+
+                save_config_button.click(
+                    fn=save_current_config,
+                    inputs=[
+                        agent_type, max_steps, max_actions_per_step, use_vision, tool_call_in_content,
+                        llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                        use_own_browser, keep_browser_open, headless, disable_security,
+                        enable_recording, window_w, window_h, save_recording_path, save_trace_path,
+                        save_agent_history_path, task,
+                    ],  
+                    outputs=[config_status]
+                )
+
+            with gr.TabItem("📊 Results", id=6):
                 with gr.Group():
 
                     recording_display = gr.Video(label="Latest Recording")
@@ -850,7 +892,7 @@ def create_ui(theme_name="Ocean"):
                     ],
                 )
 
-            with gr.TabItem("🎥 Recordings", id=6):
+            with gr.TabItem("🎥 Recordings", id=7):
                 def list_recordings(save_recording_path):
                     if not os.path.exists(save_recording_path):
                         return []
@@ -871,7 +913,7 @@ def create_ui(theme_name="Ocean"):
 
                 recordings_gallery = gr.Gallery(
                     label="Recordings",
-                    value=list_recordings("./tmp/record_videos"),
+                    value=list_recordings(config['save_recording_path']),
                     columns=3,
                     height="auto",
                     object_fit="contain"
@@ -911,7 +953,9 @@ def main():
     parser.add_argument("--dark-mode", action="store_true", help="Enable dark mode")
     args = parser.parse_args()
 
-    demo = create_ui(theme_name=args.theme)
+    config_dict = default_config()
+
+    demo = create_ui(config_dict, theme_name=args.theme)
     demo.launch(server_name=args.ip, server_port=args.port)
 
 if __name__ == '__main__':
