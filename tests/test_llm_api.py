@@ -127,5 +127,5 @@ if __name__ == '__main__':
     # test_openai_model()
     # test_gemini_model()
     # test_azure_openai_model()
-    # test_deepseek_model()
-    test_ollama_model()
+    test_deepseek_model()
+    # test_ollama_model()
