@@ -55,7 +55,7 @@ WORKDIR /app
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright and browsers with system dependencies
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
