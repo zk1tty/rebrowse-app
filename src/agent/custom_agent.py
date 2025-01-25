@@ -89,7 +89,8 @@ class CustomAgent(Agent):
             max_actions_per_step=max_actions_per_step,
             tool_call_in_content=tool_call_in_content,
         )
-        if self.llm.model_name in ["deepseek-reasoner"]:
+        if hasattr(self.llm, 'model_name') and self.llm.model_name in ["deepseek-reasoner"]:
+            # deepseek-reasoner does not support function calling
             self.use_function_calling = False
             # TODO: deepseek-reasoner only support 64000 context
             self.max_input_tokens = 64000
@@ -242,6 +243,7 @@ class CustomAgent(Agent):
                 model_output.action, self.browser_context
             )
             if len(result) != len(model_output.action):
+                # I think something changes, such information should let LLM know
                 for ri in range(len(result), len(model_output.action)):
                     result.append(ActionResult(extracted_content=None,
                                                 include_in_memory=True,
