@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-# @Time    : 2025/1/1
-# @Author  : wenshao
-# @Email   : wenshaoguo1026@gmail.com
-# @Project : browser-use-webui
-# @FileName: webui.py
-
 import pdb
 import logging
 
@@ -35,7 +28,6 @@ from src.utils import utils
 from src.agent.custom_agent import CustomAgent
 from src.browser.custom_browser import CustomBrowser
 from src.agent.custom_prompts import CustomSystemPrompt
-from src.browser.config import BrowserPersistenceConfig
 from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
 from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
