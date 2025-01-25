@@ -97,6 +97,8 @@ class CustomAgent(Agent):
         )
         if self.llm.model_name in ["deepseek-reasoner"]:
             self.use_function_calling = False
+            # TODO: deepseek-reasoner only support 64000 context
+            self.max_input_tokens = 64000
         else:
             self.use_function_calling = True
         self.add_infos = add_infos
