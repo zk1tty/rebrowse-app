@@ -249,7 +249,7 @@ async def test_browser_use_custom_v2():
 
     llm = utils.get_llm_model(
         provider="deepseek",
-        model_name="deepseek-chat",
+        model_name="deepseek-reasoner",
         temperature=0.8
     )
 

@@ -95,7 +95,7 @@ class CustomMassageManager(MessageManager):
         """Get current message list, potentially trimmed to max tokens"""
         diff = self.history.total_tokens - self.max_input_tokens
         i = 1  # start from 1 to keep system message in history
-        while diff > 0:
+        while diff > 0 and i < len(self.history.messages):
             self.history.remove_message(i)
             diff = self.history.total_tokens - self.max_input_tokens
             i += 1
