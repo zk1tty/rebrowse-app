@@ -9,11 +9,15 @@ from browser_use.agent.prompts import SystemPrompt
 from browser_use.agent.views import ActionResult, AgentStepInfo
 from browser_use.browser.views import BrowserState
 from langchain_core.language_models import BaseChatModel
+from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
-    HumanMessage,
-    AIMessage
+	AIMessage,
+	BaseMessage,
+	HumanMessage,
 )
-
+from langchain_openai import ChatOpenAI
+from ..utils.llm import DeepSeekR1ChatOpenAI
 from .custom_prompts import CustomAgentMessagePrompt
 
 logger = logging.getLogger(__name__)
@@ -108,3 +112,17 @@ class CustomMassageManager(MessageManager):
             step_info=step_info,
         ).get_user_message()
         self._add_message_with_tokens(state_message)
+    
+    def _count_text_tokens(self, text: str) -> int:
+        if isinstance(self.llm, (ChatOpenAI, ChatAnthropic, DeepSeekR1ChatOpenAI)):
+            try:
+                tokens = self.llm.get_num_tokens(text)
+            except Exception:
+                tokens = (
+					len(text) // self.ESTIMATED_TOKENS_PER_CHARACTER
+				)  # Rough estimate if no tokenizer available
+        else:
+            tokens = (
+				len(text) // self.ESTIMATED_TOKENS_PER_CHARACTER
+			)  # Rough estimate if no tokenizer available
+        return tokens
