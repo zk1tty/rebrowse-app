@@ -56,7 +56,7 @@ class CustomSystemPrompt(SystemPrompt):
        - Use scroll to find elements you are looking for
 
     5. TASK COMPLETION:
-       - If you think all the requirements of user\'s instruction have been completed and no further operation is required, output the done action to terminate the operation process.
+       - If you think all the requirements of user\'s instruction have been completed and no further operation is required, output the **Done** action to terminate the operation process.
        - Don't hallucinate actions.
        - If the task requires specific information - make sure to include everything in the done function. This is what the user will see.
        - If you are running out of steps (current step), think about speeding it up, and ALWAYS use the done action as the last action.
