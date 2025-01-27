@@ -40,7 +40,15 @@ async def test_browser_use_org():
 
     window_w, window_h = 1920, 1080
     use_vision = False
-    chrome_path = os.getenv("CHROME_PATH", None)
+    use_own_browser = False
+    if use_own_browser:
+        chrome_path = os.getenv("CHROME_PATH", None)
+        if chrome_path == "":
+            chrome_path = None
+    else:
+        chrome_path = None
+        
+    tool_calling_method = "json_schema"  # setting to json_schema when using ollma
 
     browser = Browser(
         config=BrowserConfig(
@@ -64,7 +72,8 @@ async def test_browser_use_org():
             task="go to google.com and type 'OpenAI' click search and give me the first url",
             llm=llm,
             browser_context=browser_context,
-            use_vision=use_vision
+            use_vision=use_vision,
+            tool_calling_method=tool_calling_method
         )
         history: AgentHistoryList = await agent.run(max_steps=10)
 
@@ -242,9 +251,15 @@ async def test_browser_use_custom_v2():
     #     api_key=os.getenv("GOOGLE_API_KEY", "")
     # )
 
+    # llm = utils.get_llm_model(
+    #     provider="deepseek",
+    #     model_name="deepseek-reasoner",
+    #     temperature=0.8
+    # )
+    
     llm = utils.get_llm_model(
         provider="deepseek",
-        model_name="deepseek-reasoner",
+        model_name="deepseek-chat",
         temperature=0.8
     )
 
@@ -256,7 +271,7 @@ async def test_browser_use_custom_v2():
     use_own_browser = False
     disable_security = True
     use_vision = False  # Set to False when using DeepSeek
-    tool_call_in_content = True  # Set to True when using Ollama
+    
     max_actions_per_step = 1
     playwright = None
     browser = None
@@ -288,7 +303,7 @@ async def test_browser_use_custom_v2():
             )
         )
         agent = CustomAgent(
-            task="go to google.com and type 'OpenAI' click search and give me the first url",
+            task="give me stock price of Nvidia and tesla",
             add_infos="",  # some hints for llm to complete the task
             llm=llm,
             browser=browser,
@@ -296,7 +311,6 @@ async def test_browser_use_custom_v2():
             controller=controller,
             system_prompt_class=CustomSystemPrompt,
             use_vision=use_vision,
-            tool_call_in_content=tool_call_in_content,
             max_actions_per_step=max_actions_per_step
         )
         history: AgentHistoryList = await agent.run(max_steps=10)
