@@ -142,12 +142,21 @@ def test_ollama_model():
     llm = ChatOllama(model="qwen2.5:7b")
     ai_msg = llm.invoke("Sing a ballad of LangChain.")
     print(ai_msg.content)
+    
+def test_deepseek_r1_ollama_model():
+    from src.utils.llm import DeepSeekR1ChatOllama
+
+    llm = DeepSeekR1ChatOllama(model="deepseek-r1:14b")
+    ai_msg = llm.invoke("how many r in strawberry?")
+    print(ai_msg.content)
+    pdb.set_trace()
 
 
 if __name__ == '__main__':
     # test_openai_model()
     # test_gemini_model()
     # test_azure_openai_model()
-    test_deepseek_model()
+    # test_deepseek_model()
     # test_ollama_model()
-    # test_deepseek_r1_model()
+    test_deepseek_r1_model()
+    # test_deepseek_r1_ollama_model()

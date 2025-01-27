@@ -98,7 +98,7 @@ class CustomAgent(Agent):
             register_done_callback=register_done_callback,
             tool_calling_method=tool_calling_method
         )
-        if self.model_name == "deepseek-reasoner":
+        if self.model_name in ["deepseek-reasoner"] or self.model_name.startswith("deepseek-r1"):
             # deepseek-reasoner does not support function calling
             self.use_deepseek_r1 = True
             # deepseek-reasoner only support 64000 context
@@ -191,6 +191,7 @@ class CustomAgent(Agent):
                 parsed_json = json.loads(ai_message.content.replace("```json", "").replace("```", ""))
             parsed: AgentOutput = self.AgentOutput(**parsed_json)
             if parsed is None:
+                logger.debug(ai_message.content)
                 raise ValueError(f'Could not parse response.')
         else:
             ai_message = self.llm.invoke(input_messages)
@@ -201,6 +202,7 @@ class CustomAgent(Agent):
                 parsed_json = json.loads(ai_message.content.replace("```json", "").replace("```", ""))
             parsed: AgentOutput = self.AgentOutput(**parsed_json)
             if parsed is None:
+                logger.debug(ai_message.content)
                 raise ValueError(f'Could not parse response.')
 
         # cut the number of actions to max_actions_per_step
@@ -229,6 +231,9 @@ class CustomAgent(Agent):
                 self.update_step_info(model_output, step_info)
                 logger.info(f"🧠 All Memory: \n{step_info.memory}")
                 self._save_conversation(input_messages, model_output)
+                # should we remove last state message? at least, deepseek-reasoner cannot remove
+                if self.model_name != "deepseek-reasoner":
+                    self.message_manager._remove_last_state_message()
             except Exception as e:
                 # model call failed, remove last state message from history
                 self.message_manager._remove_last_state_message()
@@ -253,7 +258,7 @@ class CustomAgent(Agent):
             self.consecutive_failures = 0
 
         except Exception as e:
-            result = self._handle_step_error(e)
+            result = await self._handle_step_error(e)
             self._last_result = result
 
         finally:

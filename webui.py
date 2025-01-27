@@ -658,7 +658,8 @@ def create_ui(config, theme_name="Ocean"):
                             interactive=True,
                             allow_custom_value=True,  # Allow users to input custom model names
                             choices=["auto", "json_schema", "function_calling"],
-                            info="Tool Calls Funtion Name"
+                            info="Tool Calls Funtion Name",
+                            visible=False
                         )
 
             with gr.TabItem("🔧 LLM Configuration", id=2):

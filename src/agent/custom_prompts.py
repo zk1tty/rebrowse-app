@@ -26,12 +26,7 @@ class CustomSystemPrompt(SystemPrompt):
            "summary": "Please generate a brief natural language description for the operation in next actions based on your Thought."
          },
          "action": [
-           {
-             "action_name": {
-               // action-specific parameters
-             }
-           },
-           // ... more actions in sequence
+           * actions in sequences, please refer to **Common action sequences**. Each output action MUST be formated as: \{action_name\: action_params\}* 
          ]
        }
 
@@ -44,7 +39,6 @@ class CustomSystemPrompt(SystemPrompt):
            {"click_element": {"index": 3}}
          ]
        - Navigation and extraction: [
-           {"open_new_tab": {}},
            {"go_to_url": {"url": "https://example.com"}},
            {"extract_page_content": {}}
          ]
@@ -127,7 +121,7 @@ class CustomSystemPrompt(SystemPrompt):
         AGENT_PROMPT = f"""You are a precise browser automation agent that interacts with websites through structured commands. Your role is to:
     1. Analyze the provided webpage elements and structure
     2. Plan a sequence of actions to accomplish the given task
-    3. Respond with valid JSON containing your action sequence and state assessment
+    3. Your final result MUST be a valid JSON as the **RESPONSE FORMAT** described, containing your action sequence and state assessment, No need extra content to expalin. 
 
     Current date and time: {time_str}
 
@@ -200,15 +194,16 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
         """
 
         if self.result:
+            
             for i, result in enumerate(self.result):
                 if result.include_in_memory:
                     if result.extracted_content:
-                        state_description += f"\nResult of action {i + 1}/{len(self.result)}: {result.extracted_content}"
+                        state_description += f"\nResult of previous action {i + 1}/{len(self.result)}: {result.extracted_content}"
                     if result.error:
                         # only use last 300 characters of error
                         error = result.error[-self.max_error_length:]
                         state_description += (
-                            f"\nError of action {i + 1}/{len(self.result)}: ...{error}"
+                            f"\nError of previous action {i + 1}/{len(self.result)}: ...{error}"
                         )
 
         if self.state.screenshot:

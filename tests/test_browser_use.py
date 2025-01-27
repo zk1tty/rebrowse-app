@@ -257,14 +257,18 @@ async def test_browser_use_custom_v2():
     #     temperature=0.8
     # )
     
-    llm = utils.get_llm_model(
-        provider="deepseek",
-        model_name="deepseek-chat",
-        temperature=0.8
-    )
+    # llm = utils.get_llm_model(
+    #     provider="deepseek",
+    #     model_name="deepseek-chat",
+    #     temperature=0.8
+    # )
 
     # llm = utils.get_llm_model(
     #     provider="ollama", model_name="qwen2.5:7b", temperature=0.5
+    # )
+    
+    # llm = utils.get_llm_model(
+    #     provider="ollama", model_name="deepseek-r1:14b", temperature=0.5
     # )
 
     controller = CustomController()
@@ -272,7 +276,7 @@ async def test_browser_use_custom_v2():
     disable_security = True
     use_vision = False  # Set to False when using DeepSeek
     
-    max_actions_per_step = 1
+    max_actions_per_step = 10
     playwright = None
     browser = None
     browser_context = None
@@ -303,7 +307,7 @@ async def test_browser_use_custom_v2():
             )
         )
         agent = CustomAgent(
-            task="give me stock price of Nvidia and tesla",
+            task="go to google.com and type 'Nvidia' click search and give me the first url",
             add_infos="",  # some hints for llm to complete the task
             llm=llm,
             browser=browser,
