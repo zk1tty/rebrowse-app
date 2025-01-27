@@ -89,11 +89,16 @@ def get_llm_model(provider: str, **kwargs):
             google_api_key=api_key,
         )
     elif provider == "ollama":
+        if not kwargs.get("base_url", ""):
+            base_url = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+        else:
+            base_url = kwargs.get("base_url")
+            
         return ChatOllama(
             model=kwargs.get("model_name", "qwen2.5:7b"),
             temperature=kwargs.get("temperature", 0.0),
             num_ctx=kwargs.get("num_ctx", 32000),
-            base_url=kwargs.get("base_url", "http://localhost:11434"),
+            base_url=base_url,
         )
     elif provider == "azure_openai":
         if not kwargs.get("base_url", ""):
