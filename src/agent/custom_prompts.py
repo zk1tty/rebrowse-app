@@ -2,7 +2,7 @@ import pdb
 from typing import List, Optional
 
 from browser_use.agent.prompts import SystemPrompt, AgentMessagePrompt
-from browser_use.agent.views import ActionResult
+from browser_use.agent.views import ActionResult, ActionModel
 from browser_use.browser.views import BrowserState
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -140,6 +140,7 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
     def __init__(
             self,
             state: BrowserState,
+            actions: Optional[List[ActionModel]] = None,
             result: Optional[List[ActionResult]] = None,
             include_attributes: list[str] = [],
             max_error_length: int = 400,
@@ -151,10 +152,11 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
                                                        max_error_length=max_error_length, 
                                                        step_info=step_info
                                                        )
+        self.actions = actions
 
     def get_user_message(self) -> HumanMessage:
         if self.step_info:
-            step_info_description = f'Current step: {self.step_info.step_number + 1}/{self.step_info.max_steps}'
+            step_info_description = f'Current step: {self.step_info.step_number}/{self.step_info.max_steps}\n'
         else:
             step_info_description = ''
 
@@ -193,17 +195,20 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
 {elements_text}
         """
 
-        if self.result:
-            
+        if self.actions and self.result:
+            state_description += "\n **Previous Actions** \n"
+            state_description += f'Previous step: {self.step_info.step_number-1}/{self.step_info.max_steps} \n'
             for i, result in enumerate(self.result):
+                action = self.actions[i]
+                state_description += f"Previous action {i + 1}/{len(self.result)}: {action.model_dump_json(exclude_unset=True)}\n"
                 if result.include_in_memory:
                     if result.extracted_content:
-                        state_description += f"\nResult of previous action {i + 1}/{len(self.result)}: {result.extracted_content}"
+                        state_description += f"Result of previous action {i + 1}/{len(self.result)}: {result.extracted_content}\n"
                     if result.error:
                         # only use last 300 characters of error
                         error = result.error[-self.max_error_length:]
                         state_description += (
-                            f"\nError of previous action {i + 1}/{len(self.result)}: ...{error}"
+                            f"Error of previous action {i + 1}/{len(self.result)}: ...{error}\n"
                         )
 
         if self.state.screenshot:
