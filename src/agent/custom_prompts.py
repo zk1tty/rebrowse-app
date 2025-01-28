@@ -183,7 +183,7 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
    
         state_description = f"""
 {step_info_description}
-1. Task: {self.step_info.task}
+1. Task: {self.step_info.task}. 
 2. Hints(Optional): 
 {self.step_info.add_infos}
 3. Memory: 

@@ -242,17 +242,17 @@ class CustomAgent(Agent):
                 logger.info(f"🧠 All Memory: \n{step_info.memory}")
                 self._save_conversation(input_messages, model_output)
                 if self.model_name != "deepseek-reasoner":
-                    # remove pre-prev message
-                    self.message_manager._remove_last_state_message()
+                    # remove prev message
+                    self.message_manager._remove_state_message_by_index(-1)
             except Exception as e:
                 # model call failed, remove last state message from history
-                self.message_manager._remove_last_state_message()
+                self.message_manager._remove_state_message_by_index(-1)
                 raise e
 
-            result: list[ActionResult] = await self.controller.multi_act(
-                model_output.action, self.browser_context
-            )
             actions: list[ActionModel] = model_output.action
+            result: list[ActionResult] = await self.controller.multi_act(
+                actions, self.browser_context
+            )
             if len(result) != len(actions):
                 # I think something changes, such information should let LLM know
                 for ri in range(len(result), len(actions)):
@@ -261,6 +261,9 @@ class CustomAgent(Agent):
                                                 error=f"{actions[ri].model_dump_json(exclude_unset=True)} is Failed to execute. \
                                                     Something new appeared after action {actions[len(result) - 1].model_dump_json(exclude_unset=True)}",
                                                 is_done=False))
+            if len(actions) == 0:
+                # TODO: fix no action case
+                result = [ActionResult(is_done=True, extracted_content=step_info.memory, include_in_memory=True)]
             self._last_result = result
             self._last_actions = actions
             if len(result) > 0 and result[-1].is_done:

@@ -70,18 +70,6 @@ class CustomMassageManager(MessageManager):
         while diff > 0 and len(self.history.messages) > min_message_len:
             self.history.remove_message(min_message_len) # alway remove the oldest message
             diff = self.history.total_tokens - self.max_input_tokens
-            
-    def _remove_state_message_by_index(self, remove_ind=-1) -> None:
-        """Remove last state message from history"""
-        i = 0
-        remove_cnt = 0
-        while len(self.history.messages) and i <= len(self.history.messages):
-            i += 1
-            if isinstance(self.history.messages[-i].message, HumanMessage):
-                remove_cnt += 1
-            if remove_cnt == abs(remove_ind):
-                self.history.remove_message(-i)
-                break
         
     def add_state_message(
             self,
@@ -115,3 +103,15 @@ class CustomMassageManager(MessageManager):
 				len(text) // self.estimated_characters_per_token
 			)  # Rough estimate if no tokenizer available
         return tokens
+
+    def _remove_state_message_by_index(self, remove_ind=-1) -> None:
+        """Remove last state message from history"""
+        i = len(self.history.messages) - 1
+        remove_cnt = 0
+        while i >= 0:
+            if isinstance(self.history.messages[i].message, HumanMessage): 
+                remove_cnt += 1
+            if remove_cnt == abs(remove_ind):
+                self.history.remove_message(i)
+                break
+            i -= 1

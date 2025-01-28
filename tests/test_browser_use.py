@@ -32,10 +32,14 @@ async def test_browser_use_org():
     #     api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
     # )
 
+    # llm = utils.get_llm_model(
+    #     provider="deepseek",
+    #     model_name="deepseek-chat",
+    #     temperature=0.8
+    # )
+    
     llm = utils.get_llm_model(
-        provider="deepseek",
-        model_name="deepseek-chat",
-        temperature=0.8
+        provider="ollama", model_name="deepseek-r1:14b", temperature=0.5
     )
 
     window_w, window_h = 1920, 1080
@@ -152,9 +156,9 @@ async def test_browser_use_custom():
     controller = CustomController()
     use_own_browser = True
     disable_security = True
-    use_vision = True  # Set to False when using DeepSeek
+    use_vision = False  # Set to False when using DeepSeek
     
-    max_actions_per_step = 10
+    max_actions_per_step = 1
     playwright = None
     browser = None
     browser_context = None
@@ -189,7 +193,7 @@ async def test_browser_use_custom():
             )
         )
         agent = CustomAgent(
-            task="go to google.com and type 'OpenAI' click search and give me the first url",
+            task="Search 'Nvidia' and give me the first url",
             add_infos="",  # some hints for llm to complete the task
             llm=llm,
             browser=browser,
