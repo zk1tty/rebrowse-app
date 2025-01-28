@@ -8,10 +8,11 @@ import os
 import base64
 import io
 import platform
-from browser_use.agent.prompts import SystemPrompt
+from browser_use.agent.prompts import SystemPrompt, AgentMessagePrompt
 from browser_use.agent.service import Agent
 from browser_use.agent.views import (
     ActionResult,
+    ActionModel,
     AgentHistoryList,
     AgentOutput,
     AgentHistory,
@@ -30,6 +31,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     BaseMessage,
 )
+from json_repair import repair_json
 from src.utils.agent_state import AgentState
 
 from .custom_massage_manager import CustomMassageManager
@@ -52,6 +54,7 @@ class CustomAgent(Agent):
             max_failures: int = 5,
             retry_delay: int = 10,
             system_prompt_class: Type[SystemPrompt] = SystemPrompt,
+            agent_prompt_class: Type[AgentMessagePrompt] = AgentMessagePrompt,
             max_input_tokens: int = 128000,
             validate_output: bool = False,
             include_attributes: list[str] = [
@@ -98,7 +101,7 @@ class CustomAgent(Agent):
             register_done_callback=register_done_callback,
             tool_calling_method=tool_calling_method
         )
-        if self.model_name in ["deepseek-reasoner"] or self.model_name.startswith("deepseek-r1"):
+        if self.model_name in ["deepseek-reasoner"] or "deepseek-r1" in self.model_name:
             # deepseek-reasoner does not support function calling
             self.use_deepseek_r1 = True
             # deepseek-reasoner only support 64000 context
@@ -106,20 +109,23 @@ class CustomAgent(Agent):
         else:
             self.use_deepseek_r1 = False
         
+        # record last actions
+        self._last_actions = None
         # custom new info
         self.add_infos = add_infos
         # agent_state for Stop
         self.agent_state = agent_state
+        self.agent_prompt_class = agent_prompt_class
         self.message_manager = CustomMassageManager(
             llm=self.llm,
             task=self.task,
             action_descriptions=self.controller.registry.get_prompt_description(),
             system_prompt_class=self.system_prompt_class,
+            agent_prompt_class=agent_prompt_class,
             max_input_tokens=self.max_input_tokens,
             include_attributes=self.include_attributes,
             max_error_length=self.max_error_length,
-            max_actions_per_step=self.max_actions_per_step,
-            use_deepseek_r1=self.use_deepseek_r1
+            max_actions_per_step=self.max_actions_per_step
         )
 
     def _setup_action_models(self) -> None:
@@ -186,9 +192,11 @@ class CustomAgent(Agent):
             logger.info(ai_message.reasoning_content)
             logger.info(f"🤯 End Deep Thinking")
             if isinstance(ai_message.content, list):
-                parsed_json = json.loads(ai_message.content[0].replace("```json", "").replace("```", ""))
+                ai_content = ai_message.content[0].replace("```json", "").replace("```", "")
             else:
-                parsed_json = json.loads(ai_message.content.replace("```json", "").replace("```", ""))
+                ai_content = ai_message.content.replace("```json", "").replace("```", "")
+            ai_content = repair_json(ai_content)
+            parsed_json = json.loads(ai_content)
             parsed: AgentOutput = self.AgentOutput(**parsed_json)
             if parsed is None:
                 logger.debug(ai_message.content)
@@ -197,9 +205,11 @@ class CustomAgent(Agent):
             ai_message = self.llm.invoke(input_messages)
             self.message_manager._add_message_with_tokens(ai_message)
             if isinstance(ai_message.content, list):
-                parsed_json = json.loads(ai_message.content[0].replace("```json", "").replace("```", ""))
+                ai_content = ai_message.content[0].replace("```json", "").replace("```", "")
             else:
-                parsed_json = json.loads(ai_message.content.replace("```json", "").replace("```", ""))
+                ai_content = ai_message.content.replace("```json", "").replace("```", "")
+            ai_content = repair_json(ai_content)
+            parsed_json = json.loads(ai_content)
             parsed: AgentOutput = self.AgentOutput(**parsed_json)
             if parsed is None:
                 logger.debug(ai_message.content)
@@ -222,7 +232,7 @@ class CustomAgent(Agent):
 
         try:
             state = await self.browser_context.get_state(use_vision=self.use_vision)
-            self.message_manager.add_state_message(state, self._last_result, step_info)
+            self.message_manager.add_state_message(state, self._last_actions, self._last_result, step_info)
             input_messages = self.message_manager.get_messages()
             try:
                 model_output = await self.get_next_action(input_messages)
@@ -231,27 +241,31 @@ class CustomAgent(Agent):
                 self.update_step_info(model_output, step_info)
                 logger.info(f"🧠 All Memory: \n{step_info.memory}")
                 self._save_conversation(input_messages, model_output)
-                # should we remove last state message? at least, deepseek-reasoner cannot remove
                 if self.model_name != "deepseek-reasoner":
-                    self.message_manager._remove_last_state_message()
+                    # remove prev message
+                    self.message_manager._remove_state_message_by_index(-1)
             except Exception as e:
                 # model call failed, remove last state message from history
-                self.message_manager._remove_last_state_message()
+                self.message_manager._remove_state_message_by_index(-1)
                 raise e
 
+            actions: list[ActionModel] = model_output.action
             result: list[ActionResult] = await self.controller.multi_act(
-                model_output.action, self.browser_context
+                actions, self.browser_context
             )
-            if len(result) != len(model_output.action):
+            if len(result) != len(actions):
                 # I think something changes, such information should let LLM know
-                for ri in range(len(result), len(model_output.action)):
+                for ri in range(len(result), len(actions)):
                     result.append(ActionResult(extracted_content=None,
                                                 include_in_memory=True,
-                                                error=f"{model_output.action[ri].model_dump_json(exclude_unset=True)} is Failed to execute. \
-                                                    Something new appeared after action {model_output.action[len(result) - 1].model_dump_json(exclude_unset=True)}",
+                                                error=f"{actions[ri].model_dump_json(exclude_unset=True)} is Failed to execute. \
+                                                    Something new appeared after action {actions[len(result) - 1].model_dump_json(exclude_unset=True)}",
                                                 is_done=False))
+            if len(actions) == 0:
+                # TODO: fix no action case
+                result = [ActionResult(is_done=True, extracted_content=step_info.memory, include_in_memory=True)]
             self._last_result = result
-
+            self._last_actions = actions
             if len(result) > 0 and result[-1].is_done:
                 logger.info(f"📄 Result: {result[-1].extracted_content}")
 

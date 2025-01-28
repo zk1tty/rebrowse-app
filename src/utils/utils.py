@@ -94,9 +94,9 @@ def get_llm_model(provider: str, **kwargs):
         else:
             base_url = kwargs.get("base_url")
             
-        if kwargs.get("model_name", "qwen2.5:7b").startswith("deepseek-r1"):
+        if "deepseek-r1" in kwargs.get("model_name", "qwen2.5:7b"):
             return DeepSeekR1ChatOllama(
-                model=kwargs.get("model_name", "deepseek-r1:7b"),
+                model=kwargs.get("model_name", "deepseek-r1:14b"),
                 temperature=kwargs.get("temperature", 0.0),
                 num_ctx=kwargs.get("num_ctx", 32000),
                 base_url=kwargs.get("base_url", base_url),
@@ -106,6 +106,7 @@ def get_llm_model(provider: str, **kwargs):
                 model=kwargs.get("model_name", "qwen2.5:7b"),
                 temperature=kwargs.get("temperature", 0.0),
                 num_ctx=kwargs.get("num_ctx", 32000),
+                num_predict=kwargs.get("num_predict", 1024),
                 base_url=kwargs.get("base_url", base_url),
             )
     elif provider == "azure_openai":
