@@ -3,7 +3,7 @@ from typing import Optional, Type
 from pydantic import BaseModel
 from browser_use.agent.views import ActionResult
 from browser_use.browser.context import BrowserContext
-from browser_use.controller.service import Controller
+from browser_use.controller.service import Controller, DoneAction
 
 
 class CustomController(Controller):

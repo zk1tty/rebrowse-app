@@ -5,8 +5,8 @@ from typing import List, Optional, Type
 
 from browser_use.agent.message_manager.service import MessageManager
 from browser_use.agent.message_manager.views import MessageHistory
-from browser_use.agent.prompts import SystemPrompt
-from browser_use.agent.views import ActionResult, AgentStepInfo
+from browser_use.agent.prompts import SystemPrompt, AgentMessagePrompt
+from browser_use.agent.views import ActionResult, AgentStepInfo, ActionModel
 from browser_use.browser.views import BrowserState
 from langchain_core.language_models import BaseChatModel
 from langchain_anthropic import ChatAnthropic
@@ -31,14 +31,14 @@ class CustomMassageManager(MessageManager):
             task: str,
             action_descriptions: str,
             system_prompt_class: Type[SystemPrompt],
+            agent_prompt_class: Type[AgentMessagePrompt],
             max_input_tokens: int = 128000,
             estimated_characters_per_token: int = 3,
             image_tokens: int = 800,
             include_attributes: list[str] = [],
             max_error_length: int = 400,
             max_actions_per_step: int = 10,
-            message_context: Optional[str] = None,
-            use_deepseek_r1: bool = False
+            message_context: Optional[str] = None
     ):
         super().__init__(
             llm=llm,
@@ -53,8 +53,7 @@ class CustomMassageManager(MessageManager):
             max_actions_per_step=max_actions_per_step,
             message_context=message_context
         )
-        self.tool_id = 1
-        self.use_deepseek_r1 = use_deepseek_r1
+        self.agent_prompt_class = agent_prompt_class
         # Custom: Move Task info to state_message
         self.history = MessageHistory()
         self._add_message_with_tokens(self.system_prompt)
@@ -75,13 +74,15 @@ class CustomMassageManager(MessageManager):
     def add_state_message(
             self,
             state: BrowserState,
+            actions: Optional[List[ActionModel]] = None,
             result: Optional[List[ActionResult]] = None,
             step_info: Optional[AgentStepInfo] = None,
     ) -> None:
         """Add browser state as human message"""
         # otherwise add state message and result to next message (which will not stay in memory)
-        state_message = CustomAgentMessagePrompt(
+        state_message = self.agent_prompt_class(
             state,
+            actions,
             result,
             include_attributes=self.include_attributes,
             max_error_length=self.max_error_length,
@@ -102,3 +103,15 @@ class CustomMassageManager(MessageManager):
 				len(text) // self.estimated_characters_per_token
 			)  # Rough estimate if no tokenizer available
         return tokens
+
+    def _remove_state_message_by_index(self, remove_ind=-1) -> None:
+        """Remove last state message from history"""
+        i = len(self.history.messages) - 1
+        remove_cnt = 0
+        while i >= 0:
+            if isinstance(self.history.messages[i].message, HumanMessage): 
+                remove_cnt += 1
+            if remove_cnt == abs(remove_ind):
+                self.history.remove_message(i)
+                break
+            i -= 1
