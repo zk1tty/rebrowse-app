@@ -83,7 +83,7 @@ playwright install
    - WebUI: `http://localhost:7788`
    - VNC Viewer (to see browser interactions): `http://localhost:6080/vnc.html`
    
-   Default VNC password is "vncpassword". You can change it by setting the `VNC_PASSWORD` environment variable in your `.env` file.
+   Default VNC password is "youvncpassword". You can change it by setting the `VNC_PASSWORD` environment variable in your `.env` file.
 
 
 ## Usage
