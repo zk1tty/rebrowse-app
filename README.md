@@ -40,6 +40,11 @@ and activate it with:
 ```bash
 source .venv/bin/activate
 ```
+alternative activation for Windows:
+
+```bash
+.\.venv\Scripts\Activate
+```
 
 Install the dependencies:
 
