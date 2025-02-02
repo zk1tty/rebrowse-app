@@ -14,7 +14,7 @@ class CustomSystemPrompt(SystemPrompt):
         """
         Returns the important rules for the agent.
         """
-        text = """
+        text = r"""
     1. RESPONSE FORMAT: You must ALWAYS respond with valid JSON in this exact format:
        {
          "current_state": {

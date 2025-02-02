@@ -616,18 +616,8 @@ def create_ui(config, theme_name="Ocean"):
     }
     """
 
-    js = """
-    function refresh() {
-        const url = new URL(window.location);
-        if (url.searchParams.get('__theme') !== 'dark') {
-            url.searchParams.set('__theme', 'dark');
-            window.location.href = url.href;
-        }
-    }
-    """
-
     with gr.Blocks(
-            title="Browser Use WebUI", theme=theme_map[theme_name], css=css, js=js
+            title="Browser Use WebUI", theme=theme_map[theme_name], css=css
     ) as demo:
         with gr.Row():
             gr.Markdown(
