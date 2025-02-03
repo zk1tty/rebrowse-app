@@ -4,7 +4,22 @@ from pydantic import BaseModel
 from browser_use.agent.views import ActionResult
 from browser_use.browser.context import BrowserContext
 from browser_use.controller.service import Controller, DoneAction
+from main_content_extractor import MainContentExtractor
+from browser_use.controller.views import (
+    ClickElementAction,
+    DoneAction,
+    ExtractPageContentAction,
+    GoToUrlAction,
+    InputTextAction,
+    OpenTabAction,
+    ScrollAction,
+    SearchGoogleAction,
+    SendKeysAction,
+    SwitchTabAction,
+)
+import logging
 
+logger = logging.getLogger(__name__)
 
 class CustomController(Controller):
     def __init__(self, exclude_actions: list[str] = [],
@@ -29,3 +44,20 @@ class CustomController(Controller):
             await page.keyboard.type(text)
 
             return ActionResult(extracted_content=text)
+        
+        @self.registry.action(
+            'Extract page content to get the pure text or markdown with links if include_links is set to true',
+            param_model=ExtractPageContentAction,
+            requires_browser=True,
+        )
+        async def extract_content(params: ExtractPageContentAction, browser: BrowserContext):
+            page = await browser.get_current_page()
+            output_format = 'markdown' if params.include_links else 'text'
+            content = MainContentExtractor.extract(  # type: ignore
+                html=await page.content(),
+                output_format=output_format,
+            )
+            title = await page.title()
+            msg = f'📄  Page url: {page.url}, Page title: {title}, Extracted page content as {output_format}\n: {content}\n'
+            logger.info(msg)
+            return ActionResult(extracted_content=msg)
