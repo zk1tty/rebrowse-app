@@ -270,7 +270,8 @@ class CustomAgent(Agent):
             self._last_result = result
             self._last_actions = actions
             if len(result) > 0 and result[-1].is_done:
-                self.extracted_content += step_info.memory
+                if not self.extracted_content:
+                    self.extracted_content = step_info.memory
                 result[-1].extracted_content = self.extracted_content
                 logger.info(f"📄 Result: {result[-1].extracted_content}")
 
@@ -346,7 +347,10 @@ class CustomAgent(Agent):
                     break
             else:
                 logger.info("❌ Failed to complete task in maximum steps")
-                self.history.history[-1].result[-1].extracted_content = self.extracted_content
+                if not self.extracted_content:
+                    self.history.history[-1].result[-1].extracted_content = step_info.memory
+                else:
+                    self.history.history[-1].result[-1].extracted_content = self.extracted_content
 
             return self.history
 

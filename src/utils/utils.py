@@ -3,6 +3,7 @@ import os
 import time
 from pathlib import Path
 from typing import Dict, Optional
+import requests
 
 from langchain_anthropic import ChatAnthropic
 from langchain_mistralai import ChatMistralAI
