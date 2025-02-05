@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-# @Time    : 2025/1/2
-# @Author  : wenshao
-# @ProjectName: browser-use-webui
-# @FileName: custom_views.py
-
 from dataclasses import dataclass
 from typing import Type
 
@@ -51,7 +45,7 @@ class CustomAgentOutput(AgentOutput):
     ) -> Type["CustomAgentOutput"]:
         """Extend actions with custom actions"""
         return create_model(
-            "AgentOutput",
+            "CustomAgentOutput",
             __base__=CustomAgentOutput,
             action=(
                 list[custom_actions],

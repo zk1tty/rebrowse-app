@@ -11,7 +11,7 @@ This project builds upon the foundation of the [browser-use](https://github.com/
 
 We would like to officially thank [WarmShao](https://github.com/warmshao) for his contribution to this project.
 
-**WebUI:** is built on Gradio and supports a most of `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent.
+**WebUI:** is built on Gradio and supports most of `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent.
 
 **Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Gemini, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Ollama etc. And we plan to add support for even more models in the future.
 
@@ -21,64 +21,93 @@ We would like to officially thank [WarmShao](https://github.com/warmshao) for hi
 
 <video src="https://github.com/user-attachments/assets/56bc7080-f2e3-4367-af22-6bf2245ff6cb" controls="controls">Your browser does not support playing this video!</video>
 
-## Installation Options
+## Installation Guide
+
+### Prerequisites
+- Python 3.11 or higher
+- Git (for cloning the repository)
 
 ### Option 1: Local Installation
 
 Read the [quickstart guide](https://docs.browser-use.com/quickstart#prepare-the-environment) or follow the steps below to get started.
 
-> Python 3.11 or higher is required.
+#### Step 1: Clone the Repository
+```bash
+git clone https://github.com/browser-use/web-ui.git
+cd web-ui
+```
 
-First, we recommend using [uv](https://docs.astral.sh/uv/) to setup the Python environment.
+#### Step 2: Set Up Python Environment
+We recommend using [uv](https://docs.astral.sh/uv/) for managing the Python environment.
 
+Using uv (recommended):
 ```bash
 uv venv --python 3.11
 ```
 
-and activate it with:
-
+Activate the virtual environment:
+- Windows (Command Prompt):
+```cmd
+.venv\Scripts\activate
+```
+- Windows (PowerShell):
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+- macOS/Linux:
 ```bash
 source .venv/bin/activate
 ```
 
-Install the dependencies:
-
+#### Step 3: Install Dependencies
+Install Python packages:
 ```bash
 uv pip install -r requirements.txt
 ```
 
-Then install playwright:
-
+Install Playwright:
 ```bash
 playwright install
 ```
 
+#### Step 4: Configure Environment
+1. Create a copy of the example environment file:
+- Windows (Command Prompt):
+```bash
+copy .env.example .env
+```
+- macOS/Linux/Windows (PowerShell):
+```bash
+cp .env.example .env
+```
+2. Open `.env` in your preferred text editor and add your API keys and other settings
+
 ### Option 2: Docker Installation
 
-1. **Prerequisites:**
-   - Docker and Docker Compose installed on your system
-   - Git to clone the repository
+#### Prerequisites
+- Docker and Docker Compose installed
+  - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (For Windows/macOS)
+  - [Docker Engine](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) (For Linux)
 
-2. **Setup:**
-   ```bash
-   # Clone the repository
-   git clone https://github.com/browser-use/web-ui.git
-   cd web-ui
+#### Installation Steps
+1. Clone the repository:
+```bash
+git clone https://github.com/browser-use/web-ui.git
+cd web-ui
+```
 
-   # Copy and configure environment variables
-   cp .env.example .env
-   # Edit .env with your preferred text editor and add your API keys
-   ```
+2. Create and configure environment file:
+- Windows (Command Prompt):
+```bash
+copy .env.example .env
+```
+- macOS/Linux/Windows (PowerShell):
+```bash
+cp .env.example .env
+```
+Edit `.env` with your preferred text editor and add your API keys
 
-3. **Run with Docker:**
-   ```bash
-   # Build and start the container with default settings (browser closes after AI tasks)
-   docker compose up --build
-
-   # Or run with persistent browser (browser stays open between AI tasks)
-   CHROME_PERSISTENT_SESSION=true docker compose up --build
-   ```
-
+feature/arm64-support
 4. **Access the Application:**
    - WebUI: `http://localhost:7788`
    - VNC Viewer (to see browser interactions): `http://localhost:6080/vnc.html`
@@ -86,16 +115,32 @@ playwright install
    
    Default VNC password is "vncpassword". You can change it by setting the `VNC_PASSWORD` environment variable in your `.env` file.
 
+3. Run with Docker:
+```bash
+# Build and start the container with default settings (browser closes after AI tasks)
+docker compose up --build
+```
+```bash
+# Or run with persistent browser (browser stays open between AI tasks)
+CHROME_PERSISTENT_SESSION=true docker compose up --build
+```
+
+
+4. Access the Application:
+- Web Interface: Open `http://localhost:7788` in your browser
+- VNC Viewer (for watching browser interactions): Open `http://localhost:6080/vnc.html`
+  - Default VNC password: "youvncpassword"
+  - Can be changed by setting `VNC_PASSWORD` in your `.env` file
 
 ## Usage
 
 ### Local Setup
-1.  Copy `.env.example` to `.env` and set your environment variables, including API keys for the LLM. `cp .env.example .env`
-2.  **Run the WebUI:**
+1.  **Run the WebUI:**
+    After completing the installation steps above, start the application:
     ```bash
     python webui.py --ip 127.0.0.1 --port 7788
     ```
-4. WebUI options:
+2. WebUI options:
    - `--ip`: The IP address to bind the WebUI to. Default is `127.0.0.1`.
    - `--port`: The port to bind the WebUI to. Default is `7788`.
    - `--theme`: The theme for the user interface. Default is `Ocean`.
@@ -109,7 +154,7 @@ playwright install
    - `--dark-mode`: Enables dark mode for the user interface.
 3.  **Access the WebUI:** Open your web browser and navigate to `http://127.0.0.1:7788`.
 4.  **Using Your Own Browser(Optional):**
-    - Set `CHROME_PATH` to the executable path of your browser and `CHROME_USER_DATA` to the user data directory of your browser.
+    - Set `CHROME_PATH` to the executable path of your browser and `CHROME_USER_DATA` to the user data directory of your browser. Leave `CHROME_USER_DATA` empty if you want to use local user data.
       - Windows
         ```env
          CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -119,7 +164,7 @@ playwright install
       - Mac
         ```env
          CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-         CHROME_USER_DATA="~/Library/Application Support/Google/Chrome/Profile 1"
+         CHROME_USER_DATA="/Users/YourUsername/Library/Application Support/Google/Chrome"
         ```
     - Close all Chrome windows
     - Open the WebUI in a non-Chrome browser, such as Firefox or Edge. This is important because the persistent browser context will use the Chrome data when running the agent.
@@ -185,6 +230,6 @@ playwright install
    ```
 
 ## Changelog
-
+- [x] **2025/01/26:** Thanks to @vvincent1234. Now browser-use-webui can combine with DeepSeek-r1 to engage in deep thinking!
 - [x] **2025/01/10:** Thanks to @casistack. Now we have Docker Setup option and also Support keep browser open between tasks.[Video tutorial demo](https://github.com/browser-use/web-ui/issues/1#issuecomment-2582511750).
 - [x] **2025/01/06:** Thanks to @richard-devbot. A New and Well-Designed WebUI is released. [Video tutorial demo](https://github.com/warmshao/browser-use-webui/issues/1#issuecomment-2573393113).
