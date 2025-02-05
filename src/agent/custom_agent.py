@@ -264,7 +264,7 @@ class CustomAgent(Agent):
                 # TODO: fix no action case
                 result = [ActionResult(is_done=True, extracted_content=step_info.memory, include_in_memory=True)]
             for ret_ in result:
-                if "Extracted page as" in ret_.extracted_content:
+                if "Extracted page" in ret_.extracted_content:
                     # record every extracted page
                     self.extracted_content += ret_.extracted_content
             self._last_result = result

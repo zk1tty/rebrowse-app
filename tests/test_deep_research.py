@@ -81,15 +81,13 @@ async def deep_research():
 
 **Important Considerations:**
 
-1. **Minimize Information Loss:** While concise, prioritize retaining important details and nuances from the sources. Aim for a summary that captures the essence of the information without over-simplification.
+1. **Minimize Information Loss:** While concise, prioritize retaining important details and nuances from the sources. Aim for a summary that captures the essence of the information without over-simplification. **Crucially, ensure to preserve key data and figures within the `summary_content`. This is essential for later stages, such as generating tables and reports.**
 
 2. **Avoid Redundancy:** Do not record information that is already present in the Previous Recorded Information. Check for semantic similarity, not just exact matches. However, if the same information is expressed differently in a new source and this variation adds valuable context or clarity, it should be included.
 
-3. **Utility Focus:** Only record information that is likely to be useful for completing the user's original instruction. Ask yourself: "How might this information contribute to the AI agent achieving its goal?" Prefer more information over less, as long as it remains relevant to the user's request.
+3. **Source Information:** Extract and include the source title and URL for each piece of information summarized. This is crucial for verification and context. **The Current Search Results are provided in a specific format, where each item starts with "Title:", followed by the title, then "URL Source:", followed by the URL, and finally "Markdown Content:", followed by the content. Please extract the title and URL from this structure.** If a piece of information cannot be attributed to a specific source from the provided search results, use `"url": "unknown"` and `"title": "unknown"`.
 
-4. **Source Information:** Extract and include the source title and URL for each piece of information summarized. This is crucial for verification and context. If a piece of information cannot be attributed to a specific source from the provided search results, use `"url": "unknown"` and `"title": "unknown"`.
-
-5. **Thinking and Report Structure:**  For each extracted piece of information, add a `"thinking"` key. This field should contain your assessment of how this information could be used in a report, which section it might belong to (e.g., introduction, background, analysis, conclusion, specific subtopics), and any other relevant thoughts about its significance or connection to other information.
+4. **Thinking and Report Structure:**  For each extracted piece of information, add a `"thinking"` key. This field should contain your assessment of how this information could be used in a report, which section it might belong to (e.g., introduction, background, analysis, conclusion, specific subtopics), and any other relevant thoughts about its significance or connection to other information.
 
 **Output Format:**
 
@@ -100,7 +98,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
   {
     "url": "source_url_1",
     "title": "source_title_1",
-    "summary_content": "concise_summary_of_content_from_source_1",
+    "summary_content": "Concise summary of content. Remember to include key data and figures here.",
     "thinking": "This could be used in the introduction to set the context. It also relates to the section on the history of the topic."
   },
   // ... more entries
@@ -183,7 +181,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
             os.makedirs(query_result_dir, exist_ok=True)
             for i in range(len(query_tasks)):
                 query_result = query_results[i].final_result()
-                with open(os.path.join(query_result_dir, f"{search_iteration}-{i}.md"), "w") as fw:
+                with open(os.path.join(query_result_dir, f"{search_iteration}-{i}.md"), "w", encoding="utf-8") as fw:
                     fw.write(f"Query: {query_tasks[i]}\n")
                     fw.write(query_result)
                 history_infos_ = json.dumps(history_infos, indent=4)
@@ -213,9 +211,18 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
 *   **Accuracy, Credibility, and Citations:** Ensure that all information presented is meticulously accurate, rigorously truthful, and robustly supported by the available data. **Cite sources exclusively using bracketed sequential numbers within the text (e.g., [1], [2], etc.). If no references are used, omit citations entirely.** These numbers must correspond to a numbered list of references at the end of the report.
 *   **Publication-Ready Formatting:** Adhere strictly to Markdown formatting for excellent readability and a clean, highly professional visual appearance. Pay close attention to formatting details like headings, lists, emphasis, and spacing to optimize the visual presentation and reader experience. The report should be ready for immediate publication upon completion, requiring minimal to no further editing for style or format.
 *   **Conciseness and Clarity (Unless Specified Otherwise):** When the user does not provide a specific length, prioritize concise and to-the-point writing, maximizing information density while maintaining clarity.
+*   **Data-Driven Comparisons with Tables:**  **When appropriate and beneficial for enhancing clarity and impact, present data comparisons in well-structured Markdown tables. This is especially encouraged when dealing with numerical data or when a visual comparison can significantly improve the reader's understanding.**
 *   **Length Adherence:** When the user specifies a length constraint, meticulously stay within reasonable bounds of that specification, ensuring the content is appropriately scaled without sacrificing quality or completeness.
 *   **Comprehensive Instruction Following:** Pay meticulous attention to all details and nuances provided in the user instructions. Strive to fulfill every aspect of the user's request with the highest degree of accuracy and attention to detail, creating a report that not only meets but exceeds expectations for quality and professionalism.
-*   **Reference List Formatting:** The reference list at the end must be formatted as follows: `[1] Title (URL, if available)`.
+*   **Reference List Formatting:** The reference list at the end must be formatted as follows:  
+    `[1] Title (URL, if available)`
+    **Each reference must be separated by a blank line to ensure proper spacing.** For example:
+
+    ```
+    [1] Title 1 (URL1, if available)
+
+    [2] Title 2 (URL2, if available)
+    ```
 *   **ABSOLUTE FINAL OUTPUT RESTRICTION:**  **Your output must contain ONLY the finished, publication-ready Markdown report. Do not include ANY extraneous text, phrases, preambles, meta-commentary, or markdown code indicators (e.g., "```markdown```"). The report should begin directly with the title and introductory paragraph, and end directly after the conclusion and the reference list (if applicable).**  **Your response will be deemed a failure if this instruction is not followed precisely.**
         
 **Inputs:**
@@ -224,7 +231,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
 3. **Search Information:** Information gathered from the recent search queries.
         """
         with open(os.path.join(save_dir, "record_infos.json"), "w") as fw:
-            json.dump(history_infos, fw)
+            json.dump(history_infos, fw, indent=4)
         history_infos_ = json.dumps(history_infos, indent=4)
         report_prompt = f"User Instruction:{task} \n Search Information:\n {history_infos_}"
         report_messages = [SystemMessage(content=writer_system_prompt),
