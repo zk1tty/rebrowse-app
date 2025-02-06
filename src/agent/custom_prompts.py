@@ -5,6 +5,7 @@ from browser_use.agent.prompts import SystemPrompt, AgentMessagePrompt
 from browser_use.agent.views import ActionResult, ActionModel
 from browser_use.browser.views import BrowserState
 from langchain_core.messages import HumanMessage, SystemMessage
+from datetime import datetime
 
 from .custom_views import CustomAgentStepInfo
 
@@ -116,14 +117,10 @@ class CustomSystemPrompt(SystemPrompt):
         Returns:
             str: Formatted system prompt
         """
-        time_str = self.current_date.strftime("%Y-%m-%d %H:%M")
-
         AGENT_PROMPT = f"""You are a precise browser automation agent that interacts with websites through structured commands. Your role is to:
     1. Analyze the provided webpage elements and structure
     2. Plan a sequence of actions to accomplish the given task
     3. Your final result MUST be a valid JSON as the **RESPONSE FORMAT** described, containing your action sequence and state assessment, No need extra content to expalin. 
-
-    Current date and time: {time_str}
 
     {self.input_format()}
 
@@ -159,6 +156,9 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
             step_info_description = f'Current step: {self.step_info.step_number}/{self.step_info.max_steps}\n'
         else:
             step_info_description = ''
+            
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        step_info_description += "Current date and time: {time_str}"
 
         elements_text = self.state.element_tree.clickable_elements_to_string(include_attributes=self.include_attributes)
 
