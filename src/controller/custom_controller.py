@@ -1,15 +1,33 @@
+import pdb
+
 import pyperclip
 from typing import Optional, Type
 from pydantic import BaseModel
 from browser_use.agent.views import ActionResult
 from browser_use.browser.context import BrowserContext
 from browser_use.controller.service import Controller, DoneAction
+from main_content_extractor import MainContentExtractor
+from browser_use.controller.views import (
+    ClickElementAction,
+    DoneAction,
+    ExtractPageContentAction,
+    GoToUrlAction,
+    InputTextAction,
+    OpenTabAction,
+    ScrollAction,
+    SearchGoogleAction,
+    SendKeysAction,
+    SwitchTabAction,
+)
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CustomController(Controller):
     def __init__(self, exclude_actions: list[str] = [],
-                output_model: Optional[Type[BaseModel]] = None
-                ):
+                 output_model: Optional[Type[BaseModel]] = None
+                 ):
         super().__init__(exclude_actions=exclude_actions, output_model=output_model)
         self._register_custom_actions()
 
@@ -29,3 +47,25 @@ class CustomController(Controller):
             await page.keyboard.type(text)
 
             return ActionResult(extracted_content=text)
+
+        @self.registry.action(
+            'Extract page content to get the pure text or markdown with links if include_links is set to true',
+            param_model=ExtractPageContentAction,
+            requires_browser=True,
+        )
+        async def extract_content(params: ExtractPageContentAction, browser: BrowserContext):
+            page = await browser.get_current_page()
+            # use jina reader
+            url = page.url
+            jina_url = f"https://r.jina.ai/{url}"
+            await page.goto(jina_url)
+            output_format = 'markdown' if params.include_links else 'text'
+            content = MainContentExtractor.extract(  # type: ignore
+                html=await page.content(),
+                output_format=output_format,
+            )
+            # go back to org url
+            await page.go_back()
+            msg = f'📄  Extracted page content as {output_format}\n: {content}\n'
+            logger.info(msg)
+            return ActionResult(extracted_content=msg)

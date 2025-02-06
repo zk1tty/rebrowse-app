@@ -127,6 +127,6 @@ if __name__ == "__main__":
     # test_azure_openai_model()
     #test_deepseek_model()
     # test_ollama_model()
-    # test_deepseek_r1_model()
+    test_deepseek_r1_model()
     # test_deepseek_r1_ollama_model()
-    test_mistral_model()
+    # test_mistral_model()

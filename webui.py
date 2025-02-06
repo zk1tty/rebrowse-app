@@ -597,6 +597,24 @@ async def close_global_browser():
     if _global_browser:
         await _global_browser.close()
         _global_browser = None
+        
+async def run_deep_search(research_task, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key, use_vision, headless):
+    from src.utils.deep_research import deep_research
+    
+    llm = utils.get_llm_model(
+            provider=llm_provider,
+            model_name=llm_model_name,
+            temperature=llm_temperature,
+            base_url=llm_base_url,
+            api_key=llm_api_key,
+        )
+    markdown_content, file_path = await deep_research(research_task, llm, 
+                                                        max_search_iterations=max_search_iteration_input,
+                                                        max_query_num=max_query_per_iter_input,
+                                                        use_vision=use_vision,
+                                                        headless=headless)
+    return markdown_content, file_path
+    
 
 def create_ui(config, theme_name="Ocean"):
     css = """
@@ -796,6 +814,17 @@ def create_ui(config, theme_name="Ocean"):
                         value="<h1 style='width:80vw; height:50vh'>Waiting for browser session...</h1>",
                         label="Live Browser View",
                 )
+            
+            with gr.TabItem("🧐 Deep Research"):
+                with gr.Group():
+                    research_task_input = gr.Textbox(label="Research Task", lines=5, value="Compose a report on the use of Reinforcement Learning for training Large Language Models, encompassing its origins, current advancements, and future prospects, substantiated with examples of relevant models and techniques. The report should reflect original insights and analysis, moving beyond mere summarization of existing literature.")
+                    with gr.Row():
+                        max_search_iteration_input = gr.Number(label="Max Search Iteration", value=20, precision=0) # precision=0 确保是整数
+                        max_query_per_iter_input = gr.Number(label="Max Query per Iteration", value=5, precision=0) # precision=0 确保是整数
+                    research_button = gr.Button("Run Deep Research")
+                    markdown_output_display = gr.Markdown(label="Research Report")
+                    markdown_download = gr.File(label="Download Research Report")
+
 
             with gr.TabItem("📁 Configuration", id=5):
                 with gr.Group():
@@ -896,6 +925,13 @@ def create_ui(config, theme_name="Ocean"):
                         run_button              # Run button
                     ],
                 )
+                
+                # Run Deep Research
+                research_button.click(
+                        fn=run_deep_search,
+                        inputs=[research_task_input, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key, use_vision, headless],
+                        outputs=[markdown_output_display, markdown_download]
+                    )
 
             with gr.TabItem("🎥 Recordings", id=7):
                 def list_recordings(save_recording_path):

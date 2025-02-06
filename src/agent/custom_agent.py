@@ -111,6 +111,8 @@ class CustomAgent(Agent):
         
         # record last actions
         self._last_actions = None
+        # record extract content
+        self.extracted_content = ""
         # custom new info
         self.add_infos = add_infos
         # agent_state for Stop
@@ -261,9 +263,16 @@ class CustomAgent(Agent):
             if len(actions) == 0:
                 # TODO: fix no action case
                 result = [ActionResult(is_done=True, extracted_content=step_info.memory, include_in_memory=True)]
+            for ret_ in result:
+                if "Extracted page" in ret_.extracted_content:
+                    # record every extracted page
+                    self.extracted_content += ret_.extracted_content
             self._last_result = result
             self._last_actions = actions
             if len(result) > 0 and result[-1].is_done:
+                if not self.extracted_content:
+                    self.extracted_content = step_info.memory
+                result[-1].extracted_content = self.extracted_content
                 logger.info(f"📄 Result: {result[-1].extracted_content}")
 
             self.consecutive_failures = 0
@@ -338,6 +347,10 @@ class CustomAgent(Agent):
                     break
             else:
                 logger.info("❌ Failed to complete task in maximum steps")
+                if not self.extracted_content:
+                    self.history.history[-1].result[-1].extracted_content = step_info.memory
+                else:
+                    self.history.history[-1].result[-1].extracted_content = self.extracted_content
 
             return self.history
 
