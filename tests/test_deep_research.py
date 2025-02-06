@@ -24,7 +24,7 @@ from src.controller.custom_controller import CustomController
 
 async def deep_research():
     # define task
-    task = "Write a report on RPA (Robotic Process Automation) technology in English, from all espects, more than 2,000 words"
+    task = "中文写一篇关于2025年股票投资建议，从各个方面进行论述，2000字以上"
     task_id = uuid4().__str__()
     save_dir = os.path.join(f"./tmp/deep_research/{task_id}")
     os.makedirs(save_dir, exist_ok=True)
@@ -223,6 +223,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
 
     [2] Title 2 (URL2, if available)
     ```
+    **Furthermore, ensure that the reference list is free of duplicates. Each unique source should be listed only once, regardless of how many times it is cited in the text.**
 *   **ABSOLUTE FINAL OUTPUT RESTRICTION:**  **Your output must contain ONLY the finished, publication-ready Markdown report. Do not include ANY extraneous text, phrases, preambles, meta-commentary, or markdown code indicators (e.g., "```markdown```"). The report should begin directly with the title and introductory paragraph, and end directly after the conclusion and the reference list (if applicable).**  **Your response will be deemed a failure if this instruction is not followed precisely.**
         
 **Inputs:**
