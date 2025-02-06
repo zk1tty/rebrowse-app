@@ -58,6 +58,11 @@ Activate the virtual environment:
 ```bash
 source .venv/bin/activate
 ```
+alternative activation for Windows:
+
+```bash
+.\.venv\Scripts\Activate
+```
 
 #### Step 3: Install Dependencies
 Install Python packages:
