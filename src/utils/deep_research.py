@@ -157,9 +157,12 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
 
             # 2. Perform Web Search and Auto exec
             # Paralle BU agents
+            add_infos = "1. Please click on the most relevant link to get information and go deeper, instead of just staying on the search page. \n" \
+                        "2. When opening a PDF file, please remember to extract the content using extract_content instead of simply opening it for the user to view."
             agents = [CustomAgent(
-                task=task + ". Please click on the most relevant link to get information and go deeper, instead of just staying on the search page.",
+                task=task,
                 llm=llm,
+                add_infos=add_infos,
                 browser=browser,
                 use_vision=use_vision,
                 system_prompt_class=CustomSystemPrompt,
