@@ -13,16 +13,18 @@ from uuid import uuid4
 from src.utils import utils
 from src.agent.custom_agent import CustomAgent
 import json
+import re
 from browser_use.agent.service import Agent
 from browser_use.browser.browser import BrowserConfig, Browser
 from langchain.schema import SystemMessage, HumanMessage
 from json_repair import repair_json
 from src.agent.custom_prompts import CustomSystemPrompt, CustomAgentMessagePrompt
 from src.controller.custom_controller import CustomController
+from src.browser.custom_browser import CustomBrowser
 
 logger = logging.getLogger(__name__)
 
-async def deep_research(task, llm, **kwargs):
+async def deep_research(task, llm, agent_state, **kwargs):
     task_id = str(uuid4())
     save_dir = kwargs.get("save_dir", os.path.join(f"./tmp/deep_research/{task_id}"))
     logger.info(f"Save Deep Research at: {save_dir}")
@@ -113,12 +115,20 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
     """
     record_messages = [SystemMessage(content=record_system_prompt)]
 
-    browser = Browser(
-        config=BrowserConfig(
-            disable_security=True,
-            headless=kwargs.get("headless", False),  # Set to False to see browser actions
-        )
-    )
+    use_own_browser = kwargs.get("use_own_browser", False)
+    extra_chromium_args = []
+    if use_own_browser:
+        # if use own browser, max query num should be 1 per iter
+        max_query_num = 1
+        chrome_path = os.getenv("CHROME_PATH", None)
+        if chrome_path == "":
+            chrome_path = None
+        chrome_user_data = os.getenv("CHROME_USER_DATA", None)
+        if chrome_user_data:
+            extra_chromium_args += [f"--user-data-dir={chrome_user_data}"]
+    else:
+        chrome_path = None
+    browser = None
     controller = CustomController()
 
     search_iteration = 0
@@ -151,6 +161,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
             if not query_tasks:
                 break
             else:
+                query_tasks = query_tasks[:max_query_num]
                 history_query.extend(query_tasks)
                 logger.info("Query tasks:")
                 logger.info(query_tasks)
@@ -159,6 +170,15 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
             # Paralle BU agents
             add_infos = "1. Please click on the most relevant link to get information and go deeper, instead of just staying on the search page. \n" \
                         "2. When opening a PDF file, please remember to extract the content using extract_content instead of simply opening it for the user to view."
+            if use_own_browser:
+                browser = CustomBrowser(
+                    config=BrowserConfig(
+                        headless=kwargs.get("headless", False),
+                        disable_security=kwargs.get("disable_security", True),
+                        chrome_instance_path=chrome_path,
+                        extra_chromium_args=extra_chromium_args,
+                    )
+                )
             agents = [CustomAgent(
                 task=task,
                 llm=llm,
@@ -168,15 +188,24 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                 system_prompt_class=CustomSystemPrompt,
                 agent_prompt_class=CustomAgentMessagePrompt,
                 max_actions_per_step=5,
-                controller=controller
+                controller=controller,
+                agent_state=agent_state
             ) for task in query_tasks]
             query_results = await asyncio.gather(*[agent.run(max_steps=kwargs.get("max_steps", 10)) for agent in agents])
-
+            if browser:
+                await browser.close()
+                browser = None
+                logger.info("Browser closed.")
+            if agent_state and agent_state.is_stop_requested():
+                # Stop
+                break
             # 3. Summarize Search Result
             query_result_dir = os.path.join(save_dir, "query_results")
             os.makedirs(query_result_dir, exist_ok=True)
             for i in range(len(query_tasks)):
                 query_result = query_results[i].final_result()
+                if not query_result:
+                    continue
                 querr_save_path = os.path.join(query_result_dir, f"{search_iteration}-{i}.md")
                 logger.info(f"save query: {query_tasks[i]} at {querr_save_path}")
                 with open(querr_save_path, "w", encoding="utf-8") as fw:
@@ -244,7 +273,9 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
             logger.info(ai_report_msg.reasoning_content)
             logger.info("🤯 End Report Deep Thinking")
         report_content = ai_report_msg.content
-
+        # Remove ```markdown or ``` at the *very beginning* and ``` at the *very end*, with optional whitespace
+        report_content = re.sub(r"^```\s*markdown\s*|^\s*```|```\s*$", "", report_content, flags=re.MULTILINE)
+        report_content = report_content.strip()
         report_file_path = os.path.join(save_dir, "final_report.md")
         with open(report_file_path, "w", encoding="utf-8") as f:
             f.write(report_content)
@@ -257,4 +288,5 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
     finally:
         if browser:
             await browser.close()
+            browser = None
             logger.info("Browser closed.")
