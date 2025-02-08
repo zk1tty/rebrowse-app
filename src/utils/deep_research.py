@@ -29,7 +29,7 @@ from browser_use.browser.context import (
 logger = logging.getLogger(__name__)
 
 
-async def deep_research(task, llm, agent_state, **kwargs):
+async def deep_research(task, llm, agent_state=None, **kwargs):
     task_id = str(uuid4())
     save_dir = kwargs.get("save_dir", os.path.join(f"./tmp/deep_research/{task_id}"))
     logger.info(f"Save Deep Research at: {save_dir}")
@@ -237,19 +237,27 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                 with open(querr_save_path, "w", encoding="utf-8") as fw:
                     fw.write(f"Query: {query_tasks[i]}\n")
                     fw.write(query_result)
-                history_infos_ = json.dumps(history_infos, indent=4)
-                record_prompt = f"User Instruction:{task}. \nPrevious Recorded Information:\n {json.dumps(history_infos_)}\n Current Search Iteration: {search_iteration}\n Current Search Plan:\n{query_plan}\n Current Search Query:\n {query_tasks[i]}\n Current Search Results: {query_result}\n "
-                record_messages.append(HumanMessage(content=record_prompt))
-                ai_record_msg = llm.invoke(record_messages[:1] + record_messages[-1:])
-                record_messages.append(ai_record_msg)
-                if hasattr(ai_record_msg, "reasoning_content"):
-                    logger.info("🤯 Start Record Deep Thinking: ")
-                    logger.info(ai_record_msg.reasoning_content)
-                    logger.info("🤯 End Record Deep Thinking")
-                record_content = ai_record_msg.content
-                record_content = repair_json(record_content)
-                new_record_infos = json.loads(record_content)
-                history_infos.extend(new_record_infos)
+                # split query result in case the content is too long
+                query_results_split = query_result.split("Extracted page content:")
+                for qi, query_result_ in enumerate(query_results_split):
+                    if not query_result_:
+                        continue
+                    else:
+                        # TODO: limit content lenght: 128k tokens, ~3 chars per token
+                        query_result_ = query_result_[:128000*3]
+                    history_infos_ = json.dumps(history_infos, indent=4)
+                    record_prompt = f"User Instruction:{task}. \nPrevious Recorded Information:\n {history_infos_}\n Current Search Iteration: {search_iteration}\n Current Search Plan:\n{query_plan}\n Current Search Query:\n {query_tasks[i]}\n Current Search Results: {query_result_}\n "
+                    record_messages.append(HumanMessage(content=record_prompt))
+                    ai_record_msg = llm.invoke(record_messages[:1] + record_messages[-1:])
+                    record_messages.append(ai_record_msg)
+                    if hasattr(ai_record_msg, "reasoning_content"):
+                        logger.info("🤯 Start Record Deep Thinking: ")
+                        logger.info(ai_record_msg.reasoning_content)
+                        logger.info("🤯 End Record Deep Thinking")
+                    record_content = ai_record_msg.content
+                    record_content = repair_json(record_content)
+                    new_record_infos = json.loads(record_content)
+                    history_infos.extend(new_record_infos)
 
         logger.info("\nFinish Searching, Start Generating Report...")
 
