@@ -66,6 +66,6 @@ class CustomController(Controller):
             )
             # go back to org url
             await page.go_back()
-            msg = f'📄  Extracted page content as {output_format}\n: {content}\n'
+            msg = f'Extracted page content:\n {content}\n'
             logger.info(msg)
             return ActionResult(extracted_content=msg)
