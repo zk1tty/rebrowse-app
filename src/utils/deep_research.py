@@ -214,7 +214,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
 
             else:
                 agents = [CustomAgent(
-                    task=query_tasks,
+                    task=task,
                     llm=llm,
                     add_infos=add_infos,
                     browser=browser,
