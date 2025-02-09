@@ -158,7 +158,7 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
             step_info_description = ''
             
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        step_info_description += "Current date and time: {time_str}"
+        step_info_description += f"Current date and time: {time_str}"
 
         elements_text = self.state.element_tree.clickable_elements_to_string(include_attributes=self.include_attributes)
 
