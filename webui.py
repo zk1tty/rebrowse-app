@@ -850,8 +850,8 @@ def create_ui(config, theme_name="Ocean"):
             with gr.TabItem("🧐 Deep Research", id=5):
                 research_task_input = gr.Textbox(label="Research Task", lines=5, value="Compose a report on the use of Reinforcement Learning for training Large Language Models, encompassing its origins, current advancements, and future prospects, substantiated with examples of relevant models and techniques. The report should reflect original insights and analysis, moving beyond mere summarization of existing literature.")
                 with gr.Row():
-                    max_search_iteration_input = gr.Number(label="Max Search Iteration", value=20, precision=0) # precision=0 确保是整数
-                    max_query_per_iter_input = gr.Number(label="Max Query per Iteration", value=5, precision=0) # precision=0 确保是整数
+                    max_search_iteration_input = gr.Number(label="Max Search Iteration", value=3, precision=0) # precision=0 确保是整数
+                    max_query_per_iter_input = gr.Number(label="Max Query per Iteration", value=1, precision=0) # precision=0 确保是整数
                 with gr.Row():
                     research_button = gr.Button("▶️ Run Deep Research", variant="primary", scale=2)
                     stop_research_button = gr.Button("⏹️ Stop", variant="stop", scale=1)
