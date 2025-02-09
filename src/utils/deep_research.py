@@ -205,9 +205,16 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                 )
                 agent_result = await agent.run(max_steps=kwargs.get("max_steps", 10))
                 query_results = [agent_result]
+                # Manually close all tab
+                session = await browser_context.get_session()
+                pages = session.context.pages
+                await browser_context.create_new_tab()
+                for page_id, page in enumerate(pages):
+                    await page.close()
+
             else:
                 agents = [CustomAgent(
-                    task=query_tasks[0],
+                    task=query_tasks,
                     llm=llm,
                     add_infos=add_infos,
                     browser=browser,
@@ -244,7 +251,7 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                         continue
                     else:
                         # TODO: limit content lenght: 128k tokens, ~3 chars per token
-                        query_result_ = query_result_[:128000*3]
+                        query_result_ = query_result_[:128000 * 3]
                     history_infos_ = json.dumps(history_infos, indent=4)
                     record_prompt = f"User Instruction:{task}. \nPrevious Recorded Information:\n {history_infos_}\n Current Search Iteration: {search_iteration}\n Current Search Plan:\n{query_plan}\n Current Search Query:\n {query_tasks[i]}\n Current Search Results: {query_result_}\n "
                     record_messages.append(HumanMessage(content=record_prompt))
