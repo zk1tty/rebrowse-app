@@ -48,7 +48,7 @@ RUN git clone https://github.com/novnc/noVNC.git /opt/novnc \
     && ln -s /opt/novnc/vnc.html /opt/novnc/index.html
 
 # Set platform for ARM64 compatibility
-ARG TARGETPLATFORM=linux/arm64
+ARG TARGETPLATFORM=linux/amd64
 
 # Set up working directory
 WORKDIR /app
