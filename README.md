@@ -117,6 +117,7 @@ docker compose up --build
 CHROME_PERSISTENT_SESSION=true docker compose up --build
 ```
 
+
 4. Access the Application:
 - Web Interface: Open `http://localhost:7788` in your browser
 - VNC Viewer (for watching browser interactions): Open `http://localhost:6080/vnc.html`
@@ -183,7 +184,11 @@ CHROME_PERSISTENT_SESSION=true docker compose up --build
      VNC_PASSWORD=your_vnc_password  # Optional, defaults to "vncpassword"
      ```
 
-2. **Browser Persistence Modes:**
+2. **Platform Support:**
+   - Supports both AMD64 and ARM64 architectures
+   - For ARM64 systems (e.g., Apple Silicon Macs), the container will automatically use the appropriate image
+
+3. **Browser Persistence Modes:**
    - **Default Mode (CHROME_PERSISTENT_SESSION=false):**
      - Browser opens and closes with each AI task
      - Clean state for each interaction
@@ -195,12 +200,13 @@ CHROME_PERSISTENT_SESSION=true docker compose up --build
      - Allows viewing previous AI interactions
      - Set in `.env` file or via environment variable when starting container
 
-3. **Viewing Browser Interactions:**
+4. **Viewing Browser Interactions:**
    - Access the noVNC viewer at `http://localhost:6080/vnc.html`
    - Enter the VNC password (default: "vncpassword" or what you set in VNC_PASSWORD)
+   - Direct VNC access available on port 5900 (mapped to container port 5901)
    - You can now see all browser interactions in real-time
 
-4. **Container Management:**
+5. **Container Management:**
    ```bash
    # Start with persistent browser
    CHROME_PERSISTENT_SESSION=true docker compose up -d
