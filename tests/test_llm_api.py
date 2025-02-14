@@ -122,6 +122,10 @@ def test_mistral_model():
     config = LLMConfig(provider="mistral", model_name="pixtral-large-latest")
     test_llm(config, "Describe this image", "assets/examples/test.png")
 
+def test_moonshot_model():
+    config = LLMConfig(provider="moonshot", model_name="moonshot-v1-32k-vision-preview")
+    test_llm(config, "Describe this image", "assets/examples/test.png")
+
 if __name__ == "__main__":
     # test_openai_model()
     # test_google_model()
