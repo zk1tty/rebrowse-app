@@ -22,15 +22,14 @@ class LLMConfig:
 
 def create_message_content(text, image_path=None):
     content = [{"type": "text", "text": text}]
-
+    image_format = "png" if image_path and image_path.endswith(".png") else "jpeg"
     if image_path:
         from src.utils import utils
         image_data = utils.encode_image(image_path)
         content.append({
             "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}
+            "image_url": {"url": f"data:image/{image_format};base64,{image_data}"}
         })
-
     return content
 
 def get_env_value(key, provider):
@@ -41,6 +40,7 @@ def get_env_value(key, provider):
         "deepseek": {"api_key": "DEEPSEEK_API_KEY", "base_url": "DEEPSEEK_ENDPOINT"},
         "mistral": {"api_key": "MISTRAL_API_KEY", "base_url": "MISTRAL_ENDPOINT"},
         "alibaba": {"api_key": "ALIBABA_API_KEY", "base_url": "ALIBABA_ENDPOINT"},
+        "moonshot":{"api_key": "MOONSHOT_API_KEY", "base_url": "MOONSHOT_ENDPOINT"},
     }
 
     if provider in env_mappings and key in env_mappings[provider]:
