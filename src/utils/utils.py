@@ -20,7 +20,8 @@ PROVIDER_DISPLAY_NAMES = {
     "anthropic": "Anthropic",
     "deepseek": "DeepSeek",
     "google": "Google",
-    "alibaba": "Alibaba"
+    "alibaba": "Alibaba",
+    "moonshot": "MoonShot"
 }
 
 def get_llm_model(provider: str, **kwargs):
@@ -148,6 +149,14 @@ def get_llm_model(provider: str, **kwargs):
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=api_key,
+        )
+
+    elif provider == "moonshot":
+        return ChatOpenAI(
+            model=kwargs.get("model_name", "moonshot-v1-32k-vision-preview"),
+            temperature=kwargs.get("temperature", 0.0),
+            base_url=os.getenv("MOONSHOT_ENDPOINT"),
+            api_key=os.getenv("MOONSHOT_API_KEY"),
         )
     else:
         raise ValueError(f"Unsupported provider: {provider}")
