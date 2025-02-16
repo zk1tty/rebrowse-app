@@ -100,6 +100,7 @@ async def run_browser_agent(
         agent_type,
         llm_provider,
         llm_model_name,
+        llm_num_ctx,
         llm_temperature,
         llm_base_url,
         llm_api_key,
@@ -144,6 +145,7 @@ async def run_browser_agent(
         llm = utils.get_llm_model(
             provider=llm_provider,
             model_name=llm_model_name,
+            num_ctx=llm_num_ctx,
             temperature=llm_temperature,
             base_url=llm_base_url,
             api_key=llm_api_key,
@@ -435,6 +437,7 @@ async def run_with_stream(
     agent_type,
     llm_provider,
     llm_model_name,
+    llm_num_ctx,
     llm_temperature,
     llm_base_url,
     llm_api_key,
@@ -463,6 +466,7 @@ async def run_with_stream(
             agent_type=agent_type,
             llm_provider=llm_provider,
             llm_model_name=llm_model_name,
+            llm_num_ctx=llm_num_ctx,
             llm_temperature=llm_temperature,
             llm_base_url=llm_base_url,
             llm_api_key=llm_api_key,
@@ -495,6 +499,7 @@ async def run_with_stream(
                     agent_type=agent_type,
                     llm_provider=llm_provider,
                     llm_model_name=llm_model_name,
+                    llm_num_ctx=llm_num_ctx,
                     llm_temperature=llm_temperature,
                     llm_base_url=llm_base_url,
                     llm_api_key=llm_api_key,
@@ -627,7 +632,7 @@ async def close_global_browser():
         await _global_browser.close()
         _global_browser = None
         
-async def run_deep_search(research_task, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key, use_vision, use_own_browser, headless):
+async def run_deep_search(research_task, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key, use_vision, use_own_browser, headless):
     from src.utils.deep_research import deep_research
     global _global_agent_state
 
@@ -637,6 +642,7 @@ async def run_deep_search(research_task, max_search_iteration_input, max_query_p
     llm = utils.get_llm_model(
             provider=llm_provider,
             model_name=llm_model_name,
+            num_ctx=llm_num_ctx,
             temperature=llm_temperature,
             base_url=llm_base_url,
             api_key=llm_api_key,
@@ -740,6 +746,15 @@ def create_ui(config, theme_name="Ocean"):
                         allow_custom_value=True,  # Allow users to input custom model names
                         info="Select a model from the dropdown or type a custom model name"
                     )
+                    llm_num_ctx = gr.Slider(
+                        minimum=2**8,
+                        maximum=2**16,
+                        value=config['llm_num_ctx'],
+                        step=1,
+                        label="Max Context Length",
+                        info="Controls max context length model needs to handle (less = faster)",
+                        visible=config['llm_provider'] == "ollama"
+                    )
                     llm_temperature = gr.Slider(
                         minimum=0.0,
                         maximum=2.0,
@@ -760,6 +775,17 @@ def create_ui(config, theme_name="Ocean"):
                             value=config['llm_api_key'],
                             info="Your API key (leave blank to use .env)"
                         )
+
+            # Change event to update context length slider
+            def update_llm_num_ctx_visibility(llm_provider):
+                return gr.update(visible=llm_provider == "ollama")
+
+            # Bind the change event of llm_provider to update the visibility of context length slider
+            llm_provider.change(
+                fn=update_llm_num_ctx_visibility,
+                inputs=llm_provider,
+                outputs=llm_num_ctx
+            )
 
             with gr.TabItem("🌐 Browser Settings", id=3):
                 with gr.Group():
@@ -903,7 +929,7 @@ def create_ui(config, theme_name="Ocean"):
                 run_button.click(
                     fn=run_with_stream,
                         inputs=[
-                            agent_type, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                            agent_type, llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key,
                             use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h,
                             save_recording_path, save_agent_history_path, save_trace_path,  # Include the new path
                             enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step, tool_calling_method
@@ -925,7 +951,7 @@ def create_ui(config, theme_name="Ocean"):
                 # Run Deep Research
                 research_button.click(
                         fn=run_deep_search,
-                        inputs=[research_task_input, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key, use_vision, use_own_browser, headless],
+                        inputs=[research_task_input, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key, use_vision, use_own_browser, headless],
                         outputs=[markdown_output_display, markdown_download, stop_research_button, research_button]
                 )
                 # Bind the stop button click event after errors_output is defined
@@ -991,7 +1017,7 @@ def create_ui(config, theme_name="Ocean"):
                     inputs=[config_file_input],
                     outputs=[
                         agent_type, max_steps, max_actions_per_step, use_vision, tool_calling_method,
-                        llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                        llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key,
                         use_own_browser, keep_browser_open, headless, disable_security, enable_recording,
                         window_w, window_h, save_recording_path, save_trace_path, save_agent_history_path,
                         task, config_status
@@ -1002,7 +1028,7 @@ def create_ui(config, theme_name="Ocean"):
                     fn=save_current_config,
                     inputs=[
                         agent_type, max_steps, max_actions_per_step, use_vision, tool_calling_method,
-                        llm_provider, llm_model_name, llm_temperature, llm_base_url, llm_api_key,
+                        llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key,
                         use_own_browser, keep_browser_open, headless, disable_security,
                         enable_recording, window_w, window_h, save_recording_path, save_trace_path,
                         save_agent_history_path, task,
