@@ -39,17 +39,18 @@ from src.utils.utils import update_model_dropdown, get_latest_files, capture_scr
 # Global variables for persistence
 _global_browser = None
 _global_browser_context = None
+_global_agent = None
 
 # Create the global agent state instance
 _global_agent_state = AgentState()
 
 async def stop_agent():
     """Request the agent to stop and update UI with enhanced feedback"""
-    global _global_agent_state, _global_browser_context, _global_browser
+    global _global_agent_state, _global_browser_context, _global_browser, _global_agent
 
     try:
         # Request stop
-        _global_agent_state.request_stop()
+        _global_agent.stop()
 
         # Update UI immediately
         message = "Stop requested - the agent will halt at the next safe point"
@@ -247,7 +248,7 @@ async def run_org_agent(
         tool_calling_method
 ):
     try:
-        global _global_browser, _global_browser_context, _global_agent_state
+        global _global_browser, _global_browser_context, _global_agent_state, _global_agent
         
         # Clear any previous stop request
         _global_agent_state.clear_stop()
@@ -284,20 +285,21 @@ async def run_org_agent(
                     ),
                 )
             )
-            
-        agent = Agent(
-            task=task,
-            llm=llm,
-            use_vision=use_vision,
-            browser=_global_browser,
-            browser_context=_global_browser_context,
-            max_actions_per_step=max_actions_per_step,
-            tool_calling_method=tool_calling_method
-        )
-        history = await agent.run(max_steps=max_steps)
 
-        history_file = os.path.join(save_agent_history_path, f"{agent.agent_id}.json")
-        agent.save_history(history_file)
+        if _global_agent is None:
+            _global_agent = Agent(
+                task=task,
+                llm=llm,
+                use_vision=use_vision,
+                browser=_global_browser,
+                browser_context=_global_browser_context,
+                max_actions_per_step=max_actions_per_step,
+                tool_calling_method=tool_calling_method
+            )
+        history = await _global_agent.run(max_steps=max_steps)
+
+        history_file = os.path.join(save_agent_history_path, f"{_global_agent.agent_id}.json")
+        _global_agent.save_history(history_file)
 
         final_result = history.final_result()
         errors = history.errors()
@@ -313,6 +315,7 @@ async def run_org_agent(
         errors = str(e) + "\n" + traceback.format_exc()
         return '', errors, '', '', None, None
     finally:
+        _global_agent = None
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
             if _global_browser_context:
@@ -342,7 +345,7 @@ async def run_custom_agent(
         tool_calling_method
 ):
     try:
-        global _global_browser, _global_browser_context, _global_agent_state
+        global _global_browser, _global_browser_context, _global_agent_state, _global_agent
 
         # Clear any previous stop request
         _global_agent_state.clear_stop()
@@ -384,24 +387,24 @@ async def run_custom_agent(
             )
             
         # Create and run agent
-        agent = CustomAgent(
-            task=task,
-            add_infos=add_infos,
-            use_vision=use_vision,
-            llm=llm,
-            browser=_global_browser,
-            browser_context=_global_browser_context,
-            controller=controller,
-            system_prompt_class=CustomSystemPrompt,
-            agent_prompt_class=CustomAgentMessagePrompt,
-            max_actions_per_step=max_actions_per_step,
-            agent_state=_global_agent_state,
-            tool_calling_method=tool_calling_method
-        )
-        history = await agent.run(max_steps=max_steps)
+        if _global_agent is None:
+            _global_agent = CustomAgent(
+                task=task,
+                add_infos=add_infos,
+                use_vision=use_vision,
+                llm=llm,
+                browser=_global_browser,
+                browser_context=_global_browser_context,
+                controller=controller,
+                system_prompt_class=CustomSystemPrompt,
+                agent_prompt_class=CustomAgentMessagePrompt,
+                max_actions_per_step=max_actions_per_step,
+                tool_calling_method=tool_calling_method
+            )
+        history = await _global_agent.run(max_steps=max_steps)
 
-        history_file = os.path.join(save_agent_history_path, f"{agent.agent_id}.json")
-        agent.save_history(history_file)
+        history_file = os.path.join(save_agent_history_path, f"{_global_agent.agent_id}.json")
+        _global_agent.save_history(history_file)
 
         final_result = history.final_result()
         errors = history.errors()
@@ -417,6 +420,7 @@ async def run_custom_agent(
         errors = str(e) + "\n" + traceback.format_exc()
         return '', errors, '', '', None, None
     finally:
+        _global_agent = None
         # Handle cleanup based on persistence configuration
         if not keep_browser_open:
             if _global_browser_context:
