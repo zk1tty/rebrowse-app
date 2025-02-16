@@ -170,7 +170,8 @@ model_names = {
     "ollama": ["qwen2.5:7b", "llama2:7b", "deepseek-r1:14b", "deepseek-r1:32b"],
     "azure_openai": ["gpt-4o", "gpt-4", "gpt-3.5-turbo"],
     "mistral": ["pixtral-large-latest", "mistral-large-latest", "mistral-small-latest", "ministral-8b-latest"],
-    "alibaba": ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long"]
+    "alibaba": ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long"],
+    "moonshot": ["moonshot-v1-32k-vision-preview", "moonshot-v1-8k-vision-preview"],
 }
 
 # Callback to update the model name dropdown based on the selected provider
