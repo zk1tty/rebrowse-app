@@ -282,7 +282,9 @@ async def run_org_agent(
         _global_agent_state.clear_stop()
 
         extra_chromium_args = [f"--window-size={window_w},{window_h}"]
+        cdp_url = None
         if use_own_browser:
+            cdp_url = os.getenv("CHROME_CDP", None)
             chrome_path = os.getenv("CHROME_PATH", None)
             if chrome_path == "":
                 chrome_path = None
@@ -296,6 +298,7 @@ async def run_org_agent(
             _global_browser = Browser(
                 config=BrowserConfig(
                     headless=headless,
+                    cdp_url=cdp_url,
                     disable_security=disable_security,
                     chrome_instance_path=chrome_path,
                     extra_chromium_args=extra_chromium_args,
@@ -379,7 +382,10 @@ async def run_custom_agent(
         _global_agent_state.clear_stop()
 
         extra_chromium_args = [f"--window-size={window_w},{window_h}"]
+        cdp_url = None
         if use_own_browser:
+            cdp_url = os.getenv("CHROME_CDP", None)
+
             chrome_path = os.getenv("CHROME_PATH", None)
             if chrome_path == "":
                 chrome_path = None
@@ -397,6 +403,7 @@ async def run_custom_agent(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
+                    cdp_url=cdp_url,
                     chrome_instance_path=chrome_path,
                     extra_chromium_args=extra_chromium_args,
                 )
@@ -853,6 +860,15 @@ def create_ui(config, theme_name="Ocean"):
                             value=config['window_h'],
                             info="Browser window height",
                         )
+
+
+                    save_recording_path = gr.Textbox(
+                        label="Recording Path",
+                        placeholder="e.g. ./tmp/record_videos",
+                        value=config['save_recording_path'],
+                        info="Path to save browser recordings",
+                        interactive=True,  # Allow editing only if recording is enabled
+                    )
 
                     save_recording_path = gr.Textbox(
                         label="Recording Path",
