@@ -678,7 +678,7 @@ async def close_global_browser():
         await _global_browser.close()
         _global_browser = None
         
-async def run_deep_search(research_task, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key, use_vision, use_own_browser, headless, google_cdp):
+async def run_deep_search(research_task, max_search_iteration_input, max_query_per_iter_input, llm_provider, llm_model_name, llm_num_ctx, llm_temperature, llm_base_url, llm_api_key, use_vision, use_own_browser, headless, chrome_cdp):
     from src.utils.deep_research import deep_research
     global _global_agent_state
 
