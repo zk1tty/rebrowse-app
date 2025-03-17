@@ -37,7 +37,7 @@ async def test_browser_use_org():
     #     model_name="deepseek-chat",
     #     temperature=0.8
     # )
-    
+
     llm = utils.get_llm_model(
         provider="ollama", model_name="deepseek-r1:14b", temperature=0.5
     )
@@ -51,7 +51,7 @@ async def test_browser_use_org():
             chrome_path = None
     else:
         chrome_path = None
-        
+
     tool_calling_method = "json_schema"  # setting to json_schema when using ollma
 
     browser = Browser(
@@ -63,14 +63,14 @@ async def test_browser_use_org():
         )
     )
     async with await browser.new_context(
-        config=BrowserContextConfig(
-            trace_path="./tmp/traces",
-            save_recording_path="./tmp/record_videos",
-            no_viewport=False,
-            browser_window_size=BrowserContextWindowSize(
-                width=window_w, height=window_h
-            ),
-        )
+            config=BrowserContextConfig(
+                trace_path="./tmp/traces",
+                save_recording_path="./tmp/record_videos",
+                no_viewport=False,
+                browser_window_size=BrowserContextWindowSize(
+                    width=window_w, height=window_h
+                ),
+            )
     ) as browser_context:
         agent = Agent(
             task="go to google.com and type 'OpenAI' click search and give me the first url",
@@ -108,8 +108,8 @@ async def test_browser_use_custom():
     from src.browser.custom_context import BrowserContextConfig
     from src.controller.custom_controller import CustomController
 
-    window_w, window_h = 1920, 1080
-    
+    window_w, window_h = 1280, 1100
+
     # llm = utils.get_llm_model(
     #     provider="openai",
     #     model_name="gpt-4o",
@@ -138,7 +138,7 @@ async def test_browser_use_custom():
     #     model_name="deepseek-reasoner",
     #     temperature=0.8
     # )
-    
+
     # llm = utils.get_llm_model(
     #     provider="deepseek",
     #     model_name="deepseek-chat",
@@ -148,7 +148,7 @@ async def test_browser_use_custom():
     # llm = utils.get_llm_model(
     #     provider="ollama", model_name="qwen2.5:7b", temperature=0.5
     # )
-    
+
     # llm = utils.get_llm_model(
     #     provider="ollama", model_name="deepseek-r1:14b", temperature=0.5
     # )
@@ -157,7 +157,7 @@ async def test_browser_use_custom():
     use_own_browser = True
     disable_security = True
     use_vision = False  # Set to False when using DeepSeek
-    
+
     max_actions_per_step = 1
     playwright = None
     browser = None
@@ -209,16 +209,6 @@ async def test_browser_use_custom():
         print("Final Result:")
         pprint(history.final_result(), indent=4)
 
-        print("\nErrors:")
-        pprint(history.errors(), indent=4)
-
-        # e.g. xPaths the model clicked on
-        print("\nModel Outputs:")
-        pprint(history.model_actions(), indent=4)
-
-        print("\nThoughts:")
-        pprint(history.model_thoughts(), indent=4)
-        # close browser
     except Exception:
         import traceback
 
@@ -233,7 +223,8 @@ async def test_browser_use_custom():
             await playwright.stop()
         if browser:
             await browser.close()
-            
+
+
 async def test_browser_use_parallel():
     from browser_use.browser.context import BrowserContextWindowSize
     from browser_use.browser.browser import BrowserConfig
@@ -246,7 +237,7 @@ async def test_browser_use_parallel():
     from src.controller.custom_controller import CustomController
 
     window_w, window_h = 1920, 1080
-    
+
     # llm = utils.get_llm_model(
     #     provider="openai",
     #     model_name="gpt-4o",
@@ -275,7 +266,7 @@ async def test_browser_use_parallel():
     #     model_name="deepseek-reasoner",
     #     temperature=0.8
     # )
-    
+
     # llm = utils.get_llm_model(
     #     provider="deepseek",
     #     model_name="deepseek-chat",
@@ -285,7 +276,7 @@ async def test_browser_use_parallel():
     # llm = utils.get_llm_model(
     #     provider="ollama", model_name="qwen2.5:7b", temperature=0.5
     # )
-    
+
     # llm = utils.get_llm_model(
     #     provider="ollama", model_name="deepseek-r1:14b", temperature=0.5
     # )
@@ -294,12 +285,12 @@ async def test_browser_use_parallel():
     use_own_browser = True
     disable_security = True
     use_vision = True  # Set to False when using DeepSeek
-    
+
     max_actions_per_step = 1
     playwright = None
     browser = None
     browser_context = None
-    
+
     browser = Browser(
         config=BrowserConfig(
             disable_security=True,
@@ -310,7 +301,7 @@ async def test_browser_use_parallel():
 
     try:
         agents = [
-		Agent(task=task, llm=llm, browser=browser)
+            Agent(task=task, llm=llm, browser=browser)
             for task in [
                 'Search Google for weather in Tokyo',
                 'Check Reddit front page title',
@@ -354,6 +345,7 @@ async def test_browser_use_parallel():
             await playwright.stop()
         if browser:
             await browser.close()
+
 
 if __name__ == "__main__":
     # asyncio.run(test_browser_use_org())

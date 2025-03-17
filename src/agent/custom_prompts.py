@@ -20,9 +20,7 @@ class CustomSystemPrompt(SystemPrompt):
    {
      "current_state": {
        "evaluation_previous_goal": "Success|Failed|Unknown - Analyze the current elements and the image to check if the previous goals/actions are successful like intended by the task. Mention if something unexpected happened. Shortly state why/why not.",
-       "important_contents": "Output important contents closely related to user\'s instruction on the current page. If there is, please output the contents. If not, please output ''.",
-       "task_progress": "Task Progress is a general summary of the current contents that have been completed. Just summarize the contents that have been actually completed based on the content at current step and the history operations. Please list each completed item individually, such as: 1. Input username. 2. Input Password. 3. Click confirm button. Please return string type not a list.",
-       "future_plans": "Based on the user's request and the current state, outline the remaining steps needed to complete the task. This should be a concise list of sub-goals yet to be performed, such as: 1. Select a date. 2. Choose a specific time slot. 3. Confirm booking. Please return string type not a list.",
+       "important_contents": "Output important contents closely related to user's instruction on the current page. If there is, please output the contents. If not, please output ''.",
        "thought": "Think about the requirements that have been completed in previous operations and the requirements that need to be completed in the next one operation. If your output of evaluation_previous_goal is 'Failed', please reflect and output your reflection here.",
        "next_goal": "Please generate a brief natural language description for the goal of your next actions based on your thought."
      },
@@ -167,7 +165,7 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
 
         if self.actions and self.result:
             state_description += "\n **Previous Actions** \n"
-            state_description += f'Previous step: {self.step_info.step_number-1}/{self.step_info.max_steps} \n'
+            state_description += f'Previous step: {self.step_info.step_number - 1}/{self.step_info.max_steps} \n'
             for i, result in enumerate(self.result):
                 action = self.actions[i]
                 state_description += f"Previous action {i + 1}/{len(self.result)}: {action.model_dump_json(exclude_unset=True)}\n"
