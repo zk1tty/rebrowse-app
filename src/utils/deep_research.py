@@ -44,7 +44,7 @@ async def deep_research(task, llm, agent_state=None, **kwargs):
 
     use_own_browser = kwargs.get("use_own_browser", False)
     extra_chromium_args = []
-    cdp_url = kwargs.get("chrome_cdp", None)
+
     if use_own_browser:
         cdp_url = os.getenv("CHROME_CDP", kwargs.get("chrome_cdp", None))
         # TODO: if use own browser, max query num must be 1 per iter, how to solve it?
@@ -89,7 +89,7 @@ async def deep_research(task, llm, agent_state=None, **kwargs):
         )
         # go back to org url
         await page.go_back()
-        msg = f'Extracted page content:\n {content}\n'
+        msg = f'Extracted page content:\n{content}\n'
         logger.info(msg)
         return ActionResult(extracted_content=msg)
 
@@ -310,11 +310,12 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
             await browser_context.close()
         logger.info("Browser closed.")
 
+
 async def generate_final_report(task, history_infos, save_dir, llm, error_msg=None):
     """Generate report from collected information with error handling"""
     try:
         logger.info("\nAttempting to generate final report from collected data...")
-        
+
         writer_system_prompt = """
         You are a **Deep Researcher** and a professional report writer tasked with creating polished, high-quality reports that fully meet the user's needs, based on the user's instructions and the relevant information provided. You will write the report using Markdown format, ensuring it is both informative and visually appealing.
 
@@ -366,9 +367,9 @@ async def generate_final_report(task, history_infos, save_dir, llm, error_msg=No
         # Add error notification to the report
         if error_msg:
             report_content = f"## ⚠️ Research Incomplete - Partial Results\n" \
-                            f"**The research process was interrupted by an error:** {error_msg}\n\n" \
-                            f"{report_content}"
-            
+                             f"**The research process was interrupted by an error:** {error_msg}\n\n" \
+                             f"{report_content}"
+
         report_file_path = os.path.join(save_dir, "final_report.md")
         with open(report_file_path, "w", encoding="utf-8") as f:
             f.write(report_content)

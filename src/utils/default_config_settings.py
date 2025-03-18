@@ -15,7 +15,7 @@ def default_config():
         "llm_provider": "openai",
         "llm_model_name": "gpt-4o",
         "llm_num_ctx": 32000,
-        "llm_temperature": 1.0,
+        "llm_temperature": 0.6,
         "llm_base_url": "",
         "llm_api_key": "",
         "use_own_browser": os.getenv("CHROME_PERSISTENT_SESSION", "false").lower() == "true",

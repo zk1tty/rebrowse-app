@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Type
+from typing import Any, Dict, List, Literal, Optional, Type
+import uuid
 
-from browser_use.agent.views import AgentOutput
+from browser_use.agent.views import AgentOutput, AgentState, ActionResult, AgentHistoryList, MessageManagerState
 from browser_use.controller.registry.views import ActionModel
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -13,19 +14,15 @@ class CustomAgentStepInfo:
     task: str
     add_infos: str
     memory: str
-    task_progress: str
-    future_plans: str
 
 
 class CustomAgentBrain(BaseModel):
     """Current state of the agent"""
 
-    prev_action_evaluation: str
+    evaluation_previous_goal: str
     important_contents: str
-    task_progress: str
-    future_plans: str
     thought: str
-    summary: str
+    next_goal: str
 
 
 class CustomAgentOutput(AgentOutput):
@@ -34,22 +31,37 @@ class CustomAgentOutput(AgentOutput):
     @dev note: this model is extended with custom actions in AgentService. You can also use some fields that are not in this model as provided by the linter, as long as they are registered in the DynamicActions model.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     current_state: CustomAgentBrain
-    action: list[ActionModel]
 
     @staticmethod
     def type_with_custom_actions(
-        custom_actions: Type[ActionModel],
+            custom_actions: Type[ActionModel],
     ) -> Type["CustomAgentOutput"]:
         """Extend actions with custom actions"""
-        return create_model(
+        model_ = create_model(
             "CustomAgentOutput",
             __base__=CustomAgentOutput,
             action=(
                 list[custom_actions],
-                Field(...),
+                Field(..., description='List of actions to execute', json_schema_extra={'min_items': 1}),
             ),  # Properly annotated field with no default
             __module__=CustomAgentOutput.__module__,
         )
+        model_.__doc__ = 'AgentOutput model with custom actions'
+        return model_
+
+
+class CustomAgentState(BaseModel):
+    agent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    n_steps: int = 1
+    consecutive_failures: int = 0
+    last_result: Optional[List['ActionResult']] = None
+    history: AgentHistoryList = Field(default_factory=lambda: AgentHistoryList(history=[]))
+    last_plan: Optional[str] = None
+    paused: bool = False
+    stopped: bool = False
+
+    message_manager_state: MessageManagerState = Field(default_factory=MessageManagerState)
+
+    last_action: Optional[List['ActionModel']] = None
+    extracted_content: str = ''
