@@ -342,7 +342,8 @@ class CustomAgent(Agent):
             for ret_ in result:
                 if ret_.extracted_content and "Extracted page" in ret_.extracted_content:
                     # record every extracted page
-                    self.state.extracted_content += ret_.extracted_content
+                    if ret_.extracted_content[:100] not in self.state.extracted_content:
+                        self.state.extracted_content += ret_.extracted_content
             self.state.last_result = result
             self.state.last_action = model_output.action
             if len(result) > 0 and result[-1].is_done:
