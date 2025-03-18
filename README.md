@@ -65,7 +65,13 @@ Install Python packages:
 uv pip install -r requirements.txt
 ```
 
-Install Playwright:
+Install Browsers in Playwright:
+You can install specific browsers by running:
+```bash
+playwright install --with-deps chromium
+```
+
+To install all browsers:
 ```bash
 playwright install
 ```
