@@ -118,20 +118,20 @@ async def test_browser_use_custom():
     #     api_key=os.getenv("OPENAI_API_KEY", ""),
     # )
 
-    llm = utils.get_llm_model(
-        provider="azure_openai",
-        model_name="gpt-4o",
-        temperature=0.8,
-        base_url=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
-    )
-
     # llm = utils.get_llm_model(
-    #     provider="google",
-    #     model_name="gemini-2.0-flash",
-    #     temperature=1.0,
-    #     api_key=os.getenv("GOOGLE_API_KEY", "")
+    #     provider="azure_openai",
+    #     model_name="gpt-4o",
+    #     temperature=0.6,
+    #     base_url=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+    #     api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
     # )
+
+    llm = utils.get_llm_model(
+        provider="google",
+        model_name="gemini-2.0-flash",
+        temperature=0.6,
+        api_key=os.getenv("GOOGLE_API_KEY", "")
+    )
 
     # llm = utils.get_llm_model(
     #     provider="deepseek",
@@ -193,7 +193,7 @@ async def test_browser_use_custom():
             )
         )
         agent = CustomAgent(
-            task="Give me stock price of Tesla",
+            task="Give me stock price of Nvidia",
             add_infos="",  # some hints for llm to complete the task
             llm=llm,
             browser=browser,
@@ -202,12 +202,24 @@ async def test_browser_use_custom():
             system_prompt_class=CustomSystemPrompt,
             agent_prompt_class=CustomAgentMessagePrompt,
             use_vision=use_vision,
-            max_actions_per_step=max_actions_per_step
+            max_actions_per_step=max_actions_per_step,
+            generate_gif=True
         )
         history: AgentHistoryList = await agent.run(max_steps=100)
 
         print("Final Result:")
         pprint(history.final_result(), indent=4)
+
+        print("\nErrors:")
+        pprint(history.errors(), indent=4)
+
+        # e.g. xPaths the model clicked on
+        print("\nModel Outputs:")
+        pprint(history.model_actions(), indent=4)
+
+        print("\nThoughts:")
+        pprint(history.model_thoughts(), indent=4)
+
 
     except Exception:
         import traceback
@@ -305,9 +317,8 @@ async def test_browser_use_parallel():
             for task in [
                 'Search Google for weather in Tokyo',
                 'Check Reddit front page title',
-                '大S去世',
                 'Find NASA image of the day',
-                # 'Check top story on CNN',
+                'Check top story on CNN',
                 # 'Search latest SpaceX launch date',
                 # 'Look up population of Paris',
                 # 'Find current time in Sydney',

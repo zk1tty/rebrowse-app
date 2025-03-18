@@ -44,7 +44,7 @@ async def deep_research(task, llm, agent_state=None, **kwargs):
 
     use_own_browser = kwargs.get("use_own_browser", False)
     extra_chromium_args = []
-    cdp_url = kwargs.get("chrome_cdp", None)
+
     if use_own_browser:
         cdp_url = os.getenv("CHROME_CDP", kwargs.get("chrome_cdp", None))
         # TODO: if use own browser, max query num must be 1 per iter, how to solve it?

@@ -163,7 +163,6 @@ class CustomAgent(Agent):
         )
         self.state = injected_agent_state or CustomAgentState()
         self.add_infos = add_infos
-
         self._message_manager = CustomMessageManager(
             task=task,
             system_message=self.settings.system_prompt_class(
