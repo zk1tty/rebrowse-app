@@ -46,7 +46,7 @@ def get_llm_model(provider: str, **kwargs):
             base_url = kwargs.get("base_url")
 
         return ChatAnthropic(
-            model_name=kwargs.get("model_name", "claude-3-5-sonnet-20241022"),
+            model=kwargs.get("model_name", "claude-3-5-sonnet-20241022"),
             temperature=kwargs.get("temperature", 0.0),
             base_url=base_url,
             api_key=api_key,
@@ -103,7 +103,7 @@ def get_llm_model(provider: str, **kwargs):
         return ChatGoogleGenerativeAI(
             model=kwargs.get("model_name", "gemini-2.0-flash-exp"),
             temperature=kwargs.get("temperature", 0.0),
-            google_api_key=api_key,
+            api_key=api_key,
         )
     elif provider == "ollama":
         if not kwargs.get("base_url", ""):
