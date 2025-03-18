@@ -88,15 +88,15 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
             for i, result in enumerate(self.result):
                 action = self.actions[i]
                 state_description += f"Previous action {i + 1}/{len(self.result)}: {action.model_dump_json(exclude_unset=True)}\n"
+                if result.error:
+                    # only use last 300 characters of error
+                    error = result.error.split('\n')[-1]
+                    state_description += (
+                        f"Error of previous action {i + 1}/{len(self.result)}: ...{error}\n"
+                    )
                 if result.include_in_memory:
                     if result.extracted_content:
                         state_description += f"Result of previous action {i + 1}/{len(self.result)}: {result.extracted_content}\n"
-                    if result.error:
-                        # only use last 300 characters of error
-                        error = result.error.split('\n')[-1]
-                        state_description += (
-                            f"Error of previous action {i + 1}/{len(self.result)}: ...{error}\n"
-                        )
 
         if self.state.screenshot and use_vision == True:
             # Format message for vision model

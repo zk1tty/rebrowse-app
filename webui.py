@@ -338,7 +338,7 @@ async def run_org_agent(
             )
         history = await _global_agent.run(max_steps=max_steps)
 
-        history_file = os.path.join(save_agent_history_path, f"{_global_agent.agent_id}.json")
+        history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
 
         final_result = history.final_result()
@@ -450,7 +450,7 @@ async def run_custom_agent(
             )
         history = await _global_agent.run(max_steps=max_steps)
 
-        history_file = os.path.join(save_agent_history_path, f"{_global_agent.agent_id}.json")
+        history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
 
         final_result = history.final_result()
@@ -985,12 +985,11 @@ def create_ui(config, theme_name="Ocean"):
                 markdown_output_display = gr.Markdown(label="Research Report")
                 markdown_download = gr.File(label="Download Research Report")
 
-
             # Bind the stop button click event after errors_output is defined
             stop_button.click(
                 fn=stop_agent,
                 inputs=[],
-                outputs=[errors_output, stop_button, run_button],
+                outputs=[stop_button, run_button],
             )
 
             # Run button click handler

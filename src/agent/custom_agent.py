@@ -54,26 +54,6 @@ from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentSta
 
 logger = logging.getLogger(__name__)
 
-
-def _log_response(response: CustomAgentOutput) -> None:
-    """Log the model's response"""
-    if "Success" in response.current_state.evaluation_previous_goal:
-        emoji = "✅"
-    elif "Failed" in response.current_state.evaluation_previous_goal:
-        emoji = "❌"
-    else:
-        emoji = "🤷"
-
-    logger.info(f"{emoji} Eval: {response.current_state.evaluation_previous_goal}")
-    logger.info(f"🧠 New Memory: {response.current_state.important_contents}")
-    logger.info(f"🤔 Thought: {response.current_state.thought}")
-    logger.info(f"🎯 Next Goal: {response.current_state.next_goal}")
-    for i, action in enumerate(response.action):
-        logger.info(
-            f"🛠️  Action {i + 1}/{len(response.action)}: {action.model_dump_json(exclude_unset=True)}"
-        )
-
-
 Context = TypeVar('Context')
 
 
@@ -180,6 +160,24 @@ class CustomAgent(Agent):
             state=self.state.message_manager_state,
         )
 
+    def _log_response(self, response: CustomAgentOutput) -> None:
+        """Log the model's response"""
+        if "Success" in response.current_state.evaluation_previous_goal:
+            emoji = "✅"
+        elif "Failed" in response.current_state.evaluation_previous_goal:
+            emoji = "❌"
+        else:
+            emoji = "🤷"
+
+        logger.info(f"{emoji} Eval: {response.current_state.evaluation_previous_goal}")
+        logger.info(f"🧠 New Memory: {response.current_state.important_contents}")
+        logger.info(f"🤔 Thought: {response.current_state.thought}")
+        logger.info(f"🎯 Next Goal: {response.current_state.next_goal}")
+        for i, action in enumerate(response.action):
+            logger.info(
+                f"🛠️  Action {i + 1}/{len(response.action)}: {action.model_dump_json(exclude_unset=True)}"
+            )
+
     def _setup_action_models(self) -> None:
         """Setup dynamic action models from controller's registry"""
         # Get the dynamic action model from controller's registry
@@ -236,7 +234,7 @@ class CustomAgent(Agent):
         # cut the number of actions to max_actions_per_step if needed
         if len(parsed.action) > self.settings.max_actions_per_step:
             parsed.action = parsed.action[: self.settings.max_actions_per_step]
-        _log_response(parsed)
+        self._log_response(parsed)
         return parsed
 
     async def _run_planner(self) -> Optional[str]:
