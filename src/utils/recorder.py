@@ -39,6 +39,24 @@ class NavigationEvent(InputEvent):
     from_url: Optional[str] = None
     to_url: str = ""
 
+@dataclass
+class ClipboardCopyEvent(InputEvent):
+    text: str
+
+@dataclass
+class ClipboardPasteEvent(InputEvent):
+    selector: str
+
+@dataclass
+class FileUploadEvent(InputEvent):
+    selector: str
+    file_name: str
+
+@dataclass
+class FileDownloadEvent(InputEvent):
+    download_url: str
+    suggested_filename: str
+
 # =========================================================
 # Main tracker class
 # =========================================================
@@ -137,6 +155,39 @@ class Recorder:
     // These listeners are attached to the current document (which is window.top.document here)
     document.addEventListener('mousedown', e => send('mousedown', e), true);
     document.addEventListener('keydown',   e => send('keydown',   e), true);
+
+    // ---------- NEW ----------
+    document.addEventListener('copy',  e => {{
+        // For copy, we need to get the selected text
+        const selectedText = window.getSelection().toString();
+        // We don't have direct access to the clipboard content due to security reasons.
+        // We send the selected text as a proxy for what might be copied.
+        // The actual clipboard content might be different if the user uses OS-level copy.
+        send('clipboard_copy', {{ target: e.target, text: selectedText }});
+    }}, true);
+    document.addEventListener('paste', e => send('clipboard_paste', e), true);
+
+    // Query for file inputs and attach listeners. 
+    // This needs to be robust for dynamically added inputs as well.
+    // A MutationObserver could be used for a more robust solution for dynamic elements,
+    // but for now, we'll query on setup and rely on re-evaluation for new frames/pages.
+    document.querySelectorAll('input[type="file"]').forEach(inp => {{
+      inp.addEventListener('change', e => {{
+        // For file uploads, we need to extract file information
+        // `e.target.files` is a FileList. We'll take the first file for simplicity.
+        const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+        const payload = {{
+            target: inp, // The input element itself
+            // files: e.target.files, // This is a FileList, not directly serializable to JSON for CDP.
+                                     // We need to extract relevant info like name, size, type if needed.
+            // For now, per the python side, we just need the name of the first file.
+            files: file ? [{{ name: file.name }}] : [] // Mimic structure expected by python side
+        }};
+        send('file_upload', payload);
+      }}, true);
+    }});
+    // End of NEW
+
     console.log('[UIT SCRIPT] actualListenerSetup: Event listeners ATTACHED to document of URL:', document.location.href);
   }}
 
@@ -281,6 +332,34 @@ class Recorder:
         self._cleanup.append(lambda: page.remove_listener("frameattached", frame_attached_lambda) if not page.is_closed() else None)
         self._cleanup.append(lambda: page.remove_listener("framenavigated", frame_navigated_lambda) if not page.is_closed() else None)
 
+        # ---------- NEW ----------
+        # Listener for file downloads
+        async def _download_listener(download):
+            try:
+                # page.url is the url of the page that initiated the download.
+                # download.url is the actual url of the file being downloaded.
+                # download.suggested_filename is the filename suggested by the server.
+                page_url = page.url # URL of the page where the download was triggered
+                download_url = download.url # Actual URL of the file
+                suggested_filename = download.suggested_filename
+
+                evt = FileDownloadEvent(timestamp=time.time(), 
+                                        url=page_url, 
+                                        event_type="file_download", 
+                                        download_url=download_url, 
+                                        suggested_filename=suggested_filename)
+                self.events.append(evt)
+                logger.info(f"💾 Download detected: '{suggested_filename}' from {download_url} on page {page_url}")
+                # Example of how to save the download, if needed for replay later, though this recorder only logs.
+                # await download.save_as(f"./downloads/{suggested_filename}")
+                # logger.info(f"💾 Download saved: {download.path()}")
+            except Exception as e:
+                logger.error(f"Error in download listener: {e}", exc_info=True)
+
+        page.on("download", _download_listener)
+        self._cleanup.append(lambda: page.remove_listener("download", _download_listener) if not page.is_closed() else None)
+        # End of NEW
+
         logger.debug(f"END: Page-specific listeners setup for page: {page.url}")
 
     # JS → Python bridge
@@ -290,9 +369,36 @@ class Recorder:
         try:
             ts = p.get("ts", time.time()*1000)/1000.0
             url = p.get("url", self.current_url)
-            mods = [m for m, f in (("alt",p.get("alt")),("ctrl",p.get("ctrl")),("shift",p.get("shift")),("meta",p.get("meta"))) if f]
+            raw_modifiers = p.get("modifiers")
+            mods = []
+            if isinstance(raw_modifiers, dict):
+                mods = [k for k, v in raw_modifiers.items() if v]
+            else: # Fallback or log warning if needed, for now, empty list
+                logger.debug(f"Modifiers field was not a dict: {raw_modifiers}")
+
             typ = p.get("type")
             sel = str(p.get("selector", ""))
+
+            if typ == "clipboard_copy":
+                evt = ClipboardCopyEvent(timestamp=ts, url=url, event_type="clipboard_copy", text=str(p.get("text","")))
+                self.events.append(evt)
+                logger.info(f"📋 Copy '{(evt.text[:40] + '...') if len(evt.text) > 40 else evt.text}'")
+                return
+            if typ == "clipboard_paste":
+                evt = ClipboardPasteEvent(timestamp=ts, url=url, event_type="clipboard_paste", selector=sel)
+                self.events.append(evt)
+                logger.info(f"📋 Paste into {sel}")
+                return
+            if typ == "file_upload":
+                files_list = p.get("files", [])
+                first_file_name = ""
+                if files_list and isinstance(files_list, list) and len(files_list) > 0 and isinstance(files_list[0], dict):
+                    first_file_name = files_list[0].get("name", "")
+                
+                evt = FileUploadEvent(timestamp=ts, url=url, event_type="file_upload", selector=sel, file_name=first_file_name)
+                self.events.append(evt)
+                logger.info(f"📤 Upload '{first_file_name}' to {sel}")
+                return
             
             if typ == "mousedown":
                 button_code = p.get("button") 
