@@ -469,6 +469,7 @@ class CustomAgent(Agent):
             add_infos=self.add_infos,
             memory=self.current_task_memory
         )
+        logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Starting step.") # AGENT_HEALTH_LOG
 
         model_output = None # Initialize to ensure it's defined for finally
         state = None # Initialize
@@ -477,9 +478,34 @@ class CustomAgent(Agent):
         step_start_time = time.time()
 
         try:
-            logger.debug("CustomAgent.step: About to call self.browser_context.get_state()")
+            logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Attempting to get browser state.") # NEW LOG
             state = await self.browser_context.get_state()
-            logger.debug(f"CustomAgent.step: self.browser_context.get_state() returned. URL: {state.url if state else 'N/A'}")
+            logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Browser state retrieval complete. State is None: {state is None}") # NEW LOG
+            if state:
+                 logger.debug(f"CustomAgent.step: self.browser_context.get_state() returned. URL: {state.url if state else 'N/A'}")
+            # AGENT_HEALTH_LOG - Log raw observation
+            if state:
+                # Avoid logging full screenshots if they are part of the state
+                # loggable_state_dict = state.model_dump() # This caused AttributeError
+                # Manually construct a dictionary for logging from BrowserState attributes
+                loggable_state_dict = {
+                    "url": getattr(state, 'url', 'N/A'),
+                    "html_content": getattr(state, 'html_content', '')[:200] + "... (truncated)" if getattr(state, 'html_content', '') else 'N/A',
+                    "interactive_elements": f"{len(getattr(state, 'interactive_elements', []))} elements",
+                    "page_title": getattr(state, 'page_title', 'N/A'),
+                    "focused_element_index": getattr(state, 'focused_element_index', None),
+                    # Add other relevant attributes you want to log from BrowserState
+                }
+                screenshot_data = getattr(state, 'screenshot', None)
+                if screenshot_data:
+                    loggable_state_dict['screenshot'] = f"Screenshot data present (length: {len(screenshot_data)})"
+                else:
+                    loggable_state_dict['screenshot'] = "No screenshot data"
+                
+                logger.debug(f"CustomAgent - Step {current_custom_step_info.step_number}: Raw observation received: {json.dumps(loggable_state_dict, indent=2)}")
+            else:
+                logger.debug(f"CustomAgent - Step {current_custom_step_info.step_number}: No observation (state is None).")
+
             await self._raise_if_stopped_or_paused()
 
             history_summary_str = self._summarize_browsing_history(max_steps=5, max_chars=1500)
@@ -495,11 +521,24 @@ class CustomAgent(Agent):
 
             if self.settings.planner_llm and self.state.n_steps % self.settings.planner_interval == 0:
                 await self._run_planner()
+            
             input_messages = self.message_manager.get_messages()
             tokens = self._message_manager.state.history.current_tokens
+            # AGENT_HEALTH_LOG - Before LLM call
+            logger.debug(f"CustomAgent - Step {current_custom_step_info.step_number}: Preparing to call LLM. Number of input messages: {len(input_messages)}. Tokens: {tokens}")
+            # For very detailed debugging, you might log the messages themselves, but be mindful of size/sensitivity
+            # for msg_idx, msg_content in enumerate(input_messages):
+            #    logger.trace(f"  Input Message {msg_idx}: Role: {msg_content.type}, Content: {msg_content.content[:200]}")
+
 
             try:
                 model_output = await self.get_next_action(input_messages)
+                # AGENT_HEALTH_LOG - After LLM call
+                if model_output:
+                    logger.debug(f"CustomAgent - Step {current_custom_step_info.step_number}: LLM response received: {model_output.model_dump_json(indent=2)}")
+                else:
+                    logger.warning(f"CustomAgent - Step {current_custom_step_info.step_number}: LLM call did not return a valid model_output.")
+                
                 self._log_response(model_output)
 
                 # self.state.n_steps is incremented here, AFTER CustomAgentStepInfo was created with the *current* step number
@@ -519,8 +558,22 @@ class CustomAgent(Agent):
             except Exception as e:
                 self.message_manager._remove_state_message_by_index(-1) # type: ignore[attr-defined]
                 raise e
+            
+            # AGENT_HEALTH_LOG - Before action execution
+            if model_output and model_output.action:
+                logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Attempting actions: {model_output.action}")
+            else:
+                logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: No actions to perform based on LLM output.")
 
-            result = await self.multi_act(model_output.action) # type: ignore
+            # AGENT_HEALTH_LOG - Wrap action execution
+            try:
+                result = await self.multi_act(model_output.action) # type: ignore
+                logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Actions executed. Result: {result}")
+            except Exception as e_action:
+                logger.error(f"CustomAgent - Step {current_custom_step_info.step_number}: Error during action execution (multi_act): {e_action}", exc_info=True)
+                # Decide how to set result or if error handling in _handle_step_error is sufficient
+                # For now, this log will capture it, and the main exception handler will take over.
+                raise # Re-raise to be caught by the outer try-except
             
             # Update step_info's memory (which is current_custom_step_info) with model output
             self.update_step_info(model_output, current_custom_step_info) # type: ignore
@@ -554,10 +607,14 @@ class CustomAgent(Agent):
                     include_in_memory=True
                 )
             ]
+            # AGENT_HEALTH_LOG - End of step (paused)
+            logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Paused.")
             return
         except Exception as e:
             result = await self._handle_step_error(e)
             self.state.last_result = result
+            # AGENT_HEALTH_LOG - End of step (exception)
+            logger.error(f"CustomAgent - Step {current_custom_step_info.step_number}: Ended with exception: {e}", exc_info=True)
         finally:
             logger.debug("Entering CustomAgent.step finally block.") # DEBUG
             step_end_time = time.time()
@@ -599,6 +656,8 @@ class CustomAgent(Agent):
                     logger.debug(f"  last_result[{i}]: error='{res_item.error}', is_done={res_item.is_done}")
 
             logger.debug("Exiting CustomAgent.step finally block.") # DEBUG
+            # AGENT_HEALTH_LOG - End of step (finally block)
+            logger.info(f"CustomAgent - Step {current_custom_step_info.step_number}: Finished step processing (finally block).")
 
     # New: modified to accept ReplayTaskDetails at replay mode
     async def run(self, task_input: Union[str, ReplayTaskDetails], max_steps: int = 100) -> Optional[AgentHistoryList]:
@@ -671,17 +730,20 @@ class CustomAgent(Agent):
                     self._message_manager.add_initial_messages(self.task, self.add_infos) # type: ignore
                 else:
                     logger.warning("CustomMessageManager does not have add_initial_messages method.")
-            elif not isinstance(task_input, str):
+            elif not isinstance(task_input, str): # AGENT_HEALTH_LOG: This condition might be an issue if task_input is not ReplayTaskDetails either
                  logger.warning(f"Autonomous run: task_input is not a string ({type(task_input)}). Using existing task: {self.task}")
 
 
-            logger.info(f"Starting autonomous agent run for task: '{self.task}', max_steps: {max_steps}")
+            logger.info(f"Starting autonomous agent run for task: '{self.task}', max_steps: {max_steps}") # AGENT_HEALTH_LOG
             logger.debug(f"CustomAgent: About to call super().run(max_steps={max_steps})") # DEBUG
             # Use the base Agent.run() method for the main loop and its own try/finally for telemetry etc.
-            history: Optional[AgentHistoryList] = await super().run(max_steps=max_steps)
+            history: Optional[AgentHistoryList] = await super().run(max_steps=max_steps) # AGENT_HEALTH_LOG: Pass self.task to super().run() if it expects it
             logger.debug(f"CustomAgent: super().run() returned. History is None: {history is None}") # DEBUG
             if history and hasattr(history, 'history'):
                 logger.debug(f"CustomAgent: History length: {len(history.history) if history.history else 0}") # DEBUG
+            # AGENT_HEALTH_LOG - After super().run()
+            logger.info(f"CustomAgent - Autonomous run finished. Result from super().run(): {'History object received' if history else 'No history object (None)'}")
+
 
             # After autonomous run, UserInputTracker history persistence is handled by the UI's explicit stop recording.
             # The agent itself, when run with a string task, should not be responsible for this.
