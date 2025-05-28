@@ -7,7 +7,7 @@ from browser_use.browser.browser import Browser # Import Browser for type hintin
 from browser_use.browser.context import BrowserContext, BrowserContextConfig # Import base class and its config
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig # Specific config for this app
 
-from src.utils.user_input_tracker import UserInputTracker
+from src.utils.recorder import Recorder
 from src.utils.replayer import TraceReplayer, Drift, load_trace
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
         super().__init__(browser=browser, config=config) # Call super with browser and config
         self._ctx = pw_context                          # Playwright BrowserContext
         # self._pages = pw_context.pages # pages is a dynamic property
-        self.input_tracker: Optional[UserInputTracker] = None
+        self.recorder: Optional[Recorder] = None
         # self.save_dir is now handled by base class if config is used correctly, or can be specific here
         # For now, let specific save_dir override if base doesn't use it from config the same way.
         self.save_dir = Path(getattr(config, 'save_input_tracking_path', "./tmp/input_tracking")) 
@@ -51,7 +51,7 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             logger.debug("DOM bridge already considered installed on context %s. Skipping.", id(self._ctx))
             return
         
-        from src.utils.user_input_tracker import UserInputTracker as UITracker # Alias for clarity
+        from src.utils.recorder import Recorder as UITracker # Alias for clarity
         js_template_for_context = UITracker._JS_TEMPLATE 
         
         try:
@@ -102,25 +102,25 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             logger.error("Page not found in binding source. Cannot initialize or use tracker.")
             return
 
-        if not self.input_tracker:
-            logger.debug(f"Lazy-initializing UserInputTracker for page: {page.url} (context: {id(self._ctx)})")
-            self.input_tracker = UserInputTracker(context=self._ctx, page=page) 
-            self.input_tracker.is_recording = True 
-            self.input_tracker.current_url = page.url 
+        if not self.recorder:
+            logger.debug(f"Lazy-initializing Recorder for page: {page.url} (context: {id(self._ctx)})")
+            self.recorder = Recorder(context=self._ctx, page=page) 
+            self.recorder.is_recording = True 
+            self.recorder.current_url = page.url 
             
-            if self.input_tracker and self.input_tracker.context and hasattr(self.input_tracker, '_setup_page_listeners'): # Extra guard for linter
+            if self.recorder and self.recorder.context and hasattr(self.recorder, '_setup_page_listeners'): # Extra guard for linter
                 logger.debug(f"CONTEXT_EVENT: Attaching context-level 'page' event listener in CustomBrowserContext for context {id(self._ctx)}")
-                self.input_tracker.context.on("page", 
+                self.recorder.context.on("page", 
                     lambda p: asyncio.create_task(self._log_and_setup_page_listeners(p)))
                 
-                await self.input_tracker._setup_page_listeners(page) 
-            elif not (self.input_tracker and self.input_tracker.context):
+                await self.recorder._setup_page_listeners(page) 
+            elif not (self.recorder and self.recorder.context):
                 logger.error("Input tracker or its context not set after initialization during listener setup.")
-            elif not hasattr(self.input_tracker, '_setup_page_listeners'):
+            elif not hasattr(self.recorder, '_setup_page_listeners'):
                  logger.error("_setup_page_listeners method not found on input_tracker instance.")
 
-        if self.input_tracker:
-            await self.input_tracker._on_dom_event(source, payload) 
+        if self.recorder:
+            await self.recorder._on_dom_event(source, payload) 
         else:
             # This case should ideally not be reached if logic above is correct
             logger.error("Input tracker somehow still not initialized in _on_binding_wrapper before passing event.")
@@ -128,10 +128,10 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
     # New helper method to log before calling _setup_page_listeners
     async def _log_and_setup_page_listeners(self, page_object):
         logger.debug(f"CONTEXT_EVENT: Context 'page' event fired! Page URL: {page_object.url}, Page Object ID: {id(page_object)}. Calling _setup_page_listeners.")
-        if self.input_tracker: # Ensure input_tracker still exists
-            await self.input_tracker._setup_page_listeners(page_object)
+        if self.recorder: # Ensure input_tracker still exists
+            await self.recorder._setup_page_listeners(page_object)
         else:
-            logger.error("CONTEXT_EVENT: self.input_tracker is None when _log_and_setup_page_listeners was called.")
+            logger.error("CONTEXT_EVENT: self.recorder is None when _log_and_setup_page_listeners was called.")
 
     # ---------------- recording API -----------------------
 
@@ -172,42 +172,42 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             logger.error("Could not get or create a suitable page for input tracking. Tracking will not start.")
             return
 
-        if not self.input_tracker: # Initialize UserInputTracker if it doesn't exist
-            logger.debug(f"Initializing UserInputTracker for page: {page_to_use.url}")
-            self.input_tracker = UserInputTracker(context=self._ctx, page=page_to_use)
-            # The UserInputTracker.start_tracking() will call _setup_page_listeners for this page_to_use
-            await self.input_tracker.start_tracking() 
-        elif not self.input_tracker.is_recording: # If tracker exists but not recording
+        if not self.recorder: # Initialize Recorder if it doesn't exist
+            logger.debug(f"Initializing Recorder for page: {page_to_use.url}")
+            self.recorder = Recorder(context=self._ctx, page=page_to_use)
+            # The Recorder.start_tracking() will call _setup_page_listeners for this page_to_use
+            await self.recorder.start_tracking() 
+        elif not self.recorder.is_recording: # If tracker exists but not recording
             logger.debug(f"Re-activating recording on existing input tracker. Ensuring it targets page: {page_to_use.url}")
-            self.input_tracker.page = page_to_use # Explicitly update the page on the existing tracker
-            self.input_tracker.current_url = page_to_use.url
-            await self.input_tracker.start_tracking() # This will call _setup_page_listeners for the (potentially new) page
+            self.recorder.page = page_to_use # Explicitly update the page on the existing tracker
+            self.recorder.current_url = page_to_use.url
+            await self.recorder.start_tracking() # This will call _setup_page_listeners for the (potentially new) page
         else: # Tracker exists and is recording
-            if self.input_tracker.page != page_to_use:
+            if self.recorder.page != page_to_use:
                 if page_to_use: # Explicitly check page_to_use is not None here
-                    logger.warning(f"Input tracker is active but on page {self.input_tracker.page.url if self.input_tracker.page else 'None'}. Forcing switch to {page_to_use.url}")
-                    self.input_tracker.page = page_to_use
-                    self.input_tracker.current_url = page_to_use.url
-                    await self.input_tracker.start_tracking() # Re-run to ensure listeners are on this page
+                    logger.warning(f"Input tracker is active but on page {self.recorder.page.url if self.recorder.page else 'None'}. Forcing switch to {page_to_use.url}")
+                    self.recorder.page = page_to_use
+                    self.recorder.current_url = page_to_use.url
+                    await self.recorder.start_tracking() # Re-run to ensure listeners are on this page
                 else:
                     # This case should ideally not be reached due to earlier checks, but as a safeguard:
                     logger.error("Input tracker is active, but the determined page_to_use is None. Cannot switch tracker page.")
-            else: # self.input_tracker.page == page_to_use
+            else: # self.recorder.page == page_to_use
                 if page_to_use: # page_to_use should not be None here if it matches a valid tracker page
                     logger.debug(f"Input tracking is already active and on the correct page: {page_to_use.url}")
-                else: # Should be an impossible state if self.input_tracker.page was not None
-                    logger.error("Input tracking is active, but page_to_use is None and matched self.input_tracker.page. Inconsistent state.")
+                else: # Should be an impossible state if self.recorder.page was not None
+                    logger.error("Input tracking is active, but page_to_use is None and matched self.recorder.page. Inconsistent state.")
         
         if page_to_use: # Final log should also be conditional
             logger.debug(f"User input tracking active. Target page: {page_to_use.url}")
         # If page_to_use is None here, an error was logged and function returned earlier.
 
     async def stop_input_tracking(self):
-        if self.input_tracker and self.input_tracker.is_recording:
-            await self.input_tracker.stop_tracking() 
+        if self.recorder and self.recorder.is_recording:
+            await self.recorder.stop_tracking() 
             filename = f"manual_record_{int(time.time())}.jsonl"
             path = self.save_dir / filename
-            jsonl_data = self.input_tracker.export_events_to_jsonl()
+            jsonl_data = self.recorder.export_events_to_jsonl()
             if jsonl_data.strip():
                 path.write_text(jsonl_data)
                 logger.info("Saved user input tracking to %s", path)
@@ -254,7 +254,7 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
     async def close(self):
         logger.info(f"Closing CustomBrowserContext (Playwright context id: {id(self._ctx)}).")
         # Check input_tracker before accessing is_recording
-        if hasattr(self, 'input_tracker') and self.input_tracker and self.input_tracker.is_recording:
+        if hasattr(self, 'input_tracker') and self.recorder and self.recorder.is_recording:
             logger.info("Input tracking is active, stopping it before closing context.")
             await self.stop_input_tracking()
         
