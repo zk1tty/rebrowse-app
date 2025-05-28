@@ -49,7 +49,7 @@ from pydantic import BaseModel
 from json_repair import repair_json
 from src.utils.agent_state import AgentState
 from src.utils.replayer import TraceReplayer, load_trace, Drift
-from src.utils.user_input_tracker import UserInputTracker
+from src.utils.recorder import Recorder
 
 from .custom_message_manager import CustomMessageManager, CustomMessageManagerSettings
 from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentState as CustomAgentStateType, CustomAgentBrain
@@ -745,9 +745,9 @@ class CustomAgent(Agent):
             logger.info(f"CustomAgent - Autonomous run finished. Result from super().run(): {'History object received' if history else 'No history object (None)'}")
 
 
-            # After autonomous run, UserInputTracker history persistence is handled by the UI's explicit stop recording.
+            # After autonomous run, Recorder history persistence is handled by the UI's explicit stop recording.
             # The agent itself, when run with a string task, should not be responsible for this.
-            # Removing the block that attempted to save UserInputTracker traces here.
+            # Removing the block that attempted to save Recorder traces here.
             
             return history
 

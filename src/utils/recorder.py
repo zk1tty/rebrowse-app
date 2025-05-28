@@ -43,7 +43,7 @@ class NavigationEvent(InputEvent):
 # Main tracker class
 # =========================================================
 
-class UserInputTracker:
+class Recorder:
     """Tracks mouse, keyboard, and navigation events via Playwright + CDP."""
 
     BINDING = "__uit_relay"
@@ -179,7 +179,7 @@ class UserInputTracker:
     def __init__(self, *, context: Optional[Any] = None, page: Optional[Any] = None, cdp_client: Optional[Any] = None):
         """Init with a Playwright BrowserContext and an initial Page."""
         if context is None and cdp_client is not None:
-            context = cdp_client 
+            context = cdp_client
         self.context = context
         self.page = page
         self.events: List[InputEvent] = []
@@ -187,25 +187,25 @@ class UserInputTracker:
         self.current_url: str = ""
         self._cleanup: List[Callable[[], None]] = []
         self._script_source = self._JS_TEMPLATE.format(binding=self.BINDING)
-        logger.debug(f"USER_INPUT_TRACKER: Formatted _script_source (first 120 chars): {self._script_source[:120]}")
-        logger.debug(f"USER_INPUT_TRACKER: Length of _script_source: {len(self._script_source)}")
+        logger.debug(f"RECORDER: Formatted _script_source (first 120 chars): {self._script_source[:120]}")
+        logger.debug(f"RECORDER: Length of _script_source: {len(self._script_source)}")
 
     async def start_tracking(self):
         if self.is_recording:
             return True # Already recording
         if not self.page:
-            logger.error("UserInputTracker: Page is not set, cannot start tracking.")
+            logger.error("Recorder: Page is not set, cannot start tracking.")
             return False
         if not self.context: # self.context here is the Playwright BrowserContext
-            logger.error("UserInputTracker: Context is not set, cannot start tracking.")
+            logger.error("Recorder: Context is not set, cannot start tracking.")
             return False
             
         try:
             # Context-level binding (expose_binding, add_init_script) is now assumed to be handled 
-            # by CustomBrowserContext before this UserInputTracker instance is created or started.
-            # UserInputTracker will focus on page-specific listeners.
+            # by CustomBrowserContext before this Recorder instance is created or started.
+            # Recorder will focus on page-specific listeners.
 
-            # logger.info("Ensuring page-specific setup in UserInputTracker.start_tracking") # Optional: for debugging
+            # logger.info("Ensuring page-specific setup in Recorder.start_tracking") # Optional: for debugging
             
             await self._setup_page_listeners(self.page) # Setup for the initial self.page
             
@@ -218,10 +218,10 @@ class UserInputTracker:
 
             self.is_recording = True
             self.current_url = self.page.url if self.page else ""
-            logger.info("User-input tracking started (listeners configured by UserInputTracker)")
+            logger.info("User-input tracking started (listeners configured by Recorder)")
             return True
         except Exception as e: # Added 'e' to log the specific exception
-            logger.exception(f"Failed to start tracking in UserInputTracker: {e}")
+            logger.exception(f"Failed to start tracking in Recorder: {e}")
             await self.stop_tracking() # Attempt to clean up if start fails
             return False
 
