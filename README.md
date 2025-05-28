@@ -101,7 +101,7 @@ uv pip install -r requirements.txt
     CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     # replace {username}
     CHROME_USER_DATA="/Users/{username}/Library/Application Support/Google/Chrome"
-    CHROME_CDP="http://localhost:9222"
+    CHROME_CDP_URL="http://localhost:9222"
     ```
 ### Step 4: Close all open Chrome tabs. IMPORTANT!!
 

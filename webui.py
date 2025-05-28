@@ -16,7 +16,7 @@ from task_templates import TASK_TEMPLATES
 
 # TODO: add logging configure
 logging.basicConfig(
-    level=logging.INFO,  # Changed from INFO to DEBUG
+    level=logging.DEBUG,  # Changed from INFO to DEBUG
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -399,14 +399,34 @@ async def run_org_agent(
         user_input_functions.set_browser_context(_global_browser_context)
 
         extra_chromium_args = [f"--window-size={window_w},{window_h}"]
-        cdp_url = chrome_cdp
+        
+        # Refined CDP URL determination
+        effective_cdp_url = None
+        chrome_path = None # Will be set if use_own_browser and CHROME_PATH is set
 
         if use_own_browser:
-            cdp_url = os.getenv("CHROME_CDP", chrome_cdp)
-            chrome_path = os.getenv("CHROME_PATH", None)
-            if chrome_path == "":
-                chrome_path = None
-            chrome_user_data = os.getenv("CHROME_USER_DATA", None)
+            env_cdp_url = os.getenv("CHROME_CDP_URL")
+            ui_cdp_url = chrome_cdp # Parameter from Gradio input
+            logger.info(f"OrgAgent: Using CDP URL from  environment variable: '{env_cdp_url}'")
+
+            if env_cdp_url: # Check if env var is set and non-empty
+                effective_cdp_url = env_cdp_url
+                logger.info(f"OrgAgent: Using CDP URL from  environment variable: '{effective_cdp_url}'")
+            elif ui_cdp_url: # Else, if UI input is non-empty
+                effective_cdp_url = ui_cdp_url
+                logger.info(f"OrgAgent: Using CDP URL from UI input: '{effective_cdp_url}'")
+            else:
+                logger.warning("OrgAgent: 'Use Own Browser' is checked, but no CDP URL was provided via CHROME_CDP env var or UI input.")
+
+            # Handle chrome_path only if use_own_browser is true
+            chrome_path_env = os.getenv("CHROME_PATH")
+            if chrome_path_env: # Handles None or empty string correctly if interpreted as False
+                chrome_path = chrome_path_env
+                if chrome_path == "": # Explicitly make empty string None
+                    chrome_path = None
+            
+            # User data dir handling from original logic
+            chrome_user_data = os.getenv("CHROME_USER_DATA")
             if chrome_user_data:
                 extra_chromium_args += [
                     f"--user-data-dir={chrome_user_data}",
@@ -418,14 +438,15 @@ async def run_org_agent(
                     "--disable-site-isolation-trials"
                 ]
         else:
-            chrome_path = None
+            logger.info("OrgAgent: Not using own browser. CDP URL will not be used for connection.")
+            # chrome_path remains None
 
         if _global_browser is None:
             logger.info("Global browser (CustomBrowser) not found for org agent, initializing...")
             _global_browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
-                    cdp_url=cdp_url,
+                    cdp_url=effective_cdp_url, # Use refined CDP URL
                     disable_security=disable_security,
                     chrome_instance_path=chrome_path,
                     extra_chromium_args=extra_chromium_args,
@@ -534,17 +555,34 @@ async def run_custom_agent(
         
         # Configure browser settings
         extra_chromium_args = [f"--window-size={window_w},{window_h}"]
-        cdp_url = chrome_cdp
+        effective_cdp_url = None
         chrome_path = None
-        chrome_user_data = None
+        # chrome_user_data = None # Not directly used for CustomBrowser init, but for launch_persistent_context indirectly
 
         if use_own_browser:
-            cdp_url = os.getenv("CHROME_CDP", chrome_cdp)
-            chrome_path = os.getenv("CHROME_PATH", None)
-            if chrome_path == "":
-                chrome_path = None
-            chrome_user_data = os.getenv("CHROME_USER_DATA", None)
-            if chrome_user_data:
+            env_cdp_url = os.getenv("CHROME_CDP_URL")
+            ui_cdp_url = chrome_cdp # Parameter from Gradio input
+            logger.info(f"OrgAgent: Using CDP URL from  environment variable: '{env_cdp_url}'")
+
+            if env_cdp_url: # Check if env var is set and non-empty
+                effective_cdp_url = env_cdp_url
+                logger.info(f"OrgAgent: Using CDP URL from  environment variable: '{effective_cdp_url}'")
+            elif ui_cdp_url: # Else, if UI input is non-empty
+                effective_cdp_url = ui_cdp_url
+                logger.info(f"OrgAgent: Using CDP URL from UI input: '{effective_cdp_url}'")
+            else:
+                logger.warning("OrgAgent: 'Use Own Browser' is checked, but no CDP URL was provided via CHROME_CDP env var or UI input.")
+                
+            # Handle chrome_path only if use_own_browser is true
+            chrome_path_env = os.getenv("CHROME_PATH")
+            if chrome_path_env:
+                chrome_path = chrome_path_env
+                if chrome_path == "": # Explicitly make empty string None
+                    chrome_path = None
+
+            # User data dir handling from original logic (influences launch_persistent_context via env var)
+            chrome_user_data_env = os.getenv("CHROME_USER_DATA")
+            if chrome_user_data_env:
                 # Add Chrome-specific flags (excluding user-data-dir as it's handled by launch_persistent_context)
                 extra_chromium_args += [
                     "--profile-directory=Default",
@@ -554,6 +592,9 @@ async def run_custom_agent(
                     "--disable-web-security",
                     "--disable-site-isolation-trials"
                 ]
+        else:
+            logger.info("CustomAgent: Not using own browser. CDP URL will not be used for connection.")
+            # chrome_path remains None
 
         # Initialize global browser if needed
         if _global_browser is None:
@@ -562,16 +603,15 @@ async def run_custom_agent(
                 config=BrowserConfig(
                     headless=headless,
                     disable_security=disable_security,
-                    cdp_url=cdp_url,
+                    cdp_url=effective_cdp_url, # Use refined CDP URL
                     chrome_instance_path=chrome_path,
                     extra_chromium_args=extra_chromium_args,
                 )
             )
-            await _global_browser.async_init() 
+            await _global_browser.async_init()
         elif not (_global_browser.playwright_browser and _global_browser.playwright_browser.is_connected()):
             logger.info("Global CustomBrowser found but not connected for custom agent. Re-initializing...")
             await _global_browser.async_init()
-        # No need to check if it's base Browser, as it's now always initialized as CustomBrowser if None
 
         if _global_browser_context is None:
             logger.info("Global browser context not found for custom agent run, initializing...")
@@ -1025,7 +1065,7 @@ async def start_input_tracking_with_context():
             
             if browser_needs_init:
                 logger.info("Global browser not initialized or needs re-initialization. Initializing...")
-                # Use CHROME_CDP_URL for the full URL, CHROME_REMOTE_DEBUG_PORT is for the script
+                # Use CHROME_CDP_URL for the full URL, CHROME_REMOTE_DEBUG_PORT is for the bash script
                 cdp_full_url = os.getenv("CHROME_CDP_URL")
                 logger.info(f"Retrieved CHROME_CDP_URL for recording: '{cdp_full_url}'") # ADDED LOGGING
                 if cdp_full_url:
