@@ -493,7 +493,7 @@ async def run_org_agent(
                 max_input_tokens=max_input_tokens,
                 generate_gif=True
             )
-        history = await _global_agent.run(max_steps=max_steps)
+        history = await _global_agent.run(task_input=task, max_steps=max_steps)
 
         history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
@@ -562,16 +562,16 @@ async def run_custom_agent(
         if use_own_browser:
             env_cdp_url = os.getenv("CHROME_CDP_URL")
             ui_cdp_url = chrome_cdp # Parameter from Gradio input
-            logger.info(f"OrgAgent: Using CDP URL from  environment variable: '{env_cdp_url}'")
+            logger.info(f"CustomAgent: Checking CDP URL. From CHROME_CDP_URL environment variable: '{env_cdp_url}', From UI: '{ui_cdp_url}'")
 
             if env_cdp_url: # Check if env var is set and non-empty
                 effective_cdp_url = env_cdp_url
-                logger.info(f"OrgAgent: Using CDP URL from  environment variable: '{effective_cdp_url}'")
+                logger.info(f"CustomAgent: Using CDP URL from CHROME_CDP_URL environment variable: '{effective_cdp_url}'")
             elif ui_cdp_url: # Else, if UI input is non-empty
                 effective_cdp_url = ui_cdp_url
-                logger.info(f"OrgAgent: Using CDP URL from UI input: '{effective_cdp_url}'")
+                logger.info(f"CustomAgent: Using CDP URL from UI input: '{effective_cdp_url}'")
             else:
-                logger.warning("OrgAgent: 'Use Own Browser' is checked, but no CDP URL was provided via CHROME_CDP env var or UI input.")
+                logger.warning("CustomAgent: 'Use Own Browser' is checked, but no CDP URL was provided via CHROME_CDP_URL env var or UI input. Will attempt without specific CDP connection.")
                 
             # Handle chrome_path only if use_own_browser is true
             chrome_path_env = os.getenv("CHROME_PATH")
