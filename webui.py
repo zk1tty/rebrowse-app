@@ -16,7 +16,7 @@ from task_templates import TASK_TEMPLATES
 
 # TODO: add logging configure
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed from INFO to DEBUG
+    level=logging.INFO,  # Changed from INFO to DEBUG
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -1901,7 +1901,7 @@ def create_ui(theme_name="Citrus"):
                             config=BrowserConfig(
                                 headless=False, 
                                 disable_security=True, 
-                                cdp_url=os.getenv("CHROME_CDP_URL", os.getenv("CHROME_CDP", "http://localhost:9222")), # Prioritize CHROME_CDP_URL
+                                cdp_url=os.getenv("CHROME_CDP_URL", os.getenv("CHROME_CDP_URL", "http://localhost:9222")), # Prioritize CHROME_CDP_URL
                                 chrome_instance_path=os.getenv("CHROME_PATH", None),
                                 extra_chromium_args=[]
                             )

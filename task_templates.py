@@ -6,7 +6,7 @@ Each template is a string containing step-by-step instructions for the AI agent.
 TASK_TEMPLATES = {
     "post_to_x": """go to 'X.com', then:
 1. In the text input field, type the text:
-   'hello world, I'm rebrowse.me'
+   'Hi I'm testing rebrowse.me. Any comment? @Grok'
 2. click 'Post'
 3. confirm that you can see the tweet posted on the timeline.""",
 
