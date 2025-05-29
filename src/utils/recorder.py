@@ -5,6 +5,7 @@ import logging
 import asyncio
 from typing import Dict, List, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, asdict, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +51,14 @@ class ClipboardPasteEvent(InputEvent):
 @dataclass
 class FileUploadEvent(InputEvent):
     selector: str
-    file_name: str
+    file_path: str          # absolute or ~/relative
+    file_name: str          # convenience, basename of file_path
 
 @dataclass
 class FileDownloadEvent(InputEvent):
     download_url: str
     suggested_filename: str
+    recorded_local_path: Optional[str] = None
 
 # =========================================================
 # Main tracker class
@@ -129,12 +132,20 @@ class Recorder:
       if (e.repeat) return;
 
       const makePayload = () => ({{
-        type, ts: Date.now(), url: document.location.href, // Use document.location.href for current frame
+        type,
+        ts: Date.now(),
+        url: document.location.href, 
         selector: smartSelector(e.target || document.activeElement),
-        x: e.clientX ?? null, y: e.clientY ?? null, button: e.button ?? null,
-        key: e.key ?? null, code: e.code ?? null,
+        x: e.clientX ?? null,
+        y: e.clientY ?? null,
+        button: e.button ?? null,
+        key: e.key ?? null,
+        code: e.code ?? null,
         modifiers: {{alt:e.altKey,ctrl:e.ctrlKey,shift:e.shiftKey,meta:e.metaKey}},
-        text: (type === 'mousedown' && e.target?.innerText) ? (e.target.innerText || '').trim().slice(0,50) : ((e.target?.value || '').trim().slice(0,50) || null)
+        text: (type === 'mousedown' && e.target?.innerText) ? (e.target.innerText || '').trim().slice(0,50) : ((e.target?.value || '').trim().slice(0,50) || null),
+        // Add file_path and file_name if they exist on e (passed in for file_upload)
+        file_path: e.file_path ?? null, 
+        file_name: e.file_name ?? null
       }});
                                   
       if (typeof window[binding] === 'function') {{
@@ -167,26 +178,47 @@ class Recorder:
     }}, true);
     document.addEventListener('paste', e => send('clipboard_paste', e), true);
 
-    // Query for file inputs and attach listeners. 
-    // This needs to be robust for dynamically added inputs as well.
-    // A MutationObserver could be used for a more robust solution for dynamic elements,
-    // but for now, we'll query on setup and rely on re-evaluation for new frames/pages.
-    document.querySelectorAll('input[type="file"]').forEach(inp => {{
-      inp.addEventListener('change', e => {{
-        // For file uploads, we need to extract file information
-        // `e.target.files` is a FileList. We'll take the first file for simplicity.
-        const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
-        const payload = {{
-            target: inp, // The input element itself
-            // files: e.target.files, // This is a FileList, not directly serializable to JSON for CDP.
-                                     // We need to extract relevant info like name, size, type if needed.
-            // For now, per the python side, we just need the name of the first file.
-            files: file ? [{{ name: file.name }}] : [] // Mimic structure expected by python side
-        }};
-        send('file_upload', payload);
-      }}, true);
-    }});
-    // End of NEW
+    // --------- File Upload Listener (Delegated) ----------
+    // Instead of attaching to every existing input[type=file], use a single delegated listener
+    // on the document that captures all change events. This works for dynamically added
+    // file inputs and avoids missing uploads on complex sites that create the input
+    // just-in-time (e.g. after clicking an "Upload" button).
+
+    const delegatedFileChangeListener = (e) => {{
+        const tgt = e.target;
+        if (!tgt || tgt.nodeType !== 1) return;
+        // Check if the event target is an <input type="file"> element
+        if (tgt.tagName === 'INPUT' && tgt.type === 'file') {{
+            console.log('[UIT SCRIPT] Delegated file change detected on', tgt);
+            const file = tgt.files && tgt.files.length > 0 ? tgt.files[0] : null;
+            if (file) {{
+                console.log('[UIT SCRIPT] File selected via delegated listener: name=', file.name, 'path=', file.path, 'size=', file.size, 'type=', file.type);
+            }} else {{
+                console.log('[UIT SCRIPT] Delegated file change event but no file in tgt.files');
+            }}
+            send('file_upload', {{
+                target: tgt,
+                file_path: file?.path ?? '',
+                file_name: file?.name ?? ''
+            }});
+        }}
+    }};
+    document.addEventListener('change', delegatedFileChangeListener, true);
+    // Also listen for "drop" events on the document for drag-and-drop uploads that many sites use.
+    // This captures files even if no visible input element is involved.
+    document.addEventListener('drop', (e) => {{
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {{
+            const file = e.dataTransfer.files[0];
+            console.log('[UIT SCRIPT] File selected via drag-and-drop: name=', file.name, 'path=', file.path, 'size=', file.size, 'type=', file.type);
+            // For drag-and-drop, we may not have a meaningful selector; use the drop target element.
+            send('file_upload', {{
+                target: e.target,
+                file_path: file?.path ?? '',
+                file_name: file?.name ?? ''
+            }});
+        }}
+    }}, true);
+    // --------- End File Upload Listener ----------
 
     console.log('[UIT SCRIPT] actualListenerSetup: Event listeners ATTACHED to document of URL:', document.location.href);
   }}
@@ -336,25 +368,34 @@ class Recorder:
         # Listener for file downloads
         async def _download_listener(download):
             try:
-                # page.url is the url of the page that initiated the download.
-                # download.url is the actual url of the file being downloaded.
-                # download.suggested_filename is the filename suggested by the server.
-                page_url = page.url # URL of the page where the download was triggered
-                download_url = download.url # Actual URL of the file
+                page_url = page.url
+                download_url = download.url
                 suggested_filename = download.suggested_filename
+
+                # Define a path to save recorded downloads
+                # This should ideally be configurable or relative to a known temp/session directory
+                recorded_downloads_dir = Path("./tmp/recorded_downloads") # Example path
+                recorded_downloads_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Ensure unique filename for saved download to prevent overwrites during a session
+                timestamp = int(time.time() * 1000)
+                unique_filename = f"{timestamp}_{suggested_filename}"
+                local_save_path = recorded_downloads_dir / unique_filename
+
+                await download.save_as(str(local_save_path))
+                logger.info(f"💾 Download recorded and saved locally: '{suggested_filename}' to '{local_save_path}'")
 
                 evt = FileDownloadEvent(timestamp=time.time(), 
                                         url=page_url, 
                                         event_type="file_download", 
                                         download_url=download_url, 
-                                        suggested_filename=suggested_filename)
+                                        suggested_filename=suggested_filename,
+                                        recorded_local_path=str(local_save_path)) # Store local path
                 self.events.append(evt)
-                logger.info(f"💾 Download detected: '{suggested_filename}' from {download_url} on page {page_url}")
-                # Example of how to save the download, if needed for replay later, though this recorder only logs.
-                # await download.save_as(f"./downloads/{suggested_filename}")
-                # logger.info(f"💾 Download saved: {download.path()}")
+                # Original log kept for consistency if needed, but new log above is more informative for recording phase
+                # logger.info(f"💾 Download detected: '{suggested_filename}' from {download_url} on page {page_url}")
             except Exception as e:
-                logger.error(f"Error in download listener: {e}", exc_info=True)
+                logger.error(f"Error in download listener during recording: {e}", exc_info=True)
 
         page.on("download", _download_listener)
         self._cleanup.append(lambda: page.remove_listener("download", _download_listener) if not page.is_closed() else None)
@@ -390,14 +431,25 @@ class Recorder:
                 logger.info(f"📋 Paste into {sel}")
                 return
             if typ == "file_upload":
-                files_list = p.get("files", [])
-                first_file_name = ""
-                if files_list and isinstance(files_list, list) and len(files_list) > 0 and isinstance(files_list[0], dict):
-                    first_file_name = files_list[0].get("name", "")
+                # Payload from JS now includes file_path and file_name directly
+                file_path_from_payload = p.get("file_path") or "" # Use p.get("file_path")
+                file_name_from_payload = p.get("file_name") or "" # Use p.get("file_name")
                 
-                evt = FileUploadEvent(timestamp=ts, url=url, event_type="file_upload", selector=sel, file_name=first_file_name)
+                # Ensure file_name is derived from file_path if file_name is empty and file_path is not
+                if not file_name_from_payload and file_path_from_payload:
+                    # Need to import Path from pathlib if not already available at module level
+                    # For now, assume Path is available or use basic string manipulation
+                    # from pathlib import Path # This would be at the top of the file
+                    file_name_from_payload = file_path_from_payload.split('/').pop().split('\\').pop()
+
+                evt = FileUploadEvent(timestamp=ts, 
+                                      url=url, 
+                                      event_type="file_upload", 
+                                      selector=sel, 
+                                      file_path=file_path_from_payload, 
+                                      file_name=file_name_from_payload)
                 self.events.append(evt)
-                logger.info(f"📤 Upload '{first_file_name}' to {sel}")
+                logger.info(f"📤 Upload '{file_name_from_payload}' (path: '{file_path_from_payload}') to {sel}")
                 return
             
             if typ == "mousedown":
