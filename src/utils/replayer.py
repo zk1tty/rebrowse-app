@@ -2,6 +2,7 @@ import asyncio, json, logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, parse_qs
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,11 @@ class TraceReplayer:
     BTN_MAP = {"left": "left", "middle": "middle", "right": "right"}
     MOD_MAP = {"alt": "Alt", "ctrl": "Control", "shift": "Shift", "meta": "Meta"}
 
-    def __init__(self, page, trace: List[Dict[str, Any]]):
-        self.page, self.trace = page, trace
+    def __init__(self, page, trace: List[Dict[str, Any]], controller: Any, user_provided_files: Optional[List[str]] = None):
+        self.page = page
+        self.trace = trace
+        self.controller = controller
+        self.user_provided_files = user_provided_files or [] # Store user-provided file paths
         self._clicked_with_selector = False
         self._clicked_dispatch = False
 
@@ -69,11 +73,9 @@ class TraceReplayer:
                 log_message_elements.append("⌨️ KeyInput")
                 key_val = ev.get("key")
                 log_message_elements.append(f"key:'{key_val}'")
-                
                 modifiers = ev.get("modifiers")
-                if modifiers: # Only show if modifiers are present
+                if modifiers: 
                     log_message_elements.append(f"mods:{modifiers}")
-                
                 log_message_elements.append(f"url='{current_event_url}'")
 
             elif log_type == "navigation":
@@ -212,28 +214,71 @@ class TraceReplayer:
 
         if typ == "mouse_click":
             btn = ev.get("button", "left")
+            recorded_text = ev.get("text", "").lower() if ev.get("text") else ""
             self._clicked_with_selector = False
             self._clicked_dispatch = False
+            
             if sel_event:
                 loc = await self._resolve_click_locator(sel_event)
                 if loc:
-                    element_handle = None
                     try:
                         logger.debug(f"Attempting to click resolved locator for original selector: {sel_event}")
                         
-                        await loc.wait_for(state='visible', timeout=3000)
-                        await loc.scroll_into_view_if_needed(timeout=3000)
-                        logger.debug(f"Element '{sel_event}' (resolved to button) is visible. Attempting standard click.")
+                        # Default explicit wait timeout
+                        wait_timeout = 5000
                         
-                        await loc.click(button=self.BTN_MAP.get(btn, "left"), timeout=3000, delay=100)
+                        # Expanded keyword list
+                        critical_keywords = [
+                            "download", "save", "submit", "next", "continue", "confirm", "upload", "add", "create",
+                            "process", "generate", "apply", "send", "post", "tweet", "run", "execute",
+                            "search", "go", "login", "signup", "pay", "checkout", "agree", "accept", "allow"
+                        ]
+                        
+                        sel_event_lower = sel_event.lower() if sel_event else ""
+                        is_critical_action = False
+
+                        if any(keyword in recorded_text for keyword in critical_keywords):
+                            is_critical_action = True
+                        elif sel_event_lower and any(keyword in sel_event_lower for keyword in critical_keywords):
+                            is_critical_action = True
+                        
+                        # Specific checks for known critical element identifiers
+                        if sel_event_lower and (
+                            'data-testid="send-button"' in sel_event_lower or
+                            'data-testid*="submit"' in sel_event_lower or
+                            'data-testid*="send"' in sel_event_lower or
+                            'id*="submit-button"' in sel_event_lower or
+                            'data-testid*="tweetbutton"' in sel_event_lower or
+                            'id*="composer-submit-button"' in sel_event_lower # for chatgpt (example)
+                        ):
+                            is_critical_action = True
+
+                        if is_critical_action:
+                            # Use original recorded text for logging if available, else empty string
+                            log_text = ev.get('text', '')
+                            logger.info(f"Critical action suspected (text: '{log_text}', selector: '{sel_event}'). Extending wait.")
+                            wait_timeout = 15000 # 15 seconds
+                        
+                        logger.debug(f"Waiting for selector '{sel_event}' to be visible and enabled with timeout {wait_timeout}ms.")
+                        await loc.wait_for(state='visible', timeout=wait_timeout)
+                        await loc.wait_for(state='enabled', timeout=wait_timeout) 
+                        await loc.scroll_into_view_if_needed(timeout=wait_timeout)
+                        logger.debug(f"Element '{sel_event}' is visible and enabled. Attempting standard click.")
+                        
+                        await loc.click(button=self.BTN_MAP.get(btn, "left"), timeout=wait_timeout, delay=100)
                         self._clicked_with_selector = True
                         logger.info(f"Standard Playwright click successful for resolved locator from selector: {sel_event}")
                         await asyncio.sleep(0.25)
                         return
 
+                    except PlaywrightTimeoutError as e_timeout:
+                        logger.warning(f"Timeout ({wait_timeout}ms) waiting for element '{sel_event}' (visible/enabled) or during click: {e_timeout.__class__.__name__}")
+                        # Fall through to other fallbacks if timeout
                     except Exception as e_click_attempt1:
                         logger.warning(f"Standard Playwright click (attempt 1) for resolved locator from '{sel_event}' failed: {e_click_attempt1.__class__.__name__} ({str(e_click_attempt1)})")
                         
+                    # Fallback to dispatchEvent if standard click failed (and not returned)
+                    if not self._clicked_with_selector:
                         try:
                             logger.info(f"Fallback: Attempting to dispatch click event for resolved locator from '{sel_event}'")
                             if await loc.count() > 0:
@@ -254,7 +299,6 @@ class TraceReplayer:
                                     return
                             else:
                                 logger.error(f"Cannot dispatch click for '{sel_event}', resolved locator is empty.")
-
                         except Exception as e_dispatch:
                             logger.warning(f"DispatchEvent click failed for '{sel_event}': {e_dispatch.__class__.__name__} ({str(e_dispatch)}). Falling back to XY if available.")
             
@@ -272,7 +316,7 @@ class TraceReplayer:
         
         if typ == "keyboard_input":
             key_to_press = ev["key"]
-            modifiers_for_press = ev.get("modifiers", [])
+            modifiers_for_press = ev.get("modifiers", []) # REVERTED to 'modifiers'
             sel_for_press = ev.get("selector")
             logger.debug(f"APPLYING SINGLE KEY PRESS: '{key_to_press}' (mods: {modifiers_for_press}) -> {sel_for_press or 'no specific target'}")
 
@@ -298,7 +342,70 @@ class TraceReplayer:
             logger.debug(f"✅ done SINGLE KEY PRESS: '{key_to_press}' -> {sel_for_press or 'no specific target'}")
             return
 
-        logger.debug(f"✅ done {typ} (no specific apply action in this path or already handled)")
+        # --- NEW EVENT HANDLERS ---
+        elif typ == "clipboard_copy":
+            await self.controller.execute("Copy text to clipboard", text=ev["text"])
+            logger.info(f"📋 Executed Copy: text='{(ev['text'][:30] + '...') if len(ev['text']) > 30 else ev['text']}'")
+            return
+        elif typ == "clipboard_paste":
+            await self.controller.execute("Paste text from clipboard", selector=ev["selector"])
+            logger.info(f"📋 Executed Paste into selector='{ev['selector']}'")
+            return
+        elif typ == "file_upload":
+            file_path_to_upload = None
+            trace_file_name = ev.get("file_name")
+
+            if trace_file_name and self.user_provided_files:
+                for user_file_path_str in self.user_provided_files:
+                    user_file_path = Path(user_file_path_str)
+                    if user_file_path.name == trace_file_name:
+                        if user_file_path.exists():
+                            file_path_to_upload = str(user_file_path)
+                            logger.info(f"Using user-provided file for '{trace_file_name}': {file_path_to_upload}")
+                            break
+                        else:
+                            logger.warning(f"User-provided file '{user_file_path_str}' for '{trace_file_name}' does not exist.")
+            
+            if not file_path_to_upload:
+                trace_event_file_path = ev.get("file_path") # This is the one from original recording (often empty)
+                if trace_event_file_path: 
+                    path_obj = Path(trace_event_file_path).expanduser()
+                    if path_obj.exists():
+                        file_path_to_upload = str(path_obj)
+                        logger.info(f"Using file_path from trace for '{trace_file_name or 'unknown'}': {file_path_to_upload}")
+                    else:
+                        logger.warning(f"file_path '{trace_event_file_path}' from trace for '{trace_file_name or 'unknown'}' does not exist.")
+
+            if not file_path_to_upload and trace_file_name:
+                fallback_path = Path(f"~/Downloads/{trace_file_name}").expanduser()
+                if fallback_path.exists():
+                    file_path_to_upload = str(fallback_path)
+                    logger.info(f"Using fallback file for '{trace_file_name}': {file_path_to_upload}")
+                else:
+                    logger.warning(f"Fallback file '{fallback_path}' for '{trace_file_name}' does not exist.")
+            
+            if file_path_to_upload:
+                await self.controller.execute("Upload local file", 
+                                              selector=ev["selector"], 
+                                              file_path=file_path_to_upload)
+                logger.info(f"📤 Executed Upload: file='{trace_file_name or Path(file_path_to_upload).name}' (path: '{file_path_to_upload}') to selector='{ev['selector']}'")
+            else:
+                logger.error(f"Could not determine a valid file path for upload event: {ev}. Skipping upload.")
+            return
+        elif typ == "file_download":
+            # Pass all necessary info from the event to the controller
+            await self.controller.execute(
+                "Download remote file", 
+                url=ev.get("download_url"),         # Original download URL (for info/logging)
+                suggested_filename=ev.get("suggested_filename"),
+                recorded_local_path=ev.get("recorded_local_path") # Path to file saved during recording
+                # dest_dir will be handled by CustomController.execute with its default if not present here
+            )
+            logger.info(f"💾 Replay: Executed 'Download remote file' action for: {ev.get('suggested_filename')}")
+            return
+        # --- END NEW EVENT HANDLERS ---
+
+        logger.debug(f"✅ done {typ} (no specific apply action in this path or already handled by controller.execute)")
 
     async def _resolve_click_locator(self, sel: str) -> Optional[Any]:
         if not sel: return None
@@ -523,18 +630,67 @@ class TraceReplayer:
 
 async def _cli_demo(url: str, trace_path: str):
     from playwright.async_api import async_playwright
+    from src.controller.custom_controller import CustomController # Import your controller
+
+    logger.info(f"CLI Demo: Replaying trace '{trace_path}' starting at URL '{url}'")
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        page = await browser.new_page()
-        await page.goto(url)
-        rep = TraceReplayer(page, load_trace(trace_path))
+        browser = await pw.chromium.launch(headless=False) # Usually headless=False for observing replay
+        # Create a new context for each replay for isolation
+        context = await browser.new_context() 
+        page = await context.new_page()
+        
+        # Navigate to the initial URL mentioned in the trace or a default start URL
+        # The replayer itself handles navigation events from the trace.
+        # So, `url` here is the very first URL to open before replaying starts.
+        logger.info(f"CLI Demo: Initial navigation to {url}")
         try:
-            await rep.play(speed=3)
-            print("✅ Replay completed")
+            await page.goto(url, wait_until="networkidle", timeout=15000)
+        except Exception as e_goto:
+            logger.warning(f"CLI Demo: Initial goto to {url} failed or timed out: {e_goto}. Attempting to continue replay.")
+
+        # Instantiate your custom controller
+        controller = CustomController()
+
+        # Load trace and instantiate replayer with the controller
+        try:
+            trace_events = load_trace(trace_path)
+            if not trace_events:
+                logger.error(f"CLI Demo: No events found in trace file: {trace_path}")
+                await browser.close()
+                return
+            logger.info(f"CLI Demo: Loaded {len(trace_events)} events from {trace_path}")
+        except Exception as e_load:
+            logger.error(f"CLI Demo: Failed to load trace file {trace_path}: {e_load}")
+            await browser.close()
+            return
+            
+        rep = TraceReplayer(page, trace_events, controller, user_provided_files=None) # Pass the controller
+
+        try:
+            await rep.play(speed=1) # Adjust speed as needed (1.0 is real-time, higher is faster)
+            logger.info("✅ CLI Demo: Replay completed")
         except Drift as d:
-            print("⚠️  Drift:", d)
-        await browser.close()
+            logger.error(f"⚠️ CLI Demo: Drift detected during replay: {d}")
+            if d.event:
+                logger.error(f"Drift occurred at event: {json.dumps(d.event, indent=2)}")
+        except Exception as e_play:
+            logger.error(f"💥 CLI Demo: An error occurred during replay: {e_play}", exc_info=True)
+        finally:
+            logger.info("CLI Demo: Closing browser...")
+            # Keep browser open for a few seconds to inspect final state, then close
+            # await asyncio.sleep(5) # Optional: delay before closing
+            await browser.close()
 
 if __name__ == "__main__":
     import sys, asyncio as _a
+    # Ensure correct arguments are provided
+    if len(sys.argv) < 3:
+        print("Usage: python src/utils/replayer.py <start_url> <path_to_trace_file.jsonl>")
+        sys.exit(1)
+    
+    # Configure logging for the CLI demo if run directly
+    logging.basicConfig(level=logging.INFO, 
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
     _a.run(_cli_demo(sys.argv[1], sys.argv[2]))
