@@ -1,4 +1,6 @@
+import sys
 print("USING USER_INPUT_FUNCTIONS", __file__)
+print(f"USER_INPUT_FUNCTIONS sys.path: {sys.path}")
 import os
 import json
 import logging
@@ -11,6 +13,7 @@ from pathlib import Path
 from src.browser.custom_context import CustomBrowserContext
 
 logger = logging.getLogger(__name__)
+logger.debug(f"USER_INPUT_FUNCTIONS: Imported CustomBrowserContext class id: {id(CustomBrowserContext)}")
 
 # Global set by webui when a CustomBrowserContext is available
 _browser_context = None  # type: Optional[CustomBrowserContext]
@@ -24,6 +27,8 @@ def set_browser_context(ctx):
     global _browser_context
     _browser_context = ctx
     logger.debug("Browser context set in user_input_functions: %s", ctx)
+    if _browser_context:
+        logger.debug(f"USER_INPUT_FUNCTIONS: _browser_context object type id in set_browser_context: {id(type(_browser_context))}")
 
 def list_input_trace_files(directory_path_str: str) -> List[dict]:
     """Lists input trace files from the specified directory."""
@@ -88,6 +93,9 @@ async def start_input_tracking() -> tuple[str, bool, str]:
         return "No active browser session. Please start a browser session first.", False, ""
         
     try:
+        logger.debug(f"USER_INPUT_FUNCTIONS: In start_input_tracking - _browser_context object type id: {id(type(_browser_context))}")
+        logger.debug(f"USER_INPUT_FUNCTIONS: In start_input_tracking - CustomBrowserContext class id: {id(CustomBrowserContext)}")
+        
         if not isinstance(_browser_context, CustomBrowserContext):
             logger.error(f"Cannot start tracking: _browser_context is not a CustomBrowserContext: {type(_browser_context)}")
             return "Internal error: Browser context not configured correctly.", False, ""
@@ -115,6 +123,9 @@ async def stop_input_tracking() -> tuple[str, Dict[str, Any], Dict[str, Any], st
         return "No active browser session.", start_btn_update, stop_btn_update, None, default_trace_info
     
     try:
+        logger.debug(f"USER_INPUT_FUNCTIONS: In stop_input_tracking - _browser_context object type id: {id(type(_browser_context))}")
+        logger.debug(f"USER_INPUT_FUNCTIONS: In stop_input_tracking - CustomBrowserContext class id: {id(CustomBrowserContext)}")
+
         if not isinstance(_browser_context, CustomBrowserContext):
             logger.error(f"Cannot stop tracking: _browser_context is not a CustomBrowserContext: {type(_browser_context)}")
             return "Internal error: Browser context not configured correctly.", start_btn_update, stop_btn_update, None, default_trace_info
