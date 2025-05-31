@@ -1,4 +1,3 @@
-print("USING TRACKER", __file__)
 import json
 import time
 import logging
