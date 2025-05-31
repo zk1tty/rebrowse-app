@@ -8,7 +8,8 @@
 
 ## Many worker threads execution
 
-Use sync API inside the thread” guidance and your need for on-screen, profile-sharing windows triggered from the Gradio front-end.
+- Use Playwright's Synchronous API inside a separate Python thread.
+- On-screen, profile-sharing windows triggered from the Gradio front-end.
 
 ```
 ┌──────────────┐                ┌─────────────────────────────────────────┐
@@ -51,8 +52,6 @@ Use sync API inside the thread” guidance and your need for on-screen, profile-
 
 - Never pass a Playwright Browser, Context or Page object from one thread to another.
 - Each thread calls its own sync_playwright() and closes it when done.
-- 
-
 
 
 ## Replay-Mode
