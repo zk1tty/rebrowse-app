@@ -32,6 +32,8 @@ class TraceReplayer:
     MOD_MAP = {"alt": "Alt", "ctrl": "Control", "shift": "Shift", "meta": "Meta"}
 
     def __init__(self, page, trace: List[Dict[str, Any]], controller: Any, user_provided_files: Optional[List[str]] = None):
+        print(f"[REPLAYER __init__] Initializing TraceReplayer instance.", flush=True)
+        print(f"[REPLAYER __init__] page type: {type(page)}, trace length: {len(trace) if trace else 0}, controller type: {type(controller)}, user_provided_files: {user_provided_files}", flush=True)
         self.page = page
         self.trace = trace
         self.controller = controller
@@ -43,8 +45,10 @@ class TraceReplayer:
 
     async def play(self, speed: float = 2.0):
         i = 0
+        print(f"[REPLAYER play] Starting play loop. Trace length: {len(self.trace)}", flush=True)
         while i < len(self.trace):
             ev = self.trace[i]
+            print(f"[REPLAYER play] Processing event {i+1}/{len(self.trace)}: Type: {ev.get('type')}, URL: {ev.get('url')}", flush=True)
             
             # New concise and iconic log format
             log_type = ev["type"]
@@ -94,6 +98,7 @@ class TraceReplayer:
             logger.info(", ".join(log_message_elements))
             
             # Delay logic
+            print(f"[REPLAYER play] Event {i+1}: Applying delay of {ev.get('t', 0)}ms, speed adjusted: {ev.get('t', 0)/speed}ms", flush=True)
             event_delay_ms = ev.get("t", 0)
             if event_delay_ms > 10: # Log only if delay is > 10ms (to avoid spamming for 0ms delays)
                  logger.debug(f"Pausing for {event_delay_ms/1000.0:.3f}s (speed adjusted: {event_delay_ms/1000.0/speed:.3f}s)")
@@ -102,11 +107,15 @@ class TraceReplayer:
             if ev["type"] == "keyboard_input":
                 consumed = await self._batch_type(i)
                 i += consumed
+                print(f"[REPLAYER play] Event {i+1-consumed} (keyboard_input batch): Consumed {consumed} events. New index: {i}", flush=True)
                 continue
 
             await self._apply(ev) 
+            print(f"[REPLAYER play] Event {i+1}: _apply(ev) completed.", flush=True)
             await self._verify(ev)
+            print(f"[REPLAYER play] Event {i+1}: _verify(ev) completed.", flush=True)
             i += 1
+        print(f"[REPLAYER play] Play loop finished.", flush=True)
 
     # ------------- batching -------------
 
@@ -188,28 +197,54 @@ class TraceReplayer:
     async def _apply(self, ev: Dict[str, Any]):
         typ = ev["type"]
         sel_event = ev.get("selector")
+        print(f"[REPLAYER _apply] Applying action: {typ}, selector: {sel_event}, keys: {ev.get('key')}, to: {ev.get('to')}", flush=True)
         logger.debug(f"APPLYING ACTION: {typ} for sel={sel_event or 'N/A'}, key={ev.get('key','N/A')}")
 
         if typ == "navigation":
             target = ev["to"]
             if not self._url_eq(self.page.url, target):
+                print(f"[REPLAYER _apply NAV] Attempting self.page.goto('{target}')", flush=True)
                 try:
-                    await self.page.goto(target, wait_until="domcontentloaded", timeout=15000)
-                except Exception as e:
-                    logger.warning("goto timeout %s – continuing for %s", e.__class__.__name__, target)
+                    # TEST: Using a simpler URL and shorter timeout
+                    test_target_url = "http://example.com" 
+                    print(f"[REPLAYER _apply NAV] TEST: Overriding target to: {test_target_url} with 5s timeout", flush=True)
+                    await self.page.goto(test_target_url, wait_until="domcontentloaded", timeout=5000)
+                    # Original line: await self.page.goto(target, wait_until="domcontentloaded", timeout=15000)
+                    print(f"[REPLAYER _apply NAV] self.page.goto('{target}') SUCCEEDED.", flush=True)
+                except PlaywrightTimeoutError as pte_goto:
+                    logger.error(f"[REPLAYER _apply NAV] PlaywrightTimeoutError during goto '{target}': {pte_goto}", exc_info=True)
+                    print(f"[REPLAYER _apply NAV] PlaywrightTimeoutError during goto '{target}': {pte_goto}", flush=True)
+                    # Optionally re-raise or handle as a drift
+                except Exception as e_goto_general:
+                    logger.error(f"[REPLAYER _apply NAV] Exception during goto '{target}': {e_goto_general}", exc_info=True)
+                    print(f"[REPLAYER _apply NAV] Exception during goto '{target}': {e_goto_general}", flush=True)
+                    # Optionally re-raise or handle as a drift
+            else:
+                print(f"[REPLAYER _apply NAV] Page URL {self.page.url} already matches target {target}. Skipping goto.", flush=True)
+
+            print(f"[REPLAYER _apply NAV] Attempting page.bring_to_front() for {target}", flush=True)
             await self.page.bring_to_front()
+            print(f"[REPLAYER _apply NAV] page.bring_to_front() completed for {target}", flush=True)
             # Enhanced wait after navigation
             try:
                 logger.debug(f"Waiting for 'load' state after navigating to {target}")
+                print(f"[REPLAYER _apply NAV] Attempting page.wait_for_load_state('load') for {target}", flush=True)
                 await self.page.wait_for_load_state('load', timeout=10000) # Wait for basic load
+                print(f"[REPLAYER _apply NAV] page.wait_for_load_state('load') completed for {target}", flush=True)
                 logger.debug(f"'load' state confirmed for {target}. Now waiting for networkidle.")
+                print(f"[REPLAYER _apply NAV] Attempting page.wait_for_load_state('networkidle') for {target}", flush=True)
                 await self.page.wait_for_load_state('networkidle', timeout=3000) # Shorter networkidle (e.g., 3 seconds)
+                print(f"[REPLAYER _apply NAV] page.wait_for_load_state('networkidle') completed for {target}", flush=True)
+                print(f"[REPLAYER _apply NAV] Attempting asyncio.sleep(0.3) for {target}", flush=True)
                 await asyncio.sleep(0.3) # Small buffer
+                print(f"[REPLAYER _apply NAV] asyncio.sleep(0.3) completed for {target}", flush=True)
                 logger.debug(f"Network idle (or timeout) confirmed for {target}")
             except Exception as e_wait:
                 logger.warning(f"Timeout or error during page load/networkidle wait on {target}: {e_wait.__class__.__name__} - {str(e_wait)}")
+                print(f"[REPLAYER _apply NAV] EXCEPTION during wait_for_load_state for {target}: {e_wait}", flush=True)
 
-            logger.info(f"NAVIGATED: {target}")
+            logger.info(f"✅🌐 Navigated: {target}")
+            print(f"[REPLAYER _apply] Action {typ} applied.", flush=True)
             return
 
         if typ == "mouse_click":
@@ -344,14 +379,17 @@ class TraceReplayer:
 
         # --- NEW EVENT HANDLERS ---
         elif typ == "clipboard_copy":
+            print(f"[REPLAYER _apply] Executing clipboard_copy controller action.", flush=True)
             await self.controller.execute("Copy text to clipboard", text=ev["text"])
             logger.info(f"📋 Executed Copy: text='{(ev['text'][:30] + '...') if len(ev['text']) > 30 else ev['text']}'")
             return
         elif typ == "clipboard_paste":
+            print(f"[REPLAYER _apply] Executing clipboard_paste controller action for selector: {ev['selector']}.", flush=True)
             await self.controller.execute("Paste text from clipboard", selector=ev["selector"])
             logger.info(f"📋 Executed Paste into selector='{ev['selector']}'")
             return
         elif typ == "file_upload":
+            print(f"[REPLAYER _apply] Processing file_upload for selector: {ev['selector']}, file_name: {ev.get('file_name')}", flush=True)
             file_path_to_upload = None
             trace_file_name = ev.get("file_name")
 
@@ -385,15 +423,18 @@ class TraceReplayer:
                     logger.warning(f"Fallback file '{fallback_path}' for '{trace_file_name}' does not exist.")
             
             if file_path_to_upload:
+                print(f"[REPLAYER _apply] Executing file_upload controller action with path: {file_path_to_upload}", flush=True)
                 await self.controller.execute("Upload local file", 
                                               selector=ev["selector"], 
                                               file_path=file_path_to_upload)
                 logger.info(f"📤 Executed Upload: file='{trace_file_name or Path(file_path_to_upload).name}' (path: '{file_path_to_upload}') to selector='{ev['selector']}'")
             else:
                 logger.error(f"Could not determine a valid file path for upload event: {ev}. Skipping upload.")
+                print(f"[REPLAYER _apply] Skipping file_upload due to no valid path for event: {ev}", flush=True)
             return
         elif typ == "file_download":
             # Pass all necessary info from the event to the controller
+            print(f"[REPLAYER _apply] Executing file_download controller action for: {ev.get('suggested_filename')}", flush=True)
             await self.controller.execute(
                 "Download remote file", 
                 url=ev.get("download_url"),         # Original download URL (for info/logging)
@@ -406,6 +447,7 @@ class TraceReplayer:
         # --- END NEW EVENT HANDLERS ---
 
         logger.debug(f"✅ done {typ} (no specific apply action in this path or already handled by controller.execute)")
+        print(f"[REPLAYER _apply] Action {typ} applied.", flush=True)
 
     async def _resolve_click_locator(self, sel: str) -> Optional[Any]:
         if not sel: return None
