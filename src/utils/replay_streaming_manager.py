@@ -14,8 +14,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as SyncPlaywrightT
 # --- Project-specific imports needed by replay logic ---
 from src.browser.custom_browser import CustomBrowser
 from src.browser.custom_context import CustomBrowserContext
-from src.controller.custom_controller import CustomController
-from src.utils.replayer import TraceReplayer, load_trace, Drift
+from src.controller.custom_controller import CustomControllerSync
+from src.utils.replayer import TraceReplayerSync, load_trace, Drift
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig
 from browser_use.browser.browser import BrowserConfig
 from browser_use.browser.context import BrowserContextWindowSize
@@ -206,126 +206,6 @@ async def get_page_for_replay_mgr(ui_browser: Optional[CustomBrowser], ui_contex
     print(f"[MANAGER get_page_for_replay_mgr] Returning page: {active_page.url if active_page else 'None'}", flush=True)
     return active_page
 
-# MODIFIED: actual_replay_trace_wrapper_mgr now takes browser/context
-# run at stream_replay
-async def actual_replay_trace_wrapper_mgr(
-    selected_trace_path: str, 
-    local_replay_speed: float, 
-    override_files_list: Optional[List[Union[tempfile._TemporaryFileWrapper, str]]],
-    ui_browser: CustomBrowser, 
-    ui_context: CustomBrowserContext,
-    ui_async_q: asyncio.Queue  # New parameter for streaming
-): #: # No longer returns str
-    print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Entered for {selected_trace_path}", flush=True)
-    print(f"[MANAGER ARGS CHECK] selected_trace_path: {selected_trace_path}, type: {type(selected_trace_path)}", flush=True)
-    print(f"[MANAGER ARGS CHECK] local_replay_speed: {local_replay_speed}, type: {type(local_replay_speed)}", flush=True)
-    print(f"[MANAGER ARGS CHECK] override_files_list: {override_files_list}, type: {type(override_files_list)}", flush=True)
-    print(f"[MANAGER ARGS CHECK] ui_browser: {ui_browser}, type: {type(ui_browser)}", flush=True)
-    print(f"[MANAGER ARGS CHECK] ui_context: {ui_context}, type: {type(ui_context)}", flush=True)
-    print(f"[MANAGER ARGS CHECK] ui_async_q: {ui_async_q}, type: {type(ui_async_q)}", flush=True)
-
-    await ui_async_q.put(f"--- Replay starting for '{Path(selected_trace_path).name}' (manager) ---")
-    print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put '--- Replay starting...' on ui_async_q", flush=True)
-
-    print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] About to call get_page_for_replay_mgr.", flush=True)
-    page_for_replay = await get_page_for_replay_mgr(ui_browser, ui_context)
-    print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] get_page_for_replay_mgr returned. page_for_replay is: {page_for_replay}", flush=True)
-    
-    if not page_for_replay: 
-        logger.error("actual_replay_trace_wrapper_mgr: get_page_for_replay_mgr returned no page.")
-        await ui_async_q.put("Error: Browser page not available (manager)")
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'Error: Browser page not available' on ui_async_q", flush=True)
-        return
-    
-    logger.debug(f"actual_replay_trace_wrapper_mgr: Page for replay is: {page_for_replay.url}")
-    controller_browser_context = ui_context # Controller uses the passed context
-    
-    try:
-        logger.debug(f"actual_replay_trace_wrapper_mgr: Creating CustomController with context type: {type(controller_browser_context)}")
-        controller = CustomController(browser_context=controller_browser_context)
-        logger.debug("actual_replay_trace_wrapper_mgr: CustomController created.")
-
-        await ui_async_q.put(f"Loading trace: {selected_trace_path}")
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'Loading trace...' on ui_async_q", flush=True)
-        trace_events = load_trace(selected_trace_path)
-        if not trace_events: 
-            logger.error(f"actual_replay_trace_wrapper_mgr: Trace file {selected_trace_path} is empty or failed to load.")
-            await ui_async_q.put(f"Error: Trace file {selected_trace_path} empty or failed to load.")
-            print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'Error: Trace file empty' on ui_async_q", flush=True)
-            return
-        logger.debug(f"actual_replay_trace_wrapper_mgr: Loaded {len(trace_events)} events.")
-        await ui_async_q.put(f"Loaded {len(trace_events)} events from trace.")
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'Loaded {len(trace_events)} events' on ui_async_q", flush=True)
-
-        processed_override_files = []
-        if override_files_list:
-            msg = f"Processing {len(override_files_list)} override files."
-            logger.debug(f"actual_replay_trace_wrapper_mgr: {msg}")
-            await ui_async_q.put(msg)
-            for i, f_item in enumerate(override_files_list):
-                if isinstance(f_item, str):
-                    processed_override_files.append(f_item)
-                elif hasattr(f_item, 'name') and isinstance(f_item.name, str):
-                    processed_override_files.append(f_item.name)
-                else:
-                    logger.warning(f"actual_replay_trace_wrapper_mgr: Skipping unexpected item type {type(f_item)} in override_files_list at index {i}.")
-        else:
-            logger.debug("actual_replay_trace_wrapper_mgr: No override files provided.")
-            await ui_async_q.put("No override files provided.")
-            print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'No override files' or count on ui_async_q", flush=True)
-        
-        await ui_async_q.put(f"Instantiating Replayer. Page URL: {page_for_replay.url if page_for_replay else 'None'}, Overrides: {len(processed_override_files)}")
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'Instantiating Replayer...' on ui_async_q", flush=True)
-        print(f"[MANAGER TRACE_REPLAYER_INIT_ARGS] page_for_replay: {page_for_replay} (URL: {page_for_replay.url if page_for_replay else 'N/A'})", flush=True)
-        print(f"[MANAGER TRACE_REPLAYER_INIT_ARGS] trace_events (first 3 if any): {trace_events[:3] if trace_events else 'None'}, Count: {len(trace_events) if trace_events else 0}", flush=True)
-        print(f"[MANAGER TRACE_REPLAYER_INIT_ARGS] controller: {controller}, type: {type(controller)}", flush=True)
-        print(f"[MANAGER TRACE_REPLAYER_INIT_ARGS] user_provided_files: {processed_override_files}", flush=True)
-
-        replayer = TraceReplayer(
-            page_for_replay, 
-            trace_events, 
-            controller,
-            user_provided_files=processed_override_files
-        )
-        await ui_async_q.put("TraceReplayer instantiated. Starting playback...")
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put 'TraceReplayer instantiated...' on ui_async_q", flush=True)
-        
-        # Initial harvest before play, in case of pre-play logs from replayer setup
-        initial_harvest = harvest_logs_for_ui()
-        if initial_harvest:
-            for line in initial_harvest.splitlines():
-                await ui_async_q.put(line)
-                print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put harvested pre-play log line on ui_async_q: {line}", flush=True)
-
-        await replayer.play(speed=local_replay_speed) # This is where src.utils.replayer logs should begin appearing in the log_q
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] replayer.play() completed", flush=True)
-
-        # After play is done, harvest any remaining logs
-        final_harvest = harvest_logs_for_ui()
-        if final_harvest:
-            for line in final_harvest.splitlines():
-                await ui_async_q.put(line)
-                print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put harvested post-play log line on ui_async_q: {line}", flush=True)
-
-        status_message_final = f"Input trace '{Path(selected_trace_path).name}' replayed successfully."
-        logger.info(f"actual_replay_trace_wrapper_mgr: replayer.play() completed. {status_message_final}")
-        await ui_async_q.put(status_message_final)
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put final success message on ui_async_q", flush=True)
-
-    except Drift as d: 
-        status_message_final = f"Drift error: {d}"
-        logger.error(f"actual_replay_trace_wrapper_mgr: {status_message_final}", exc_info=True)
-        await ui_async_q.put(status_message_final)
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put Drift error on ui_async_q", flush=True)
-    except Exception as e: 
-        status_message_final = f"General error during replay: {e}"
-        logger.error(f"actual_replay_trace_wrapper_mgr: {status_message_final}", exc_info=True)
-        await ui_async_q.put(status_message_final)
-        print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put General error on ui_async_q", flush=True)
-    
-    await ui_async_q.put(f"--- Replay Finished (actual_replay_trace_wrapper_mgr) for '{Path(selected_trace_path).name}' ---")
-    print(f"[MANAGER ACTUAL_REPLAY_WRAPPER] Put '--- Replay Finished ---' on ui_async_q. Exiting.", flush=True)
-
 # --- Global variables for replay thread parameters (specific to this manager now) ---
 _mgr_replay_params_lock = threading.Lock() # Renamed to avoid conflict if webui.py still has old ones
 _mgr_replay_current_params: Optional[Dict[str, Any]] = None
@@ -335,81 +215,110 @@ def _execute_replay_sync_in_thread(
     trace_path: str, 
     speed: float, 
     override_files: Optional[List[Any]], 
-    # We are not passing browser/context from main thread anymore for this sync version
     p_ui_async_q: asyncio.Queue, # Still an asyncio.Queue for now
-    main_event_loop: asyncio.AbstractEventLoop # Loop of the main thread for call_soon_threadsafe
+    main_event_loop: asyncio.AbstractEventLoop, # Loop of the main thread for call_soon_threadsafe
+    cdp_url: str  # Changed from cdp_ws_endpoint to cdp_url (e.g. http://localhost:9222)
 ):
-   print(f"[SYNC_THREAD _execute_replay_sync] Entered. Trace: {trace_path}", flush=True)
-   main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "[SYNC_THREAD] Execution started.")
+    logger.debug(f"[SYNC_THREAD _execute_replay_sync] Entered. Trace: {trace_path}. CDP URL: {cdp_url}")
+    main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Execution started (CDP).")
 
-   # Placeholder for browser/context config if needed
-   # For now, using defaults for headless, etc.
-   # browser_config_params = params.get("browser_config_params", {})
-   # context_config_params = params.get("context_config_params", {})
+    try:
+        # These variables will hold the Playwright objects created within the sync context
+        # They are distinct from any async Playwright objects on the main thread.
+        sync_browser = None
+        sync_context_instance = None # Renamed to avoid conflict with 'context' module
+        sync_page_for_replay = None
 
-   try:
-       # These variables will hold the Playwright objects created within the sync context
-       # They are distinct from any async Playwright objects on the main thread.
-       sync_browser = None
-       sync_context_instance = None # Renamed to avoid conflict with 'context' module
-       sync_page_for_replay = None
-
-       with sync_playwright() as p:
-           main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "[SYNC_THREAD] Sync Playwright started.")
-           print("[SYNC_THREAD _execute_replay_sync] Sync Playwright started.", flush=True)
-
-           # browser = p.chromium.launch(headless=False, **browser_config_params)
-           sync_browser = p.chromium.launch(headless=True) # Defaulting to headless for now
-           main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "[SYNC_THREAD] Browser launched.")
-           print(f"[SYNC_THREAD _execute_replay_sync] Browser launched: {type(sync_browser)}", flush=True)
-
-           # Pass viewport directly as a keyword argument
-           sync_context_instance = sync_browser.new_context(viewport={"width": 1280, "height": 1100})
-           main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "[SYNC_THREAD] Context created.")
-           print(f"[SYNC_THREAD _execute_replay_sync] Context created: {type(sync_context_instance)}", flush=True)
-
-           # Call the synchronous page helper
-           sync_page_for_replay = get_page_for_replay_mgr_sync(sync_context_instance, p_ui_async_q, main_event_loop)
-
-           if not sync_page_for_replay:
-               err_msg_helper = "[SYNC_THREAD] get_page_for_replay_mgr_sync failed to return a page."
-               print(err_msg_helper, flush=True)
-               main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg_helper)
-               if sync_browser.is_connected(): sync_browser.close() # Clean up browser before returning
-               return # Stop if page prep fails
+        with sync_playwright() as p:
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🧵 Sync Playwright started. Connecting to CDP URL: {cdp_url}")
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Sync Playwright started. Connecting to CDP URL: {cdp_url}")
             
-           print(f"[SYNC_THREAD _execute_replay_sync] Page for replay ready. URL: {sync_page_for_replay.url}", flush=True)
-           main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_THREAD] Page for replay ready: {sync_page_for_replay.url}")
+            sync_browser = p.chromium.connect_over_cdp(cdp_url)
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Browser launched/connected via CDP.")
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Browser launched/connected via CDP: {type(sync_browser)}")
 
-           # --- Placeholder for calling the actual (refactored) TraceReplayerSync ---
-           # trace_events = load_trace(trace_path)
-           # controller_sync = CustomControllerSync(page) # Needs sync version
-           # replayer_sync = TraceReplayerSync(page, trace_events, controller_sync, override_files, p_ui_async_q, main_event_loop)
-           # replayer_sync.play(speed)
-           # --------------------------------------------------------------------------
+            # Use the existing persistent context from the CDP-connected browser
+            if sync_browser.contexts:
+                sync_context_instance = sync_browser.contexts[0] # Assuming the first is the persistent default
+                logger.debug(f"[SYNC_THREAD _execute_replay_sync] Using existing persistent context (0). Original pages: {len(sync_context_instance.pages)}")
+                main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Using existing persistent context.")
+            else:
+                err_msg_ctx = "🧵 ERROR: No contexts found in CDP-connected browser. Cannot use persistent profile."
+                logger.error(err_msg_ctx)
+                main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg_ctx)
+                if sync_browser.is_connected(): sync_browser.close()
+                return
 
-           print("[SYNC_THREAD _execute_replay_sync] Closing browser...", flush=True)
-           if sync_browser.is_connected(): sync_browser.close()
-           main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "[SYNC_THREAD] Browser closed.")
+            # Call the synchronous page helper
+            sync_page_for_replay = get_page_for_replay_mgr_sync(sync_context_instance, p_ui_async_q, main_event_loop)
 
-   except SyncPlaywrightTimeoutError as pte_sync:
-       err_msg = f"[SYNC_THREAD] PlaywrightTimeoutError: {pte_sync}"
-       print(err_msg, flush=True)
-       main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg)
-   except Exception as e_sync:
-       err_msg = f"[SYNC_THREAD] EXCEPTION: {e_sync}"
-       print(err_msg, flush=True)
-       main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg)
-   finally:
-       final_msg = "[SYNC_THREAD] Execution finished."
-       print(final_msg, flush=True)
-       main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, final_msg)
+            if not sync_page_for_replay:
+                err_msg_helper = "🧵 get_page_for_replay_mgr_sync failed to return a page."
+                logger.error(err_msg_helper)
+                main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg_helper)
+                if sync_browser.is_connected(): sync_browser.close() # Clean up browser before returning
+                return # Stop if page prep fails
+            
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Page for replay ready. URL: {sync_page_for_replay.url}")
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🧵 Page for replay ready: {sync_page_for_replay.url}")
+
+            # --- Placeholder for calling the actual (refactored) TraceReplayerSync ---
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Loading trace events...")
+            trace_events = load_trace(trace_path)
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Loaded {len(trace_events)} trace events.")
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🧵 Loaded {len(trace_events)} trace events.")
+
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Initializing controller (CustomControllerSync).")
+            controller_for_sync_replay = CustomControllerSync(page=sync_page_for_replay) # Pass the sync Page
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Controller initialized (CustomControllerSync).")
+
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Initializing TraceReplayerSync.")
+            replayer_sync = TraceReplayerSync(
+                sync_page_for_replay, 
+                trace_events, 
+                controller_for_sync_replay, 
+                override_files, 
+                p_ui_async_q, 
+                main_event_loop
+            )
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 TraceReplayerSync initialized. Starting play().")
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] Starting replayer_sync.play(speed={speed})")
+
+            replayer_sync.play(speed) # This is now a synchronous call
+
+            logger.debug(f"[SYNC_THREAD _execute_replay_sync] replayer_sync.play() finished.")
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Replay allegedly finished.")
+            # --------------------------------------------------------------------------
+
+            logger.debug("[SYNC_THREAD _execute_replay_sync] Closing browser...")
+            # As per architecture: only close the page/target created for this replay.
+            # The browser (CDP connection) is managed by the 'with sync_playwright()' context manager.
+            if sync_page_for_replay and not sync_page_for_replay.is_closed():
+                logger.debug(f"[SYNC_THREAD _execute_replay_sync] Closing replay page: {sync_page_for_replay.url}")
+                sync_page_for_replay.close()
+                main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 Replay page closed.")
+            # Do not close sync_browser here; it refers to the persistent CDP connection which should stay open.
+            # sync_browser.close() would disconnect this thread from the shared browser.
+            main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🧵 CDP Connection for thread will be closed by context manager.")
+
+    except SyncPlaywrightTimeoutError as pte_sync:
+        err_msg = f"🧵 PlaywrightTimeoutError: {pte_sync}"
+        logger.error(err_msg, exc_info=True)
+        main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg)
+    except Exception as e_sync:
+        err_msg = f"🧵 EXCEPTION: {e_sync}"
+        logger.error(err_msg, exc_info=True)
+        main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, err_msg)
+    finally:
+        final_msg = "🧵 Execution finished."
+        logger.debug(final_msg)
+        main_event_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, final_msg)
 
            
 # --- Threading helpers (now part of this manager) ---
 def _run_replay_logic_in_thread_mgr(done_event: threading.Event):
-    print("[MANAGER DEBUG] THREAD: _run_replay_logic_in_thread_mgr ENTERED", flush=True)
     global _mgr_replay_current_params, logger
+    logger.debug("[MANAGER THREAD _run_replay_logic_in_thread_mgr] Entered")
     # Remove local params copy if not used for browser/context config for sync playwright
     current_params_snapshot = {}
     with _mgr_replay_params_lock:
@@ -425,11 +334,13 @@ def _run_replay_logic_in_thread_mgr(done_event: threading.Event):
     # ui_browser_from_params and ui_context_from_params are no longer used by the sync version directly
     ui_async_q_from_params = current_params_snapshot.get("ui_async_q") # Get the asyncio.Queue
     main_event_loop_from_params = current_params_snapshot.get("main_event_loop")
+    cdp_url_from_params = current_params_snapshot.get("cdp_url")
 
     if not trace_path: logger.error("ReplayManager Thread: 'trace_path' not found."); done_event.set(); return
     if speed is None: logger.error("ReplayManager Thread: 'speed' not found."); done_event.set(); return
     if not ui_async_q_from_params: logger.error("ReplayManager Thread: 'ui_async_q' not found."); done_event.set(); return
     if not main_event_loop_from_params: logger.error("ReplayManager Thread: 'main_event_loop' not found."); done_event.set(); return
+    if not cdp_url_from_params: logger.error("ReplayManager Thread: 'cdp_url' not found."); done_event.set(); return # Critical
 
     # No more asyncio event loop creation here
     try:
@@ -439,15 +350,15 @@ def _run_replay_logic_in_thread_mgr(done_event: threading.Event):
             float(speed), 
             override_files, 
             ui_async_q_from_params,
-            main_event_loop_from_params
+            main_event_loop_from_params,
+            cdp_url_from_params
         )
-        print(f"[MANAGER THREAD _run_replay_logic_in_thread_mgr] _execute_replay_sync_in_thread completed for {trace_path}", flush=True)
+        logger.debug(f"[MANAGER THREAD _run_replay_logic_in_thread_mgr] _execute_replay_sync_in_thread completed for {trace_path}")
 
     except Exception as e:
         # This top-level exception in the thread function itself
         err_msg = f"ReplayManager Thread: UNHANDLED EXCEPTION in _run_replay_logic_in_thread_mgr for {trace_path}: {e}"
         logger.error(err_msg, exc_info=True)
-        print(f"[MANAGER THREAD _run_replay_logic_in_thread_mgr] EXCEPTION: {err_msg}", flush=True)
         # Try to put error message on the queue if possible
         if ui_async_q_from_params and main_event_loop_from_params:
             try: 
@@ -455,7 +366,7 @@ def _run_replay_logic_in_thread_mgr(done_event: threading.Event):
             except Exception as q_err: 
                 logger.error(f"ReplayManager Thread: Failed to put FATAL error on ui_async_q: {q_err}")
     finally: 
-        print("[MANAGER THREAD _run_replay_logic_in_thread_mgr] Setting done_event.", flush=True)
+        logger.debug("[MANAGER THREAD _run_replay_logic_in_thread_mgr] Setting done_event.")
         if done_event: done_event.set()
 
 # MODIFIED: start_replay_async_thread_mgr now takes browser/context
@@ -463,28 +374,27 @@ def start_replay_sync_api_in_thread( # Renamed function for clarity
     trace_path: str, 
     speed: float, 
     override_files: Optional[List[Any]], 
-    # ui_browser and ui_context are no longer passed as they won't be used by the sync API in the thread directly
-    p_ui_async_q: asyncio.Queue, # Still takes asyncio.Queue for now
-    p_main_event_loop: asyncio.AbstractEventLoop
+    p_ui_async_q: asyncio.Queue, 
+    p_main_event_loop: asyncio.AbstractEventLoop,
+    cdp_url: str # Changed from cdp_ws_endpoint to cdp_url (e.g. http://localhost:9222)
 ) -> threading.Event:
-    print("[MANAGER ASYNC_STARTER] start_replay_async_thread_mgr ENTERED", flush=True)
     global _mgr_replay_current_params, logger
+    logger.debug("[MANAGER ASYNC_STARTER] start_replay_sync_api_in_thread ENTERED")
     with _mgr_replay_params_lock:
         _mgr_replay_current_params = {
             "trace_path": trace_path, "speed": speed, "override_files": override_files,
-            # "ui_browser": ui_browser, # Not passing these to sync version
-            # "ui_context": ui_context,
             "ui_async_q": p_ui_async_q, # Store the asyncio.Queue
-            "main_event_loop": p_main_event_loop # Store the main event loop
+            "main_event_loop": p_main_event_loop, # Store the main event loop
+            "cdp_url": cdp_url # Store the CDP URL
         }
-        print("[MANAGER ASYNC_STARTER] _mgr_replay_current_params SET", flush=True)
+        logger.debug(f"[MANAGER ASYNC_STARTER] _mgr_replay_current_params SET: { {k: type(v) for k,v in _mgr_replay_current_params.items()} }")
     done = threading.Event()
-    print("[MANAGER ASYNC_STARTER] Creating Thread object...", flush=True)
+    logger.debug("[MANAGER ASYNC_STARTER] Creating Thread object...")
     thread = threading.Thread(target=_run_replay_logic_in_thread_mgr, args=(done,), daemon=True)
-    print("[MANAGER ASYNC_STARTER] Starting Thread...", flush=True)
+    logger.debug("[MANAGER ASYNC_STARTER] Starting Thread...")
     thread.start()
     logger.info(f"ReplayManager: Replay thread created/started for trace: {trace_path}")
-    print("[MANAGER ASYNC_STARTER] Thread started. Returning done_event.", flush=True)
+    logger.debug("[MANAGER ASYNC_STARTER] Thread started. Returning done_event.")
     return done
 
 # UPDATED: now takes sync_context from the sync API in the thread
@@ -494,8 +404,8 @@ def get_page_for_replay_mgr_sync(
     main_loop: asyncio.AbstractEventLoop,
     # Potentially pass AppCustomBrowserContextConfig or relevant parts if needed for new context logic
 ) -> Optional[SyncPage]:
-    print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] ENTRY. sync_context type: {type(sync_context)}", flush=True)
-    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "[SYNC_HELPER] get_page_for_replay_mgr_sync started.")
+    logger.debug(f"[SYNC_THREAD get_page_for_replay_mgr_sync] ENTRY. sync_context type: {type(sync_context)}")
+    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, "🪡  get_page_for_replay_mgr_sync started.")
 
     # Note: Logic for creating a new context if sync_context is invalid is removed for now,
     # as sync_context is expected to be freshly created by _execute_replay_sync_in_thread.
@@ -505,47 +415,31 @@ def get_page_for_replay_mgr_sync(
         return None
 
     active_pages = sync_context.pages
-    print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Existing pages in sync_context: {len(active_pages)}", flush=True)
+    logger.debug(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Existing pages in sync_context: {len(active_pages)}")
 
     if not active_pages:
-        print("[SYNC_THREAD get_page_for_replay_mgr_sync] No active pages in sync_context. Creating new page.", flush=True)
+        logger.debug("[SYNC_THREAD get_page_for_replay_mgr_sync] No active pages in sync_context. Creating new page.")
         try:
             page = sync_context.new_page()
-            print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] New page created. URL: {page.url}", flush=True)
-            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] New page created: {page.url}")
+            logger.debug(f"[SYNC_THREAD get_page_for_replay_mgr_sync] New page created. URL: {page.url}")
+            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🪡  New page created: {page.url}")
             active_pages = [page] # sync_context.pages should update but let's be explicit
         except Exception as e_page_sync:
             err_msg = f"[SYNC_THREAD get_page_for_replay_mgr_sync] EXCEPTION during new page creation: {e_page_sync}"
-            print(err_msg, flush=True)
             logger.error(err_msg, exc_info=True)
-            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] ERROR creating page: {e_page_sync}")
+            logger.error(err_msg, exc_info=True)
+            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🪡  ERROR creating page: {e_page_sync}")
             return None
     
     active_page = active_pages[0]
-    print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Selected page. Current URL: {active_page.url}", flush=True)
-    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] Selected page URL: {active_page.url}")
+    logger.debug(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Selected page. Current URL: {active_page.url}")
+    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🪡  Selected page URL: {active_page.url}")
 
-    # Simplified initial navigation if blank/non-HTTP - always to example.com for now
-    if active_page.url == "about:blank" or not active_page.url.startswith("http"):
-        target_init_url = "http://example.com"
-        print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Page is blank/non-HTTP. Navigating to {target_init_url}", flush=True)
-        try:
-            active_page.goto(target_init_url, wait_until="load", timeout=7000)
-            print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Navigation to {target_init_url} SUCCEEDED. New URL: {active_page.url}", flush=True)
-            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] Nav to {target_init_url} SUCCEEDED. New URL: {active_page.url}")
-        except SyncPlaywrightTimeoutError as pte_sync_init:
-            err_msg = f"[SYNC_THREAD get_page_for_replay_mgr_sync] PlaywrightTimeoutError during initial navigation to {target_init_url}: {pte_sync_init}"
-            print(err_msg, flush=True)
-            logger.error(err_msg, exc_info=True)
-            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] TIMEOUT navigating to {target_init_url}: {pte_sync_init}")
-            return None
-        except Exception as e_sync_init:
-            err_msg = f"[SYNC_THREAD get_page_for_replay_mgr_sync] Exception during initial navigation to {target_init_url}: {e_sync_init}"
-            print(err_msg, flush=True)
-            logger.error(err_msg, exc_info=True)
-            main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] ERROR navigating to {target_init_url}: {e_sync_init}")
-            return None
+    # Page is prepared (either new 'about:blank' or an existing one).
+    # No further navigation is done here; TraceReplayerSync will handle the first trace navigation.
+    logger.debug(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Page ready for TraceReplayer. Current URL: {active_page.url}")
+    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🪡  Page for replay (initial state): {active_page.url}")
     
-    print(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Returning page. Final URL: {active_page.url}", flush=True)
-    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"[SYNC_HELPER] get_page_for_replay_mgr_sync finished. Page URL: {active_page.url}")
+    logger.debug(f"[SYNC_THREAD get_page_for_replay_mgr_sync] Returning page. Final URL: {active_page.url}")
+    main_loop.call_soon_threadsafe(p_ui_async_q.put_nowait, f"🪡  get_page_for_replay_mgr_sync finished. Page URL: {active_page.url}")
     return active_page
