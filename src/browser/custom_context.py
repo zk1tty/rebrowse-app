@@ -8,7 +8,7 @@ from browser_use.browser.context import BrowserContext, BrowserContextConfig # I
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig # Specific config for this app
 
 from src.utils.recorder import Recorder
-from src.utils.replayer import TraceReplayer, Drift, load_trace
+from src.utils.replayer import TraceReplayerSync, Drift, load_trace # Updated import
 
 logger = logging.getLogger(__name__)
 
@@ -242,9 +242,15 @@ class CustomBrowserContext(BrowserContext):
         # TODO: Replaying from CustomBrowserContext might require a functional controller
         # if the trace contains events like clipboard operations or file uploads/downloads
         # that rely on controller.execute().
-        rep = TraceReplayer(page_for_replay, trace_data, controller=None)
+        # This instantiation will need to be updated for TraceReplayerSync's new __init__ signature
+        # if this method is to be used with the refactored replayer.
+        # For now, just fixing the class name to resolve import error.
+        # It will also need ui_q and main_loop if it were to call the new TraceReplayerSync.
+        # This method is async, TraceReplayerSync is sync - needs careful thought if enabled.
+        print("[CustomBrowserContext] WARNING: replay_input_events is using TraceReplayerSync placeholder without full args. May not function.")
+        rep = TraceReplayerSync(page_for_replay, trace_data, controller=None) # Placeholder for controller, ui_q, main_loop
         try:
-            await rep.play(speed=speed)
+            rep.play(speed=speed) # play is now a synchronous method
             logger.info("Successfully replayed trace file: %s", trace_path)
             return True
         except Drift as d:
