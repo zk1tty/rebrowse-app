@@ -1,6 +1,61 @@
 # Tech Architecture
 
-## Motivation
+## Playwright 
+
+- use sync_playwright()
+- over CDP: CHrome Devtools Protocol for bi-directional commmunicaiton with a browser.
+
+
+## Many worker threads execution
+
+Use sync API inside the thread” guidance and your need for on-screen, profile-sharing windows triggered from the Gradio front-end.
+
+```
+┌──────────────┐                ┌─────────────────────────────────────────┐
+│  UI thread   │                │  Chrome.exe  (one OS process)           │
+│ (Gradio etc) │─── ws #UI ───▶ │  --remote-debugging-port=9222           │
+└──────────────┘                │                                         │
+        ▲                       │            CDP   multiplexer            │
+        │ status / logs         │   ┌──────────────────────────────────┐  │
+        │                       │   │  WebSocket connections           │  │
+        │                       │   │                                  │  │
+        │                       │   │  ws #A   → root-session Ⓐ       │  │
+        │                       │   │  ws #B   → root-session Ⓑ       │  │
+        │                       │   │  ws #C   → root-session Ⓒ       │  │
+        │                       │   └──────────────────────────────────┘  │
+        │                       │        ▲        ▲        ▲        ▲     │
+        │                       │        │        │        │        │     │
+        │                       │   ┌────┴┐  ┌────┴┐  ┌────┴┐  ┌────┴┐    │
+        │                       │   │Winⓤ│  │Win Ⓐ│  │WinⒷ│  │WinⒸ│    │
+        │                       │   └─────┘  └─────┘  └─────┘  └─────┘    │
+        │                       │          (all share the same profile)   │
+        │                       └─────────────────────────────────────────┘
+        │
+        │ spawn worker threads
+        ▼
+┌────────────────────────┐
+│ Workflow-A thread      │
+│   with sync_playwright │
+│                        │
+│ ws #A = connect_over_cdp(...)   (new WebSocket)          
+│ root session Ⓐ
+│  └── Browser.createTarget(newWindow=True)  → Win Ⓐ───────┤
+└────────────────────────┘                                  │
+                                                            ├── Workflow-B thread
+┌────────────────────────┐                                  │   (ws #B, session Ⓑ)
+│ Workflow-B thread      │                                  │ 
+│   with sync_playwright │                                  │
+└────────────────────────┘                                  │
+                                                             
+```
+
+- Never pass a Playwright Browser, Context or Page object from one thread to another.
+- Each thread calls its own sync_playwright() and closes it when done.
+- 
+
+
+
+## Replay-Mode
 
 I will introduce ▶️ Replay mode.   
 Why do we need replay?  
