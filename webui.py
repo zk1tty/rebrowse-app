@@ -13,6 +13,7 @@ from gradio.themes import Default, Soft, Glass, Monochrome, Ocean, Origin, Base,
 import pandas as pd
 from playwright.async_api import BrowserContext as PlaywrightBrowserContextType, Browser as PlaywrightBrowser
 from playwright.async_api import Browser # For isinstance check
+# from playwright.async_api import async_playwright # Ensure this is removed if only for old recording logic
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -77,9 +78,13 @@ def refresh_traces():
 # These are managed by the UI and other parts of the application.
 _ui_global_browser: Optional[CustomBrowser] = None
 _ui_global_browser_context: Optional[CustomBrowserContext] = None
-_global_agent: Optional[Any] = None # Replace Any with your actual Agent type if available globally
+# _global_agent: Optional[Any] = None # This can be reviewed/removed if not used elsewhere
+# The old _global_input_tracking_active (if it existed here) is replaced by the new ones below.
+
+# --- NEW Global variables for Recording Feature ---
 _global_input_tracking_active: bool = False
-# logger is defined after logging setup by: logger = logging.getLogger(__name__)
+_last_manual_trace_path: Optional[str] = None
+# Note: The old, separate _global_browser and _global_browser_context for recording have been removed.
 
 # --- NEW Global variable for the replay-specific context ---
 # This variable needs to be set by your UI logic when a suitable context is active.
@@ -157,6 +162,145 @@ async def ensure_browser_session(
             except Exception as e:logger.error(f"Error creating page: {e}",exc_info=True)
         if not(_ui_global_browser and _ui_global_browser_context and _ui_global_browser_context.pages): logger.warning("Session incomplete")
     return _ui_global_browser,_ui_global_browser_context
+
+# Refactored coroutine to start input tracking using shared context
+async def start_input_tracking_with_context():
+    global _ui_global_browser, _ui_global_browser_context  # Using shared UI globals
+    global _global_input_tracking_active, _last_manual_trace_path
+
+    status_update = ""
+    trace_path_display_update = _last_manual_trace_path or "No trace recorded yet." # Initial display for the hidden field
+    error_message = ""
+    start_button_interactive = True
+    stop_button_interactive = False
+
+    try:
+        logger.info("Attempting to start input tracking...")
+
+        # Ensure browser session using the shared mechanism
+        # This will populate _ui_global_browser and _ui_global_browser_context
+        browser, context = await ensure_browser_session(force_new_context_if_existing=False) 
+
+        if not browser or not context:
+            error_message = "Failed to ensure browser session for recording. Cannot start tracking."
+            logger.error(error_message)
+            return (
+                gr.update(value=error_message),
+                gr.update(interactive=True),
+                gr.update(interactive=False),
+                gr.update(value=trace_path_display_update),
+            )
+        
+        if _global_input_tracking_active:
+            status_update = "Input tracking is already active."
+            logger.warning(status_update)
+            start_button_interactive = False
+            stop_button_interactive = True
+            trace_path_display_update = "Recording... (Path will be shown on stop)"
+        else:
+            if not os.path.exists(MANUAL_TRACES_DIR):
+                os.makedirs(MANUAL_TRACES_DIR, exist_ok=True)
+            
+            logger.info(f"Calling start_input_tracking() on context: {context}")
+            await context.start_input_tracking()
+            
+            _global_input_tracking_active = True
+            status_update = "Input tracking started successfully."
+            trace_path_display_update = "Recording... (Path will be shown on stop)"
+            logger.info(status_update)
+            start_button_interactive = False
+            stop_button_interactive = True
+            
+    except Exception as e:
+        logger.error(f"Error in start_input_tracking_with_context: {e}", exc_info=True)
+        error_message = f"An unexpected error occurred: {str(e)}"
+    
+    final_status = status_update
+    if error_message:
+        final_status = f"{status_update} Error: {error_message}" if status_update and "already active" not in status_update else error_message
+        start_button_interactive = True 
+        stop_button_interactive = False
+        if "already active" in status_update :
+             start_button_interactive = False
+             stop_button_interactive = True
+
+    return (
+        gr.update(value=final_status),
+        gr.update(interactive=start_button_interactive),
+        gr.update(interactive=stop_button_interactive),
+        gr.update(value=trace_path_display_update),
+    )
+
+# Refactored coroutine to stop input tracking
+async def stop_input_tracking_with_context():
+    global _ui_global_browser_context # Using shared UI global
+    global _global_input_tracking_active, _last_manual_trace_path
+
+    status_message = ""
+    filepath_update = _last_manual_trace_path
+    trace_info_update = {"message": "No trace recorded or tracking not active."}
+
+    if not _ui_global_browser_context or not _global_input_tracking_active:
+        status_message = "Input tracking not active or browser context not available."
+        logger.warning(status_message)
+        if _last_manual_trace_path:
+            try:
+                trace_info_update = user_input_functions.get_file_info(_last_manual_trace_path)
+            except Exception as e_info_display:
+                logger.error(f"Error getting trace info for display (not active path): {e_info_display}")
+                trace_info_update = {"error": f"Could not load trace info: {str(e_info_display)}"}
+        return (
+            gr.update(value=status_message), 
+            gr.update(interactive=True), 
+            gr.update(interactive=False), 
+            gr.update(value=filepath_update),
+            gr.update(value=trace_info_update)
+        )
+    
+    try:
+        logger.info("Attempting to stop user input tracking via CustomBrowserContext...")
+        filepath = await _ui_global_browser_context.stop_input_tracking()
+        
+        _global_input_tracking_active = False 
+        if filepath:
+            _last_manual_trace_path = filepath 
+            filepath_update = filepath
+            status_message = f"Input tracking stopped. Trace saved to: {filepath}"
+            logger.info(status_message)
+            try:
+                trace_info_update = user_input_functions.get_file_info(filepath)
+            except Exception as e_info:
+                logger.error(f"Error getting trace info for display: {e_info}")
+                trace_info_update = {"error": f"Could not load trace info: {str(e_info)}"}
+        else:
+            status_message = "Input tracking stopped. No new events were recorded to save."
+            logger.info(status_message)
+            if _last_manual_trace_path:
+                 try:
+                    trace_info_update = user_input_functions.get_file_info(_last_manual_trace_path)
+                 except Exception as e_info_display_else:
+                    logger.error(f"Error getting trace info for display (no new file path): {e_info_display_else}")
+                    trace_info_update = {"error": f"Could not load trace info: {str(e_info_display_else)}"}
+            else:
+                 trace_info_update = {"message": "No trace file was saved in this or previous sessions."}
+
+        return (
+            gr.update(value=status_message), 
+            gr.update(value="▶️ Start Recording", interactive=True), 
+            gr.update(value="⏹️ Stop Recording", interactive=False), 
+            gr.update(value=filepath_update),
+            gr.update(value=trace_info_update)
+        )
+    except Exception as e:
+        logger.error(f"Exception during stop_input_tracking_with_context: {e}", exc_info=True)
+        status_message = f"Error stopping input tracking: {e}"
+        return (
+            gr.update(value=status_message), 
+            gr.update(interactive=not _global_input_tracking_active), 
+            gr.update(interactive=_global_input_tracking_active),    
+            gr.update(value=filepath_update), 
+            gr.update(value={"error": f"Error stopping tracking: {str(e)}"})
+        )
 
 async def stream_replay_ui(
     trace_path: str, 
@@ -293,7 +437,7 @@ async def stream_replay_ui(
             print(f"[WEBUI stream_replay_ui] Final flush: ui_async_q is empty.", flush=True)
             break
     
-    log_buffer = _accumulate_log("--- Replay process fully completed✨ ---")
+    log_buffer = _accumulate_log("--- Replay completed✨ ---")
     yield log_buffer
     logger.info("stream_replay_ui: Streaming finished.")
     print(f"[WEBUI stream_replay_ui] Yielded final 'Replay process fully completed'. Exiting function.", flush=True)
@@ -327,6 +471,56 @@ def create_ui(theme_name="Citrus"):
 
         with gr.Tabs() as tabs:
             # ... (Other Tabs: Settings, Prompt Agent, Record, etc.) ...
+
+            # New: Record tab
+            with gr.TabItem("🛑 Record", id=9):
+                
+                gr.Markdown("### 🛑 Record User Input")
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        input_track_status = gr.Textbox(
+                            label="Recording Status",
+                            value="Recording not started. Ensure browser is available (e.g., via Replay tab actions) or it will be launched on first record attempt.", # Initial message
+                            interactive=False,
+                            lines=2 # Allow a bit more space for messages
+                        )
+                    with gr.Column(scale=1):
+                        input_track_start_btn = gr.Button("▶️ Start Recording", variant="primary")
+                        input_track_stop_btn = gr.Button("⏹️ Stop Recording", variant="stop", interactive=False)
+
+                gr.Markdown("### 📜 Last Recorded Trace Info")
+                recorded_trace_info_display = gr.JSON(
+                    label="Last Recorded Trace Details",
+                    value={"message": "No trace recorded in this session yet."}
+                )
+                
+                # Hidden textbox to store/pass the path of the last recorded trace
+                # This might not be strictly necessary if stop_input_tracking_with_context directly updates recorded_trace_info_display
+                # and _last_manual_trace_path global is sufficient for state. But using it for explicitness from plan.
+                last_recorded_trace_path_hidden = gr.Textbox(visible=False, label="Last Recorded Trace Path Hidden")
+
+                input_track_start_btn.click(
+                    fn=start_input_tracking_with_context,
+                    inputs=[],
+                    outputs=[
+                        input_track_status, 
+                        input_track_start_btn, 
+                        input_track_stop_btn, 
+                        last_recorded_trace_path_hidden 
+                    ]
+                )
+                
+                input_track_stop_btn.click(
+                    fn=stop_input_tracking_with_context,
+                    inputs=[],
+                    outputs=[
+                        input_track_status, 
+                        input_track_start_btn, 
+                        input_track_stop_btn, 
+                        last_recorded_trace_path_hidden, 
+                        recorded_trace_info_display
+                    ]
+                )
 
             with gr.TabItem("▶️ Replay", id=10):
                 gr.Markdown("### 📂 Input Trace Files")
