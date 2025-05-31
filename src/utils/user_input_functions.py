@@ -1,6 +1,4 @@
 import sys
-print("USING USER_INPUT_FUNCTIONS", __file__)
-print(f"USER_INPUT_FUNCTIONS sys.path: {sys.path}")
 import os
 import json
 import logging
