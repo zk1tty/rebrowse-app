@@ -2,15 +2,20 @@ import pdb
 import pyperclip
 from pathlib import Path
 import shutil
-from typing import Optional, Type
+from typing import Optional, Type, Any 
 from pydantic import BaseModel
 from browser_use.agent.views import ActionResult
-from browser_use.browser.context import BrowserContext
-from browser_use.controller.service import Controller, DoneAction
+# BaseBrowserContext might still be needed if base Controller class uses it, or for type hints if some methods expect it.
+# For now, if only used by removed registered actions, it can be removed. Let's assume it can be removed for now.
+# from browser_use.browser.context import BrowserContext as BaseBrowserContext
+from browser_use.controller.service import Controller 
+# Sync Playwright imports
+from playwright.sync_api import Page as SyncPage, BrowserContext as SyncBrowserContext, TimeoutError as SyncPlaywrightTimeoutError # ADDED/MODIFIED
+
 from main_content_extractor import MainContentExtractor
 from browser_use.controller.views import (
     ClickElementAction,
-    DoneAction,
+    DoneAction, # Keep if used by base or other parts
     ExtractPageContentAction,
     GoToUrlAction,
     InputTextAction,
@@ -24,94 +29,24 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class CustomController(Controller):
-    """A controller that extends browser_use controllerfunctionality.
-
-    Attributes:
-        exclude_actions (list[str]): List of actions to exclude from the controller.
-        output_model (Optional[Type[BaseModel]]): Optional custom output model for the controller.
-        browser_context (Optional[BrowserContext]): The browser context this controller operates on.
-
-    Features:
-        - Clipboard operations (copy/paste)
-        - Browser keyboard simulation
-        - Standard browser actions
-        - Action exclusion capability
-        - Custom output model support
-    """
+class CustomControllerSync(Controller): # RENAMED CLASS
+    """A controller that extends browser_use controllerfunctionality using Sync Playwright API."""
+    
     def __init__(self, 
-                 browser_context: Optional[BrowserContext] = None,
+                 page: SyncPage, # CHANGED: Expects a SyncPage instance
                  exclude_actions: list[str] = [],
                  output_model: Optional[Type[BaseModel]] = None
                  ):
         super().__init__(exclude_actions=exclude_actions, output_model=output_model)
-        self.browser_context = browser_context
-        self._register_custom_actions()
+        self.page = page # Store the synchronous page
+        self.browser_context = page.context # Store its context (which is also sync)
+        # self._register_custom_actions() # Removed call
 
-    # TRY: clipboard actions
-    def _register_custom_actions(self):
-        """Register all custom browser actions"""
-
-        @self.registry.action("Copy text to clipboard")
-        def copy_to_clipboard(text: str):
-            pyperclip.copy(text)
-            return ActionResult(extracted_content=text)
-
-        @self.registry.action("Paste text from clipboard")
-        async def paste_from_clipboard(browser: BrowserContext, selector: str | None = None):
-            text = pyperclip.paste()
-            page = await browser.get_current_page()
-            if selector:
-                try:
-                    target_element = page.locator(selector).first
-                    # Ensure element is ready before trying to interact
-                    await target_element.wait_for(state="visible", timeout=3000) 
-                    await target_element.focus(timeout=1000)
-                    logger.info(f"Focused on selector '{selector}' for pasting.")
-                except Exception as e:
-                    logger.warning(f"Could not focus on selector '{selector}' for paste: {e}. Pasting into current focus.")
-            
-            # Types into the focused element (either the one from selector or pre-existing focus)
-            await page.keyboard.type(text)
-            return ActionResult(extracted_content=text)
-
-        @self.registry.action("Upload local file")
-        async def upload_local_file(browser: BrowserContext, selector: str, file_path: str):
-            page = await browser.get_current_page()
-            await page.locator(selector).set_input_files(file_path)
-            return ActionResult(extracted_content=file_path)
-
-        @self.registry.action("Download remote file")
-        async def download_remote_file(browser: BrowserContext, url: str, dest_dir: str, trigger_selector: str|None=None):
-            page = await browser.get_current_page()
-            async with page.expect_download() as dl_info:
-                if trigger_selector:
-                    await page.locator(trigger_selector).click()
-                else:
-                    # If no trigger selector, assume direct navigation initiates download
-                    # This might need adjustment if direct navigation doesn't always trigger a download for the given URL.
-                    await page.goto(url) # Consider if this should be page.goto(download_url_param) or similar
-            dl = await dl_info.value
-            # Ensure dest_dir exists, create if not (though Path.mkdir parents=True would also work)
-            # For simplicity, assuming dest_dir is a valid, existing directory or will be handled by user.
-            target = Path(dest_dir).expanduser() / dl.suggested_filename
-            await dl.save_as(target)
-            return ActionResult(extracted_content=str(target))
-
-    async def execute(self, action_name: str, **kwargs):
-        """
-        This method is called by TraceReplayer.
-        It directly implements the actions it knows how to replay, bypassing browser_use's execute_action.
-        """
-        logger.debug(f"CustomController.execute CALLED for action: '{action_name}', args: {kwargs}")
-
-        if not hasattr(self, 'browser_context') or not self.browser_context:
-            logger.error("CustomController.execute: self.browser_context is not available. Action cannot be executed.")
-            raise RuntimeError("CustomController.browser_context not set. Controller needs a BrowserContext to execute actions.")
-
-        page = await self.browser_context.get_current_page() # Get Playwright page from our CustomBrowserContext
+    def execute(self, action_name: str, **kwargs): # SYNC
+        logger.debug(f"CustomControllerSync.execute CALLED for action: '{action_name}', args: {kwargs}")
+        page = self.page # Use the stored synchronous page
         if not page:
-            logger.error("CustomController.execute: Could not get current page from browser_context.")
+            logger.error("CustomControllerSync.execute: self.page is not set (should have been in __init__).")
             raise RuntimeError("Failed to get current page for action execution.")
 
         if action_name == "Upload local file":
@@ -123,10 +58,8 @@ class CustomController(Controller):
             
             logger.info(f"Directly executing 'Upload local file': selector='{selector}', file_path='{file_path}'")
             try:
-                await page.locator(selector).set_input_files(file_path)
+                page.locator(selector).set_input_files(file_path) # SYNC
                 logger.info(f"Successfully set input files for selector '{selector}' with path '{file_path}'")
-                # ActionResult is part of browser_use, but replayer may not use the return value directly.
-                # For consistency with other actions if they were from browser_use, we can return it.
                 return ActionResult(extracted_content=f"Uploaded {Path(file_path).name} to {selector}")
             except Exception as e:
                 logger.error(f"Error during direct execution of 'Upload local file': {e}", exc_info=True)
@@ -154,7 +87,7 @@ class CustomController(Controller):
             dest_dir.mkdir(parents=True, exist_ok=True)
             final_dest_path = dest_dir / suggested_filename
 
-            original_url_for_logging = kwargs.get("url", "N/A") # Get original URL if present, just for logging
+            original_url_for_logging = kwargs.get("url", "N/A")
             logger.info(f"Replaying 'Download remote file' (original URL: {original_url_for_logging}): Copying '{source_path}' to '{final_dest_path}'")
             try:
                 shutil.copy(str(source_path), str(final_dest_path))
@@ -178,31 +111,30 @@ class CustomController(Controller):
                 raise
         
         elif action_name == "Paste text from clipboard":
-            selector = kwargs.get("selector") # Optional for paste
+            selector = kwargs.get("selector") 
             logger.info(f"Directly executing 'Paste text from clipboard' into selector: '{selector if selector else 'current focus'}'")
             try:
                 text_to_paste = pyperclip.paste()
                 if selector:
                     try:
                         target_element = page.locator(selector).first
-                        await target_element.wait_for(state="visible", timeout=3000)
-                        await target_element.focus(timeout=1000)
+                        target_element.wait_for(state="visible", timeout=3000) # SYNC
+                        target_element.focus(timeout=1000) # SYNC
                         logger.info(f"Focused on selector '{selector}' for pasting.")
                     except Exception as e_focus:
                         logger.warning(f"Could not focus on selector '{selector}' for paste: {e_focus}. Pasting into current page focus.")
-                await page.keyboard.type(text_to_paste)
+                page.keyboard.type(text_to_paste) # SYNC
                 return ActionResult(extracted_content=text_to_paste)
             except Exception as e:
                 logger.error(f"Error during direct execution of 'Paste text from clipboard': {e}", exc_info=True)
                 raise
-
-        # Add other direct action handlers here if TraceReplayer calls them
-        # via controller.execute("Some Other Action", ...)
-
         else:
-            logger.error(f"CustomController.execute received unhandled action_name: '{action_name}'. This controller only directly handles specific actions for replay.")
-            # If you want to try falling back to browser_use registry for other actions:
+            logger.error(f"CustomControllerSync.execute received unhandled action_name: '{action_name}'. This controller only directly handles specific actions for replay.")
+            # Fallback to registry if needed (this part requires careful review of browser_use registry's sync/async nature)
             # if hasattr(self.registry, 'execute_action') and callable(self.registry.execute_action):
-            #     logger.info(f"Falling back to self.registry.execute_action for '{action_name}'")
-            #     return await self.registry.execute_action(action_name, params={'browser': self.browser_context, **kwargs})
-            raise NotImplementedError(f"CustomController.execute does not handle action: '{action_name}'.")
+            #     logger.info(f"Attempting fallback to self.registry.execute_action for '{action_name}'")
+            #     # How self.registry.execute_action expects browser_context (sync/async) is key here.
+            #     # Assuming it might need a wrapper or the BaseBrowserContext if that's what it's typed for.
+            #     # This is a placeholder and might need adjustment based on browser_use library.
+            #     return self.registry.execute_action(action_name, params={'browser': self.browser_context, **kwargs}) 
+            raise NotImplementedError(f"CustomControllerSync.execute does not handle action: '{action_name}'.")
