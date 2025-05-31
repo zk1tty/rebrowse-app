@@ -12,6 +12,7 @@ from pathlib import Path
 from gradio.themes import Default, Soft, Glass, Monochrome, Ocean, Origin, Base, Citrus
 import pandas as pd
 from playwright.async_api import BrowserContext as PlaywrightBrowserContextType, Browser as PlaywrightBrowser
+from playwright.async_api import Browser # For isinstance check
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -22,8 +23,6 @@ from task_templates import TASK_TEMPLATES
 # --- Project-specific global imports needed by replay logic ---
 from src.browser.custom_browser import CustomBrowser
 from src.browser.custom_context import CustomBrowserContext
-from src.controller.custom_controller import CustomController
-from src.utils.replayer import TraceReplayer, load_trace, Drift
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig
 from browser_use.browser.browser import BrowserConfig
 from src.utils.trace_utils import get_upload_file_names_from_trace # ADDED
@@ -31,12 +30,12 @@ from src.utils import user_input_functions # ADDED for get_file_info
 from browser_use.browser.context import BrowserContextWindowSize # ADDED IMPORT
 
 # --- Global Logging Setup ---
-from src.utils.replay_streaming_manager import start_replay_async_thread_mgr, log_q as manager_log_q # Import new function
+from src.utils.replay_streaming_manager import start_replay_sync_api_in_thread, log_q as manager_log_q
 
 # BasicConfig should still be called once in webui.py for general console logging
 if not logging.getLogger().handlers and not logging.getLogger().hasHandlers():
     logging.basicConfig(
-        level=logging.DEBUG, 
+        level=logging.INFO, 
         format='%(asctime)s - %(name)s - %(levelname)s - [%(module)s.%(funcName)s:%(lineno)d] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
@@ -44,10 +43,9 @@ else:
     if logging.getLogger().getEffectiveLevel() > logging.DEBUG:
         logging.getLogger().setLevel(logging.DEBUG)
 
-# Specific logger levels are still set in webui.py for console output
-logging.getLogger('src.utils.replayer').setLevel(logging.DEBUG) # For console
-logging.getLogger('src.controller.custom_controller').setLevel(logging.DEBUG) # For console
-# ... other specific logger.setLevel calls for console ...
+# --- Specific logger levels for DEBUG ---
+logging.getLogger('src.utils.replayer').setLevel(logging.DEBUG)
+logging.getLogger('src.controller.custom_controller').setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__) # Logger for webui.py itself
 logger.info("WebUI: Base logging configured. UI log: ReplayStreamingManager.")
@@ -220,20 +218,44 @@ async def stream_replay_ui(
         print(f"[WEBUI stream_replay_ui] Yielded SESSION ERROR. Returning.", flush=True)
         return # Stop this async generator
     
-    log_buffer = _accumulate_log("Browser session ensured. Starting replay thread...")
+    log_buffer = _accumulate_log("🔌 Browser session ensured. Starting replay thread...")
     yield log_buffer
     print(f"[WEBUI stream_replay_ui] Yielded 'Browser session ensured'.", flush=True)
 
     # Restore Replay Worker Thread Starting Logic
     ui_async_q: asyncio.Queue[str] = asyncio.Queue()
     done_event = threading.Event()
-    print(f"[WEBUI stream_replay_ui] Initialized ui_async_q and done_event.", flush=True)
+    main_loop = asyncio.get_running_loop() # Get current (main) event loop
+    print(f"[WEBUI stream_replay_ui] Initialized ui_async_q, done_event, and got main_loop: {main_loop}.", flush=True)
 
-    logger.debug(f"stream_replay_ui: Calling start_replay_async_thread_mgr for {trace_path}")    
-    print(f"[WEBUI stream_replay_ui] Calling start_replay_async_thread_mgr with trace_path={trace_path}, speed={speed}, files={override_files_paths}", flush=True)
-    done_event = start_replay_async_thread_mgr(trace_path, speed, override_files_paths, live_browser, live_context, ui_async_q)
-    print(f"[WEBUI stream_replay_ui] start_replay_async_thread_mgr call completed. Returned done_event: {done_event}", flush=True)
-    log_buffer = _accumulate_log("Replay thread started. Monitoring logs...")
+    # Get CDP WebSocket endpoint from the live_browser
+    cdp_url_for_thread = None
+    if live_browser and hasattr(live_browser, 'config') and live_browser.config and hasattr(live_browser.config, 'cdp_url') and live_browser.config.cdp_url:
+        cdp_url_for_thread = live_browser.config.cdp_url
+        print(f"[WEBUI stream_replay_ui] Retrieved CDP URL for thread: {cdp_url_for_thread}", flush=True)
+    else:
+        print("[WEBUI stream_replay_ui] ERROR: Could not retrieve cdp_url from live_browser.config.cdp_url.", flush=True)
+
+    if not cdp_url_for_thread:
+        err_msg_cdp = "Error: CDP URL for thread is not available. Cannot connect worker thread to browser."
+        logger.error(err_msg_cdp)
+        log_buffer = _accumulate_log(f"CDP ERROR: {err_msg_cdp}")
+        yield log_buffer
+        print(f"[WEBUI stream_replay_ui] Yielded CDP ERROR. Returning.", flush=True)
+        return
+
+    logger.debug(f"stream_replay_ui: Calling start_replay_sync_api_in_thread for {trace_path}")    
+    print(f"[WEBUI stream_replay_ui] Calling start_replay_sync_api_in_thread with trace_path={trace_path}, speed={speed}, files={override_files_paths}", flush=True)
+    done_event = start_replay_sync_api_in_thread(
+        trace_path, 
+        speed, 
+        override_files_paths, 
+        ui_async_q, 
+        main_loop,
+        cdp_url_for_thread  # Pass the original CDP URL (e.g., http://localhost:9222)
+    )
+    print(f"[WEBUI stream_replay_ui] start_replay_sync_api_in_thread call completed. Returned done_event: {done_event}", flush=True)
+    log_buffer = _accumulate_log("--- Replay thread started ---")
     yield log_buffer
     print(f"[WEBUI stream_replay_ui] Yielded 'Replay thread started'. Beginning monitor loop.", flush=True)
 
@@ -246,7 +268,6 @@ async def stream_replay_ui(
             # Drain queue quickly
             while True: 
                 line = ui_async_q.get_nowait()
-                print(f"[WEBUI stream_replay_ui] Got line from ui_async_q: '{line}'", flush=True)
                 log_buffer = _accumulate_log(line)
                 yield log_buffer
                 ui_async_q.task_done() # Important for asyncio.Queue if joined later, good practice
@@ -265,7 +286,6 @@ async def stream_replay_ui(
     while not ui_async_q.empty():
         try:
             line = ui_async_q.get_nowait()
-            print(f"[WEBUI stream_replay_ui] Final flush: Got line from ui_async_q: '{line}'", flush=True)
             log_buffer = _accumulate_log(line)
             yield log_buffer
             ui_async_q.task_done()
@@ -273,7 +293,7 @@ async def stream_replay_ui(
             print(f"[WEBUI stream_replay_ui] Final flush: ui_async_q is empty.", flush=True)
             break
     
-    log_buffer = _accumulate_log("--- Replay process fully completed ---")
+    log_buffer = _accumulate_log("--- Replay process fully completed✨ ---")
     yield log_buffer
     logger.info("stream_replay_ui: Streaming finished.")
     print(f"[WEBUI stream_replay_ui] Yielded final 'Replay process fully completed'. Exiting function.", flush=True)
@@ -410,8 +430,8 @@ def create_ui(theme_name="Citrus"):
                 minimal_test_btn.click(
                     fn=minimal_stream_test_fn,
                     outputs=minimal_test_output,
-                    queue=True,                    # <- keep the queue on
-                    concurrency_limit=None         # behaves like queue=False performance-wise
+                    queue=True,
+                    concurrency_limit=None # behaves like queue=False performance
                 )
         
     return demo
