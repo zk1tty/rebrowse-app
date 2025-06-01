@@ -49,7 +49,7 @@ from pydantic import BaseModel
 from json_repair import repair_json
 from src.utils.agent_state import AgentState
 from src.utils.replayer import TraceReplayer, load_trace, Drift
-from src.utils.user_input_tracker import UserInputTracker
+from src.utils.recorder import Recorder
 
 from .custom_message_manager import CustomMessageManager, CustomMessageManagerSettings
 from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentState as CustomAgentStateType, CustomAgentBrain
@@ -721,33 +721,40 @@ class CustomAgent(Agent):
             if task_input != self.task:
                 logger.info(f"Autonomous run: Task updated from '{self.task}' to '{task_input}'")
                 self.task = task_input
-                self._message_manager.task = self.task # Update message manager's task
-                 # Reset or update initial messages in message manager if task significantly changes
-                if hasattr(self._message_manager.state.history, "history") and isinstance(self._message_manager.state.history.history, list): # type: ignore[attr-defined]
-                    self._message_manager.state.history.history.clear() # type: ignore[attr-defined]
-                
-                if hasattr(self._message_manager, "add_initial_messages"):
-                    self._message_manager.add_initial_messages(self.task, self.add_infos) # type: ignore
+                # self._message_manager.task = self.task # add_new_task will set this
+
+                # Clear existing messages from the history
+                if hasattr(self._message_manager.state, 'history') and hasattr(self._message_manager.state.history, 'messages') and isinstance(self._message_manager.state.history.messages, list):
+                    logger.debug("Clearing message history list as task has changed.")
+                    self._message_manager.state.history.messages.clear()
+                    # Also reset token count if possible/necessary, assuming it's managed alongside messages
+                    if hasattr(self._message_manager.state.history, 'current_tokens'):
+                        self._message_manager.state.history.current_tokens = 0 
                 else:
-                    logger.warning("CustomMessageManager does not have add_initial_messages method.")
-            elif not isinstance(task_input, str): # AGENT_HEALTH_LOG: This condition might be an issue if task_input is not ReplayTaskDetails either
-                 logger.warning(f"Autonomous run: task_input is not a string ({type(task_input)}). Using existing task: {self.task}")
+                    logger.warning("Could not clear message history messages list for new task.")
 
+                # Inform the message manager about the new task
+                if hasattr(self._message_manager, "add_new_task") and callable(self._message_manager.add_new_task):
+                    logger.debug(f"Calling message_manager.add_new_task() with new task: {self.task[:70]}...")
+                    self._message_manager.add_new_task(self.task) 
+                    # add_infos is not directly used by add_new_task, but could be part of the task string construction if needed earlier.
+                    # For now, we assume self.task (already updated from task_input) contains all necessary info.
+                else:
+                    logger.warning(f"CustomMessageManager does not have a callable 'add_new_task' method. New task may not be properly set in message manager.")
 
-            logger.info(f"Starting autonomous agent run for task: '{self.task}', max_steps: {max_steps}") # AGENT_HEALTH_LOG
-            logger.debug(f"CustomAgent: About to call super().run(max_steps={max_steps})") # DEBUG
-            # Use the base Agent.run() method for the main loop and its own try/finally for telemetry etc.
-            history: Optional[AgentHistoryList] = await super().run(max_steps=max_steps) # AGENT_HEALTH_LOG: Pass self.task to super().run() if it expects it
-            logger.debug(f"CustomAgent: super().run() returned. History is None: {history is None}") # DEBUG
+            logger.info(f"Starting autonomous agent run for task: '{self.task}', max_steps: {max_steps}") 
+            logger.debug(f"CustomAgent: About to call super().run('{self.task}', {max_steps}, {self.controller})") 
+            history: Optional[AgentHistoryList] = await super().run(self.task, max_steps=max_steps, controller=self.controller) 
+            logger.debug(f"CustomAgent: super().run() returned. History is None: {history is None}")
             if history and hasattr(history, 'history'):
                 logger.debug(f"CustomAgent: History length: {len(history.history) if history.history else 0}") # DEBUG
             # AGENT_HEALTH_LOG - After super().run()
             logger.info(f"CustomAgent - Autonomous run finished. Result from super().run(): {'History object received' if history else 'No history object (None)'}")
 
 
-            # After autonomous run, UserInputTracker history persistence is handled by the UI's explicit stop recording.
+            # After autonomous run, Recorder history persistence is handled by the UI's explicit stop recording.
             # The agent itself, when run with a string task, should not be responsible for this.
-            # Removing the block that attempted to save UserInputTracker traces here.
+            # Removing the block that attempted to save Recorder traces here.
             
             return history
 
