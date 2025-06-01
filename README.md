@@ -65,42 +65,65 @@ cd rebrowse-app
 ```
 
 ### Step 2: Set Up Python Environment
+1. case: MacOS
+    ```bash
+    # Install uv:
+    curl -LsSf https://astral.sh/uv/install.sh | sh
 
-- We recommend using uv as recommended in the [browser-use documentation](https://docs.browser-use.com/quickstart).
-- You can download uv from [here](https://docs.astral.sh/uv/#installation)
+    # Create and activate a virtual environment
+    uv venv --python 3.11
 
-```bash
-# Create and activate a virtual environment
-# We recomended to use uv.
-uv venv --python 3.11
+    # activate venv:
+    source .venv/bin/activate
 
-# For Mac/Linux:
-source .venv/bin/activate
+    # Install python dependencies
+    uv pip install -r requirements.txt
+    ```
 
-# For Windows:
-.venv\Scripts\activate
+2. case: Windows
+    ```bash
+    # Install uv:
+      powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# Install dependencies
-uv pip install -r requirements.txt
-```
+    # Create and activate a virtual environment
+    uv venv --python 3.11
+
+    # activate venv:
+    .venv\Scripts\activate
+
+    # Install python dependencies
+    uv pip install -r requirements.txt
+    ```
+
 
 ### Step 3: Configure Environment Variables
-1. Copy the `.env.example` file to a new file named `.env` in the project root.
+1. Create a new Chrome profile to be used by rebrowse
+    ```
+    mkdir -p custom_chrome_profile
+    ```
+2. Copy the `.env.example` file to a new file named `.env` in the project root.
+    ```
+    cp .env.example .env
+    ```
 
-2. Open `.env` file, and add API key and chrome paths
+3. Open `.env` file
+    ```
+    vim .env
+    ```
+
+4. add API key and chrome paths
     ```bash
     # LLM API Keys
     OPENAI_API_KEY=your_openai_api_key
     ```
 
     ```bash
-    # Chrome Configuration
-    # Note: If you are not a macOS user, please identify your Chrome application path:
     # - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
     # - Linux: `/usr/bin/google-chrome`
     CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    # replace {username}
-    CHROME_USER_DATA="/Users/{username}/Library/Application Support/Google/Chrome"
+
+    # ⚠️ Replace {username}
+    CHROME_USER_DATA="/Users/{username}/Projects/rebrowse-app/custom_chrome_profile"
     CHROME_CDP_URL="http://localhost:9222"
     ```
 ### Step 4: Close all open Chrome tabs. IMPORTANT!!
@@ -128,29 +151,23 @@ The application will be available at `http://127.0.0.1:7860`
 - DO NOT use Chrome to open this web app.
 - Open Safari or FIrefox, and go to "http://127.0.0.1:7860"
 
-
 ### Step 7: Run a clean Chrome with CDP session
   
 ⚠️ I am temporarily making the test profile on the same 
 project file, and name it `/custom_chrome_profile` for debugging purposes.
 
-1. Create a new, clean Chrome profile
-    ```
-    mkdir -p custom_chrome_profile
-    ```
-
-2. Run this Chrome using this new profile.
+1. Run this Chrome using the new profile.
     Configuration details to connect to your own Chrome are [here](https://docs.browser-use.com/customize/real-browser). 
     
     ```bash
     sh run_custom_chrome.sh
     ```
 
-3. Make sure that the DevTools WebSocket session is available
+2. Make sure that the DevTools WebSocket session is available
     ```
     DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
     ```
-4. Log in to web apps on the new Chrome profile
+3. Log in to web apps on the new Chrome profile
    In this process, you will create a new Chrome profile to be used by browser-agents.
     - log in to your web accounts: X, LinkedIn, Youtube, etc.
     - If the browser agent can skip this process, it will be easier to handle executions.
