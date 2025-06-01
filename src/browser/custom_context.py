@@ -1,5 +1,5 @@
 from __future__ import annotations
-import logging, time, asyncio
+import logging, time, asyncio, inspect
 from pathlib import Path
 from typing import Optional
 
@@ -7,10 +7,22 @@ from browser_use.browser.browser import Browser # Import Browser for type hintin
 from browser_use.browser.context import BrowserContext, BrowserContextConfig # Import base class and its config
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig # Specific config for this app
 
-from src.utils.recorder import Recorder
-from src.utils.replayer import TraceReplayerSync, Drift, load_trace # Updated import
+logger = logging.getLogger(__name__) # Define logger for this module
 
-logger = logging.getLogger(__name__)
+logger.debug(f"custom_context.py importing Recorder. Timestamp: {time.time()}")
+from src.utils.recorder import Recorder
+logger.debug(f"Recorder imported in custom_context.py. Timestamp: {time.time()}")
+if Recorder:
+    init_method = getattr(Recorder, '__init__', None)
+    if init_method:
+        sig = inspect.signature(init_method)
+        logger.debug(f"Signature of imported Recorder.__init__ in custom_context.py: {sig}")
+    else:
+        logger.debug("Recorder.__init__ method not found on imported Recorder class in custom_context.py")
+else:
+    logger.debug("Recorder could not be imported in custom_context.py")
+
+from src.utils.replayer import TraceReplayerSync, Drift, load_trace # Updated import
 
 class CustomBrowserContext(BrowserContext):
     """Wrapper around a Playwright BrowserContext to add record/replay helpers."""
@@ -138,26 +150,24 @@ class CustomBrowserContext(BrowserContext):
 
     # ---------------- recording API -----------------------
 
-    async def start_input_tracking(self): 
+    async def start_input_tracking(self, event_log_queue: Optional[asyncio.Queue] = None):
         await self._ensure_dom_bridge()
 
         current_pages = self.pages
         page_to_use = None
 
         if current_pages:
-            # Prefer non-devtools, non-chrome internal pages
             content_pages = [
                 p for p in current_pages 
                 if p.url and 
                    not p.url.startswith("devtools://") and 
                    not p.url.startswith("chrome://") and 
-                   not p.url.startswith("about:") # Also exclude about:blank from being primary unless it's the only one after filtering
+                   not p.url.startswith("about:")
             ]
             if content_pages:
                 page_to_use = content_pages[0]
                 logger.debug(f"Using existing content page for tracking: {page_to_use.url}")
             else:
-                # If no "ideal" content pages, check if there are any pages at all (e.g. only about:blank or chrome://newtab)
                 non_devtools_pages = [p for p in current_pages if p.url and not p.url.startswith("devtools://")]
                 if non_devtools_pages:
                     page_to_use = non_devtools_pages[0]
@@ -165,26 +175,40 @@ class CustomBrowserContext(BrowserContext):
                 else:
                     logger.warning("No suitable (non-devtools) pages found. Creating a new page.")
                     page_to_use = await self.new_page()
-                    if page_to_use: await page_to_use.goto("about:blank") # Navigate to a blank page
+                    if page_to_use: await page_to_use.goto("about:blank")
         else:
             logger.debug("No pages in current context. Creating a new page.")
             page_to_use = await self.new_page()
-            if page_to_use: await page_to_use.goto("about:blank") # Navigate to a blank page
+            if page_to_use: await page_to_use.goto("about:blank")
         
         if not page_to_use:
             logger.error("Could not get or create a suitable page for input tracking. Tracking will not start.")
+            if event_log_queue:
+                try:
+                    event_log_queue.put_nowait("⚠️ Error: Could not get or create a page for recording.")
+                except asyncio.QueueFull:
+                    logger.warning("UI event log queue full when logging page creation error.")
             return
 
         if not self.recorder: # Initialize Recorder if it doesn't exist
             logger.debug(f"Initializing Recorder for page: {page_to_use.url}")
-            self.recorder = Recorder(context=self._ctx, page=page_to_use)
-            # The Recorder.start_tracking() will call _setup_page_listeners for this page_to_use
+            # REVERTED: Pass event_log_queue to Recorder constructor
+            self.recorder = Recorder(context=self._ctx, page=page_to_use, event_log_queue=event_log_queue)
+            # REMOVED: Warning about potential signature mismatch is no longer needed if server restart fixed it.
             await self.recorder.start_tracking() 
         elif not self.recorder.is_recording: # If tracker exists but not recording
             logger.debug(f"Re-activating recording on existing input tracker. Ensuring it targets page: {page_to_use.url}")
-            self.recorder.page = page_to_use # Explicitly update the page on the existing tracker
+            self.recorder.page = page_to_use
             self.recorder.current_url = page_to_use.url
-            await self.recorder.start_tracking() # This will call _setup_page_listeners for the (potentially new) page
+            # REVERTED: Ensure the existing recorder instance also gets the queue if it didn't have it.
+            if event_log_queue and not (hasattr(self.recorder, 'event_log_queue') and self.recorder.event_log_queue):
+                if hasattr(self.recorder, 'event_log_queue'):
+                    self.recorder.event_log_queue = event_log_queue
+                    logger.debug("Recorder event_log_queue updated on existing recorder instance.")
+                else:
+                    # This case should ideally not happen if Recorder class is consistent
+                    logger.warning("Attempted to set event_log_queue on a Recorder instance lacking the attribute.")
+            await self.recorder.start_tracking()
         else: # Tracker exists and is recording
             if self.recorder.page != page_to_use:
                 if page_to_use: # Explicitly check page_to_use is not None here
