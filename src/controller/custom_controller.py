@@ -29,7 +29,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class CustomControllerSync(Controller): # RENAMED CLASS
+class CustomControllerSync(Controller):
     """A controller that extends browser_use controllerfunctionality using Sync Playwright API."""
     
     def __init__(self, 
