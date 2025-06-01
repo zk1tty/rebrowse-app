@@ -51,6 +51,13 @@ logging.getLogger('src.controller.custom_controller').setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__) # Logger for webui.py itself
 logger.info("WebUI: Base logging configured. UI log: ReplayStreamingManager.")
 
+# --- NEW Global Queue for Recorder Event Logs ---
+RECORDER_EVENT_LOG_Q: asyncio.Queue[str] = asyncio.Queue()
+
+# --- Global Constants ---
+MANUAL_TRACES_DIR = "./tmp/input_tracking"
+
+# --- Global Helper Functions (e.g. trace file listing) ---
 def refresh_traces(): 
     logger.info("refresh_traces called")
     try:
@@ -73,9 +80,8 @@ def refresh_traces():
     except Exception as e:
         logger.error(f"Error in refresh_traces: {e}", exc_info=True)
     return pd.DataFrame(columns=["Name", "Created", "Size", "Events"]), []
-                        
+
 # --- Global Browser/Context Variables ---
-# These are managed by the UI and other parts of the application.
 _ui_global_browser: Optional[CustomBrowser] = None
 _ui_global_browser_context: Optional[CustomBrowserContext] = None
 # _global_agent: Optional[Any] = None # This can be reviewed/removed if not used elsewhere
@@ -163,191 +169,213 @@ async def ensure_browser_session(
         if not(_ui_global_browser and _ui_global_browser_context and _ui_global_browser_context.pages): logger.warning("Session incomplete")
     return _ui_global_browser,_ui_global_browser_context
 
-# Refactored coroutine to start input tracking using shared context
-async def start_input_tracking_with_context():
-    global _ui_global_browser, _ui_global_browser_context  # Using shared UI globals
-    global _global_input_tracking_active, _last_manual_trace_path
+# Refactored to be a regular async function, sends logs to RECORDER_EVENT_LOG_Q
+async def start_input_tracking_with_context() -> Tuple[Any, ...]:
+    global _ui_global_browser_context # Uses the shared context populated by ensure_browser_session
+    global _global_input_tracking_active, _last_manual_trace_path, RECORDER_EVENT_LOG_Q
 
-    status_update = ""
-    trace_path_display_update = _last_manual_trace_path or "No trace recorded yet." # Initial display for the hidden field
-    error_message = ""
-    start_button_interactive = True
-    stop_button_interactive = False
+    def _log_to_q(msg: str, is_error: bool = False):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        formatted_msg = f"[{timestamp}] {msg}"
+        if is_error: logger.error(msg, exc_info=True if "exception" in msg.lower() or "error" in msg.lower() else False)
+        else: logger.info(msg) # Keep internal logging
+        try:
+            RECORDER_EVENT_LOG_Q.put_nowait(formatted_msg)
+        except asyncio.QueueFull:
+            logger.warning(f"RECORDER_EVENT_LOG_Q full. Dropped: {formatted_msg}")
+
+    status_update_val = "Initiating recording..."
+    trace_path_display_val = _last_manual_trace_path or "No trace recorded yet."
+    start_btn_interactive_val = False 
+    stop_btn_interactive_val = False
+    _log_to_q("Attempting to start input tracking...")
 
     try:
-        logger.info("Attempting to start input tracking...")
+        _log_to_q("Ensuring browser session...")
+        browser, context = await ensure_browser_session(force_new_context_if_existing=False)
 
-        # Ensure browser session using the shared mechanism
-        # This will populate _ui_global_browser and _ui_global_browser_context
-        browser, context = await ensure_browser_session(force_new_context_if_existing=False) 
-
-        if not browser or not context:
-            error_message = "Failed to ensure browser session for recording. Cannot start tracking."
-            logger.error(error_message)
+        if not browser or not context: # context here is the local one from ensure_browser_session
+            status_update_val = "Failed to ensure browser session for recording."
+            _log_to_q(status_update_val, is_error=True)
             return (
-                gr.update(value=error_message),
-                gr.update(interactive=True),
+                gr.update(value=status_update_val),
+                gr.update(interactive=True), # Allow retry
                 gr.update(interactive=False),
-                gr.update(value=trace_path_display_update),
+                gr.update(value=trace_path_display_val),
             )
         
+        _ui_global_browser_context = context # Ensure global is set with the successfully obtained context
+        _log_to_q("Browser session ensured.")
+
         if _global_input_tracking_active:
-            status_update = "Input tracking is already active."
-            logger.warning(status_update)
-            start_button_interactive = False
-            stop_button_interactive = True
-            trace_path_display_update = "Recording... (Path will be shown on stop)"
+            status_update_val = "Input tracking is already active."
+            _log_to_q(status_update_val)
+            start_btn_interactive_val = False
+            stop_btn_interactive_val = True
+            trace_path_display_val = "Recording... (Path will be shown on stop)"
         else:
             if not os.path.exists(MANUAL_TRACES_DIR):
                 os.makedirs(MANUAL_TRACES_DIR, exist_ok=True)
+                _log_to_q(f"Created recordings directory: {MANUAL_TRACES_DIR}")
             
-            logger.info(f"Calling start_input_tracking() on context: {context}")
-            await context.start_input_tracking()
+            _log_to_q(f"Calling start_input_tracking() on context id: {id(_ui_global_browser_context)}...")
+            await _ui_global_browser_context.start_input_tracking(event_log_queue=RECORDER_EVENT_LOG_Q)
+            # Recorder itself will put "Recording started." message in the queue now.
             
             _global_input_tracking_active = True
-            status_update = "Input tracking started successfully."
-            trace_path_display_update = "Recording... (Path will be shown on stop)"
-            logger.info(status_update)
-            start_button_interactive = False
-            stop_button_interactive = True
+            status_update_val = "Input tracking started. See logs for event details."
+            # _log_to_q is handled by Recorder: ("Recording started.")
+            trace_path_display_val = "Recording... (Path will be shown on stop)"
+            start_btn_interactive_val = False
+            stop_btn_interactive_val = True
             
     except Exception as e:
-        logger.error(f"Error in start_input_tracking_with_context: {e}", exc_info=True)
-        error_message = f"An unexpected error occurred: {str(e)}"
+        status_update_val = f"Error starting input tracking: {str(e)}"
+        _log_to_q(f"Exception during start_input_tracking_with_context: {e}", is_error=True)
+        start_btn_interactive_val = True 
+        stop_btn_interactive_val = False
+        _global_input_tracking_active = False
     
-    final_status = status_update
-    if error_message:
-        final_status = f"{status_update} Error: {error_message}" if status_update and "already active" not in status_update else error_message
-        start_button_interactive = True 
-        stop_button_interactive = False
-        if "already active" in status_update :
-             start_button_interactive = False
-             stop_button_interactive = True
-
     return (
-        gr.update(value=final_status),
-        gr.update(interactive=start_button_interactive),
-        gr.update(interactive=stop_button_interactive),
-        gr.update(value=trace_path_display_update),
+        gr.update(value=status_update_val),
+        gr.update(interactive=start_btn_interactive_val),
+        gr.update(interactive=stop_btn_interactive_val),
+        gr.update(value=trace_path_display_val),
     )
 
-# Refactored coroutine to stop input tracking
-async def stop_input_tracking_with_context():
-    global _ui_global_browser_context # Using shared UI global
-    global _global_input_tracking_active, _last_manual_trace_path
+# Refactored to be a regular async function, sends logs to RECORDER_EVENT_LOG_Q
+async def stop_input_tracking_with_context() -> Tuple[Any, ...]:
+    global _ui_global_browser_context
+    global _global_input_tracking_active, _last_manual_trace_path, RECORDER_EVENT_LOG_Q
 
-    status_message = ""
-    filepath_update = _last_manual_trace_path
-    trace_info_update = {"message": "No trace recorded or tracking not active."}
+    def _log_to_q(msg: str, is_error: bool = False):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        formatted_msg = f"[{timestamp}] {msg}"
+        if is_error: logger.error(msg, exc_info=True if "exception" in msg.lower() or "error" in msg.lower() else False)
+        else: logger.info(msg)
+        try:
+            RECORDER_EVENT_LOG_Q.put_nowait(formatted_msg)
+        except asyncio.QueueFull:
+            logger.warning(f"RECORDER_EVENT_LOG_Q full. Dropped: {formatted_msg}")
+
+    status_message_val = "Initiating stop sequence..."
+    filepath_update_val = _last_manual_trace_path
+    trace_info_update_val = {"message": "No trace recorded or tracking not active."}
+    start_btn_interactive_val = False 
+    stop_btn_interactive_val = False 
+
+    if _last_manual_trace_path:
+        try:
+            trace_info_update_val = user_input_functions.get_file_info(_last_manual_trace_path)
+        except Exception as e_info_initial:
+            trace_info_update_val = {"error": f"Could not load info for last trace: {str(e_info_initial)}"}
+            _log_to_q(f"Error loading initial trace info: {e_info_initial}", is_error=True)
+    
+    _log_to_q("Attempting to stop input tracking...")
 
     if not _ui_global_browser_context or not _global_input_tracking_active:
-        status_message = "Input tracking not active or browser context not available."
-        logger.warning(status_message)
-        if _last_manual_trace_path:
-            try:
-                trace_info_update = user_input_functions.get_file_info(_last_manual_trace_path)
-            except Exception as e_info_display:
-                logger.error(f"Error getting trace info for display (not active path): {e_info_display}")
-                trace_info_update = {"error": f"Could not load trace info: {str(e_info_display)}"}
+        status_message_val = "Input tracking not active or browser context not available."
+        _log_to_q(status_message_val, is_error=True)
+        start_btn_interactive_val = True 
+        stop_btn_interactive_val = False 
         return (
-            gr.update(value=status_message), 
-            gr.update(interactive=True), 
-            gr.update(interactive=False), 
-            gr.update(value=filepath_update),
-            gr.update(value=trace_info_update)
+            gr.update(value=status_message_val), 
+            gr.update(interactive=start_btn_interactive_val), 
+            gr.update(interactive=stop_btn_interactive_val), 
+            gr.update(value=filepath_update_val),
+            gr.update(value=trace_info_update_val) 
         )
     
     try:
-        logger.info("Attempting to stop user input tracking via CustomBrowserContext...")
+        _log_to_q("Calling stop_input_tracking() on context...")
         filepath = await _ui_global_browser_context.stop_input_tracking()
-        
+        # Recorder will put "Recording stopped." into queue.
         _global_input_tracking_active = False 
+
         if filepath:
             _last_manual_trace_path = filepath 
-            filepath_update = filepath
-            status_message = f"Input tracking stopped. Trace saved to: {filepath}"
-            logger.info(status_message)
+            filepath_update_val = filepath
+            status_message_val = f"Input tracking stopped. Trace saved to: {filepath}"
+            _log_to_q(f"Trace saved: {filepath}")
             try:
-                trace_info_update = user_input_functions.get_file_info(filepath)
+                trace_info_update_val = user_input_functions.get_file_info(filepath)
+                _log_to_q(f"Successfully loaded info for new trace: {filepath}")
             except Exception as e_info:
-                logger.error(f"Error getting trace info for display: {e_info}")
-                trace_info_update = {"error": f"Could not load trace info: {str(e_info)}"}
+                _log_to_q(f"Error getting trace info for display: {e_info}", is_error=True)
+                trace_info_update_val = {"error": f"Could not load trace info: {str(e_info)}"}
         else:
-            status_message = "Input tracking stopped. No new events were recorded to save."
-            logger.info(status_message)
+            status_message_val = "Input tracking stopped. No new events were recorded to save."
+            _log_to_q(status_message_val) # Also log this to queue
             if _last_manual_trace_path:
                  try:
-                    trace_info_update = user_input_functions.get_file_info(_last_manual_trace_path)
+                    trace_info_update_val = user_input_functions.get_file_info(_last_manual_trace_path)
                  except Exception as e_info_display_else:
-                    logger.error(f"Error getting trace info for display (no new file path): {e_info_display_else}")
-                    trace_info_update = {"error": f"Could not load trace info: {str(e_info_display_else)}"}
+                    _log_to_q(f"Error getting trace info (no new file path): {e_info_display_else}", is_error=True)
+                    trace_info_update_val = {"error": f"Could not load trace info: {str(e_info_display_else)}"}
             else:
-                 trace_info_update = {"message": "No trace file was saved in this or previous sessions."}
+                 trace_info_update_val = {"message": "No trace file was saved in this or previous sessions."}
+        
+        start_btn_interactive_val = True
+        stop_btn_interactive_val = False
 
-        return (
-            gr.update(value=status_message), 
-            gr.update(value="▶️ Start Recording", interactive=True), 
-            gr.update(value="⏹️ Stop Recording", interactive=False), 
-            gr.update(value=filepath_update),
-            gr.update(value=trace_info_update)
-        )
     except Exception as e:
-        logger.error(f"Exception during stop_input_tracking_with_context: {e}", exc_info=True)
-        status_message = f"Error stopping input tracking: {e}"
-        return (
-            gr.update(value=status_message), 
-            gr.update(interactive=not _global_input_tracking_active), 
-            gr.update(interactive=_global_input_tracking_active),    
-            gr.update(value=filepath_update), 
-            gr.update(value={"error": f"Error stopping tracking: {str(e)}"})
-        )
+        status_message_val = f"Error stopping input tracking: {str(e)}"
+        _log_to_q(f"Exception during stop_input_tracking_with_context: {e}", is_error=True)
+        start_btn_interactive_val = not _global_input_tracking_active 
+        stop_btn_interactive_val = _global_input_tracking_active    
+        # trace_info_update_val remains as it was, or updated with error if that part failed
+        if "error" not in trace_info_update_val and e: # Add general error if not already specific
+            trace_info_update_val = {"error": f"Error stopping tracking: {str(e)}"}
+
+    return (
+        gr.update(value=status_message_val), 
+        gr.update(interactive=start_btn_interactive_val), 
+        gr.update(interactive=stop_btn_interactive_val), 
+        gr.update(value=filepath_update_val),
+        gr.update(value=trace_info_update_val)
+    )
 
 async def stream_replay_ui(
     trace_path: str, 
     speed: float, 
-    override_files_temp_list: Optional[List[Any]], # Gradio File component gives list of tempfile._TemporaryFileWrapper
+    override_files_temp_list: Optional[List[Any]],
     request: gr.Request
-) -> AsyncGenerator[str, None]: # Correct: This generator now yields plain strings
-    """UI-facing async generator to stream replay logs."""
+) -> AsyncGenerator[str, None]:
     print("[WEBUI stream_replay_ui] Entered function.", flush=True)
     global _ui_global_browser, _ui_global_browser_context, logger, manager_log_q
     
-    # Process override_files_temp_list to get a list of file paths (strings)
     override_files_paths: List[str] = []
     print(f"[WEBUI stream_replay_ui] trace_path: {trace_path}, speed: {speed}, override_files_temp_list: {override_files_temp_list}", flush=True)
     if override_files_temp_list:
         for temp_file in override_files_temp_list:
             if hasattr(temp_file, 'name') and isinstance(temp_file.name, str):
                 override_files_paths.append(temp_file.name)
-            elif isinstance(temp_file, str): # Should not happen with gr.File but good to check
+            elif isinstance(temp_file, str):
                 override_files_paths.append(temp_file)
             else:
                 logger.warning(f"stream_replay_ui: Skipping unexpected item type {type(temp_file)} in override_files_temp_list")
     print(f"[WEBUI stream_replay_ui] Processed override_files_paths: {override_files_paths}", flush=True)
 
     log_buffer = ""
-    def _accumulate_log(new_text: str) -> str: # Renamed and changed return type
+    def _accumulate_log(new_text: str) -> str:
         nonlocal log_buffer
         if log_buffer and not log_buffer.endswith("\n"):
             log_buffer += "\n"
         log_buffer += new_text
-        return log_buffer # Crucial: Return the plain string
+        return log_buffer
 
     print("[WEBUI stream_replay_ui] Right before first try...finally block.", flush=True)
     try:
-        # Yield the raw string for the first update
         log_buffer = _accumulate_log(f"Initiating replay for: {Path(trace_path).name}")
         yield log_buffer
     except Exception as e_first_yield:
-        # Handle potential errors during the very first yield if necessary, though less common for simple accumulation
         print(f"[WEBUI stream_replay_ui] ERROR during/after first yield (before session): {e_first_yield}", flush=True)
         log_buffer = _accumulate_log(f"Error before starting: {e_first_yield}")
         yield log_buffer
-        return # Stop if first yield itself fails critically
+        return 
     finally:
         print("[WEBUI stream_replay_ui] After first yield attempt (inside finally).", flush=True)
 
-    # Restore Browser Session Logic
     logger.info(f"stream_replay_ui: Replay for '{trace_path}'. Ensuring browser session...")
     print(f"[WEBUI stream_replay_ui] Ensuring browser session...", flush=True)
     live_browser, live_context = await ensure_browser_session()
@@ -360,19 +388,17 @@ async def stream_replay_ui(
         log_buffer = _accumulate_log(f"SESSION ERROR: {err_msg}")
         yield log_buffer
         print(f"[WEBUI stream_replay_ui] Yielded SESSION ERROR. Returning.", flush=True)
-        return # Stop this async generator
+        return
     
     log_buffer = _accumulate_log("🔌 Browser session ensured. Starting replay thread...")
     yield log_buffer
     print(f"[WEBUI stream_replay_ui] Yielded 'Browser session ensured'.", flush=True)
 
-    # Restore Replay Worker Thread Starting Logic
     ui_async_q: asyncio.Queue[str] = asyncio.Queue()
     done_event = threading.Event()
-    main_loop = asyncio.get_running_loop() # Get current (main) event loop
+    main_loop = asyncio.get_running_loop()
     print(f"[WEBUI stream_replay_ui] Initialized ui_async_q, done_event, and got main_loop: {main_loop}.", flush=True)
 
-    # Get CDP WebSocket endpoint from the live_browser
     cdp_url_for_thread = None
     if live_browser and hasattr(live_browser, 'config') and live_browser.config and hasattr(live_browser.config, 'cdp_url') and live_browser.config.cdp_url:
         cdp_url_for_thread = live_browser.config.cdp_url
@@ -396,35 +422,28 @@ async def stream_replay_ui(
         override_files_paths, 
         ui_async_q, 
         main_loop,
-        cdp_url_for_thread  # Pass the original CDP URL (e.g., http://localhost:9222)
+        cdp_url_for_thread
     )
     print(f"[WEBUI stream_replay_ui] start_replay_sync_api_in_thread call completed. Returned done_event: {done_event}", flush=True)
     log_buffer = _accumulate_log("--- Replay thread started ---")
     yield log_buffer
     print(f"[WEBUI stream_replay_ui] Yielded 'Replay thread started'. Beginning monitor loop.", flush=True)
 
-    # Restore Log Streaming Loop
     loop_count = 0
     while not done_event.is_set() or not ui_async_q.empty():
         loop_count += 1
-        # print(f"[WEBUI stream_replay_ui] Monitor loop iteration: {loop_count}. done_event.is_set(): {done_event.is_set()}, ui_async_q.empty(): {ui_async_q.empty()}", flush=True) # Verbose
         try:
-            # Drain queue quickly
             while True: 
                 line = ui_async_q.get_nowait()
                 log_buffer = _accumulate_log(line)
                 yield log_buffer
-                ui_async_q.task_done() # Important for asyncio.Queue if joined later, good practice
+                ui_async_q.task_done()
         except asyncio.QueueEmpty:
-            # print(f"[WEBUI stream_replay_ui] ui_async_q is empty in this check.", flush=True) # Verbose
-            pass # No new messages
+            pass
         
-        # Yield the current accumulated buffer directly to keep connection alive / update UI
         yield log_buffer 
-        # print(f"[WEBUI stream_replay_ui] Yielded keep-alive/current buffer ('{log_buffer}'). Sleeping.", flush=True) # Verbose
-        await asyncio.sleep(0.25) # Polling interval
+        await asyncio.sleep(0.25)
 
-    # Restore Final log flush
     logger.info("stream_replay_ui: Replay thread finished. Final log flush.")
     print(f"[WEBUI stream_replay_ui] Monitor loop exited. Final log flush. done_event.is_set(): {done_event.is_set()}, ui_async_q.empty(): {ui_async_q.empty()}", flush=True)
     while not ui_async_q.empty():
@@ -442,8 +461,43 @@ async def stream_replay_ui(
     logger.info("stream_replay_ui: Streaming finished.")
     print(f"[WEBUI stream_replay_ui] Yielded final 'Replay process fully completed'. Exiting function.", flush=True)
 
-# --- Global Constants ---
-MANUAL_TRACES_DIR = "./tmp/input_tracking" # ADDED global definition
+# --- NEW: Recorder Log Streaming Function ---
+async def _stream_recorder_log() -> AsyncGenerator[str, None]:
+    """Continuously streams logs from RECORDER_EVENT_LOG_Q to a Gradio Textbox."""
+    global RECORDER_EVENT_LOG_Q
+    log_accumulator = ""
+    while True:
+        try:
+            new_messages = []
+            # queue_was_empty_at_start = RECORDER_EVENT_LOG_Q.empty() # Optional: for more refined debug logging
+            while not RECORDER_EVENT_LOG_Q.empty():
+                try:
+                    msg = RECORDER_EVENT_LOG_Q.get_nowait()
+                    new_messages.append(msg)
+                    RECORDER_EVENT_LOG_Q.task_done()
+                except asyncio.QueueEmpty:
+                    break
+            
+            if new_messages:
+                logger.debug(f"[_stream_recorder_log]: Pulled {len(new_messages)} new messages from RECORDER_EVENT_LOG_Q: {new_messages}")
+                for msg_line in new_messages:
+                    if log_accumulator and not log_accumulator.endswith("\n"):
+                        log_accumulator += "\n"
+                    log_accumulator += msg_line
+                yield log_accumulator.strip()
+            else:
+                # logger.debug(f"[_stream_recorder_log]: No new messages in RECORDER_EVENT_LOG_Q this cycle. Accumulator: '{log_accumulator[:50]}...'") # Optional debug
+                yield log_accumulator.strip()
+
+        except Exception as e_stream_rec_log:
+            logger.error(f"Error in _stream_recorder_log: {e_stream_rec_log}", exc_info=True)
+            err_msg_for_ui = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️ Logger stream error: {e_stream_rec_log}"
+            if log_accumulator and not log_accumulator.endswith("\n"):
+                log_accumulator += "\n"
+            log_accumulator += err_msg_for_ui
+            yield log_accumulator.strip()
+        
+        await asyncio.sleep(0.3)
 
 # --- Global UI Definitions ---
 css = """ 
@@ -480,7 +534,7 @@ def create_ui(theme_name="Citrus"):
                     with gr.Column(scale=2):
                         input_track_status = gr.Textbox(
                             label="Recording Status",
-                            value="Recording not started. Ensure browser is available (e.g., via Replay tab actions) or it will be launched on first record attempt.", # Initial message
+                            value="Recording not started. Browser will be launched or reused on first record attempt.",
                             interactive=False,
                             lines=2 # Allow a bit more space for messages
                         )
@@ -495,9 +549,17 @@ def create_ui(theme_name="Citrus"):
                 )
                 
                 # Hidden textbox to store/pass the path of the last recorded trace
-                # This might not be strictly necessary if stop_input_tracking_with_context directly updates recorded_trace_info_display
-                # and _last_manual_trace_path global is sufficient for state. But using it for explicitness from plan.
                 last_recorded_trace_path_hidden = gr.Textbox(visible=False, label="Last Recorded Trace Path Hidden")
+
+                # New Textbox for Record Status Logs
+                record_status_logs_output = gr.Textbox(
+                    label="Record Status Logs", 
+                    interactive=False, 
+                    lines=10, 
+                    max_lines=20, 
+                    autoscroll=True,
+                    show_label=True
+                )
 
                 input_track_start_btn.click(
                     fn=start_input_tracking_with_context,
@@ -506,7 +568,7 @@ def create_ui(theme_name="Citrus"):
                         input_track_status, 
                         input_track_start_btn, 
                         input_track_stop_btn, 
-                        last_recorded_trace_path_hidden 
+                        last_recorded_trace_path_hidden
                     ]
                 )
                 
@@ -628,6 +690,9 @@ def create_ui(theme_name="Citrus"):
                     concurrency_limit=None # behaves like queue=False performance
                 )
         
+        # --- Add demo.load hook for recorder log streaming ---
+        demo.load(_stream_recorder_log, inputs=None, outputs=[record_status_logs_output])
+
     return demo
 # --- End: Main UI ---
 
