@@ -5,8 +5,11 @@ import asyncio
 from typing import Dict, List, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
+import inspect
 
 logger = logging.getLogger(__name__)
+
+logger.debug(f"Loading recorder.py module. Timestamp: {time.time()}")
 
 # =====================
 # Dataclass definitions
@@ -66,6 +69,7 @@ class FileDownloadEvent(InputEvent):
 class Recorder:
     """Tracks mouse, keyboard, and navigation events via Playwright + CDP."""
 
+    logger.debug(f"Recorder class is being defined. Timestamp: {time.time()}")
     BINDING = "__uit_relay"
 
     _JS_TEMPLATE = """
@@ -258,8 +262,12 @@ class Recorder:
 }})();
 """
 
-    def __init__(self, *, context: Optional[Any] = None, page: Optional[Any] = None, cdp_client: Optional[Any] = None):
-        """Init with a Playwright BrowserContext and an initial Page."""
+    def __init__(self, *, context: Optional[Any] = None, page: Optional[Any] = None, cdp_client: Optional[Any] = None, event_log_queue: Optional[asyncio.Queue] = None):
+        logger.debug(f"Recorder.__init__ called. Timestamp: {time.time()}")
+        sig = inspect.signature(self.__class__.__init__)
+        logger.debug(f"Recorder.__init__ signature: {sig}")
+        logger.debug(f"Recorder.__init__ received event_log_queue type: {type(event_log_queue)}")
+        
         if context is None and cdp_client is not None:
             context = cdp_client
         self.context = context
@@ -269,42 +277,42 @@ class Recorder:
         self.current_url: str = ""
         self._cleanup: List[Callable[[], None]] = []
         self._script_source = self._JS_TEMPLATE.format(binding=self.BINDING)
+        self.event_log_queue = event_log_queue
         logger.debug(f"RECORDER: Formatted _script_source (first 120 chars): {self._script_source[:120]}")
         logger.debug(f"RECORDER: Length of _script_source: {len(self._script_source)}")
 
     async def start_tracking(self):
         if self.is_recording:
-            return True # Already recording
+            return True 
         if not self.page:
             logger.error("Recorder: Page is not set, cannot start tracking.")
             return False
-        if not self.context: # self.context here is the Playwright BrowserContext
+        if not self.context: 
             logger.error("Recorder: Context is not set, cannot start tracking.")
             return False
             
         try:
-            # Context-level binding (expose_binding, add_init_script) is now assumed to be handled 
-            # by CustomBrowserContext before this Recorder instance is created or started.
-            # Recorder will focus on page-specific listeners.
-
-            # logger.info("Ensuring page-specific setup in Recorder.start_tracking") # Optional: for debugging
-            
-            await self._setup_page_listeners(self.page) # Setup for the initial self.page
-            
-            # Listen for new pages in the context to set up their listeners
-            # This is now primarily handled by CustomBrowserContext._on_binding_wrapper
-            # Removing the redundant listener setup here to avoid conflicts.
-            # bound_setup_page_listeners = lambda p: asyncio.create_task(self._setup_page_listeners(p))
-            # self.context.on("page", bound_setup_page_listeners)
-            # self._cleanup.append(lambda: self.context.remove_listener("page", bound_setup_page_listeners) if self.context else None)
-
+            await self._setup_page_listeners(self.page)
             self.is_recording = True
             self.current_url = self.page.url if self.page else ""
-            logger.info("User-input tracking started (listeners configured by Recorder)")
+            logger.info("User-input tracking started (listeners configured by Recorder)") # Internal log
+            
+            # DEBUGGING queue in start_tracking
+            logger.debug(f"[Recorder.start_tracking]: self.event_log_queue is {type(self.event_log_queue)}")
+            if self.event_log_queue:
+                logger.debug(f"[Recorder.start_tracking]: Attempting to put 'Recording started.' onto queue id: {id(self.event_log_queue)}")
+                try:
+                    self.event_log_queue.put_nowait("Recording started.")
+                    logger.debug(f"[Recorder.start_tracking]: Successfully put 'Recording started.' onto queue.")
+                except asyncio.QueueFull:
+                    logger.warning("Recorder event log queue is full. Could not log 'Recording started.'")
+                    logger.debug(f"[Recorder.start_tracking]: FAILED to put 'Recording started.' (QueueFull)")
+            else:
+                logger.debug(f"[Recorder.start_tracking]: self.event_log_queue is None or False. Skipping put.")
             return True
-        except Exception as e: # Added 'e' to log the specific exception
+        except Exception as e: 
             logger.exception(f"Failed to start tracking in Recorder: {e}")
-            await self.stop_tracking() # Attempt to clean up if start fails
+            await self.stop_tracking() 
             return False
 
     async def stop_tracking(self):
@@ -318,7 +326,20 @@ class Recorder:
                 pass
         self._cleanup.clear()
         self.is_recording = False
-        logger.info("User-input tracking stopped")
+        logger.info("User-input tracking stopped") # Internal log
+
+        # DEBUGGING queue in stop_tracking
+        logger.debug(f"[Recorder.stop_tracking]: self.event_log_queue is {type(self.event_log_queue)}")
+        if self.event_log_queue:
+            logger.debug(f"[Recorder.stop_tracking]: Attempting to put 'Recording stopped.' onto queue id: {id(self.event_log_queue)}")
+            try:
+                self.event_log_queue.put_nowait("Recording stopped.")
+                logger.debug(f"[Recorder.stop_tracking]: Successfully put 'Recording stopped.' onto queue.")
+            except asyncio.QueueFull:
+                logger.warning("Recorder event log queue is full. Could not log 'Recording stopped.'")
+                logger.debug(f"[Recorder.stop_tracking]: FAILED to put 'Recording stopped.' (QueueFull)")
+        else:
+            logger.debug(f"[Recorder.stop_tracking]: self.event_log_queue is None or False. Skipping put.")
 
     # Renamed from _setup_page to reflect its new role
     async def _setup_page_listeners(self, page):
@@ -393,8 +414,28 @@ class Recorder:
                 self.events.append(evt)
                 # Original log kept for consistency if needed, but new log above is more informative for recording phase
                 # logger.info(f"💾 Download detected: '{suggested_filename}' from {download_url} on page {page_url}")
+
+                user_log_msg_dl = None
+                if self.event_log_queue: # Check before defining user_log_msg_dl for this scope
+                    user_log_msg_dl = f"💾 File Downloaded: '{suggested_filename}' (saved to recorded_downloads)"
             except Exception as e:
                 logger.error(f"Error in download listener during recording: {e}", exc_info=True)
+                if self.event_log_queue:
+                    user_log_msg_dl = f"⚠️ Error processing download: {e}"
+        
+            # DEBUGGING queue in _download_listener (after try-except)
+            if user_log_msg_dl: # Only try to log if a message was generated
+                logger.debug(f"[Recorder._download_listener]: self.event_log_queue is {type(self.event_log_queue)} for msg: '{user_log_msg_dl}'")
+                if self.event_log_queue:
+                    logger.debug(f"[Recorder._download_listener]: Attempting to put '{user_log_msg_dl}' onto queue id: {id(self.event_log_queue)}")
+                    try:
+                        self.event_log_queue.put_nowait(user_log_msg_dl)
+                        logger.debug(f"[Recorder._download_listener]: Successfully put '{user_log_msg_dl}'.")
+                    except asyncio.QueueFull:
+                        logger.warning(f"Recorder event log queue full. Dropped: {user_log_msg_dl}")
+                        logger.debug(f"[Recorder._download_listener]: FAILED to put '{user_log_msg_dl}' (QueueFull)")
+                else:
+                     logger.debug(f"[Recorder._download_listener]: self.event_log_queue is None or False. Skipping put for '{user_log_msg_dl}'.")
 
         page.on("download", _download_listener)
         self._cleanup.append(lambda: page.remove_listener("download", _download_listener) if not page.is_closed() else None)
@@ -423,13 +464,13 @@ class Recorder:
                 evt = ClipboardCopyEvent(timestamp=ts, url=url, event_type="clipboard_copy", text=str(p.get("text","")))
                 self.events.append(evt)
                 logger.info(f"📋 Copy '{(evt.text[:40] + '...') if len(evt.text) > 40 else evt.text}'")
-                return
-            if typ == "clipboard_paste":
+                user_log_msg = f"📋 Copied: \"{(evt.text[:30] + '...') if len(evt.text) > 30 else evt.text}\""
+            elif typ == "clipboard_paste":
                 evt = ClipboardPasteEvent(timestamp=ts, url=url, event_type="clipboard_paste", selector=sel)
                 self.events.append(evt)
                 logger.info(f"📋 Paste into {sel}")
-                return
-            if typ == "file_upload":
+                user_log_msg = f"📋 Pasted into element: '{sel}'"
+            elif typ == "file_upload":
                 # Payload from JS now includes file_path and file_name directly
                 file_path_from_payload = p.get("file_path") or "" # Use p.get("file_path")
                 file_name_from_payload = p.get("file_name") or "" # Use p.get("file_name")
@@ -449,9 +490,8 @@ class Recorder:
                                       file_name=file_name_from_payload)
                 self.events.append(evt)
                 logger.info(f"📤 Upload '{file_name_from_payload}' (path: '{file_path_from_payload}') to {sel}")
-                return
-            
-            if typ == "mousedown":
+                user_log_msg = f"📤 File Uploaded: '{file_name_from_payload}' to element: '{sel}'"
+            elif typ == "mousedown":
                 button_code = p.get("button") 
                 button_name = "unknown"
                 if isinstance(button_code, int): 
@@ -461,11 +501,36 @@ class Recorder:
                                 
                 evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button_name, sel, txt, mods)
                 self.events.append(evt)
-                logger.info(f"🖱️ MouseClick, url='{evt.url}', button='{evt.button}'")
+                logger.info(f"🖱️ MouseClick, url='{evt.url}', button='{evt.button}' on '{sel}'")
+                user_log_msg = f"🖱️ {button_name.capitalize()} Click at ({evt.x},{evt.y}) on '{sel if sel else 'document'}'"
+                if txt: 
+                    formatted_text = (txt[:20]+'...') if len(txt) > 20 else txt
+                    user_log_msg += f" (text: '{formatted_text}')"
             elif typ == "keydown":
-                evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), sel, mods)
+                key_val = str(p.get("key"))
+                evt = KeyboardEvent(ts, url, "keyboard_input", key_val, str(p.get("code")), sel, mods)
                 self.events.append(evt)
-                logger.info(f"⌨️ KeyInput, url='{evt.url}', key='{evt.key}'")
+                logger.info(f"⌨️ KeyInput, url='{evt.url}', key='{evt.key}' in '{sel}'")
+                display_key = key_val
+                if len(key_val) > 1 and key_val not in ["Backspace", "Enter", "Tab", "Escape", "Delete"]:
+                    display_key = key_val
+                elif key_val == " ":
+                    display_key = "Space"
+                user_log_msg = f"⌨️ Key Press: '{display_key}' in element: '{sel if sel else 'document'}'"
+            
+            # DEBUGGING queue in _on_dom_event
+            if user_log_msg:
+                logger.debug(f"[Recorder._on_dom_event]: self.event_log_queue is {type(self.event_log_queue)} for msg: '{user_log_msg}'")
+                if self.event_log_queue:
+                    logger.debug(f"[Recorder._on_dom_event]: Attempting to put '{user_log_msg}' onto queue id: {id(self.event_log_queue)}")
+                    try:
+                        self.event_log_queue.put_nowait(user_log_msg)
+                        logger.debug(f"[Recorder._on_dom_event]: Successfully put '{user_log_msg}'.")
+                    except asyncio.QueueFull:
+                        logger.warning(f"Recorder event log queue full. Dropped: {user_log_msg}")
+                        logger.debug(f"[Recorder._on_dom_event]: FAILED to put '{user_log_msg}' (QueueFull)")
+                else:
+                    logger.debug(f"[Recorder._on_dom_event]: self.event_log_queue is None or False. Skipping put for '{user_log_msg}'.")
         except Exception:
             logger.exception("Malformed DOM payload: %s", p)
 
@@ -474,15 +539,28 @@ class Recorder:
     # --------------------------------------------------
 
     def _on_playwright_nav(self, page, frame):
-        if not self.is_recording:
-            return
-        if frame.parent_frame is None:  # top‑level navigation
+        if not self.is_recording: return
+        if frame.parent_frame is None: 
             url = frame.url
             if url and url not in (self.current_url, "about:blank"):
                 nav = NavigationEvent(time.time(), url, "navigation", self.current_url, url)
                 self.events.append(nav)
                 self.current_url = url
-                logger.info("🧭 Navigation recorded %s", url)
+                logger.info("🧭 Navigation recorded (internal) from %s to %s", self.current_url, url)
+                user_log_msg = f"🧭 Navigated to: {url}"
+
+                # DEBUGGING queue in _on_playwright_nav
+                logger.debug(f"[Recorder._on_playwright_nav]: self.event_log_queue is {type(self.event_log_queue)} for msg: '{user_log_msg}'")
+                if self.event_log_queue:
+                    logger.debug(f"[Recorder._on_playwright_nav]: Attempting to put '{user_log_msg}' onto queue id: {id(self.event_log_queue)}")
+                    try:
+                        self.event_log_queue.put_nowait(user_log_msg)
+                        logger.debug(f"[Recorder._on_playwright_nav]: Successfully put '{user_log_msg}'.")
+                    except asyncio.QueueFull:
+                        logger.warning(f"Recorder event log queue full. Dropped: {user_log_msg}")
+                        logger.debug(f"[Recorder._on_playwright_nav]: FAILED to put '{user_log_msg}' (QueueFull)")
+                else:
+                    logger.debug(f"[Recorder._on_playwright_nav]: self.event_log_queue is None or False. Skipping put for '{user_log_msg}'.")
 
     # --------------------------------------------------
     # Frame‑eval helpers
