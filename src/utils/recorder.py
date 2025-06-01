@@ -460,11 +460,23 @@ class Recorder:
             typ = p.get("type")
             sel = str(p.get("selector", ""))
 
+            user_log_msg: Optional[str] = None
+
             if typ == "clipboard_copy":
-                evt = ClipboardCopyEvent(timestamp=ts, url=url, event_type="clipboard_copy", text=str(p.get("text","")))
+                text_content = p.get("text") 
+                if text_content is None:
+                    text_content = "" 
+                else:
+                    text_content = str(text_content)
+
+                evt = ClipboardCopyEvent(timestamp=ts, url=url, event_type="clipboard_copy", text=text_content)
                 self.events.append(evt)
-                logger.info(f"📋 Copy '{(evt.text[:40] + '...') if len(evt.text) > 40 else evt.text}'")
-                user_log_msg = f"📋 Copied: \"{(evt.text[:30] + '...') if len(evt.text) > 30 else evt.text}\""
+                
+                log_display_text = f"'{text_content[:40] + '...' if len(text_content) > 40 else text_content}'" if text_content else "<empty>"
+                logger.info(f"📋 Copy {log_display_text}")
+                
+                ui_display_text = f"\"{(text_content[:30] + '...') if len(text_content) > 30 else text_content}\"" if text_content else "<empty selection>"
+                user_log_msg = f"📋 Copied: {ui_display_text}"
             elif typ == "clipboard_paste":
                 evt = ClipboardPasteEvent(timestamp=ts, url=url, event_type="clipboard_paste", selector=sel)
                 self.events.append(evt)
