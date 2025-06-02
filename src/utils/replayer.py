@@ -1,6 +1,6 @@
 import asyncio, json, logging, time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import Page as SyncPage, TimeoutError as SyncPlaywrightTimeoutError, Locator as SyncLocator, ElementHandle as SyncElementHandle
 
@@ -28,7 +28,7 @@ def load_trace(path: str | Path) -> List[Dict[str, Any]]:
 # --------------------------------------------------
 
 class TraceReplayerSync:
-    BTN_MAP = {"left": "left", "middle": "middle", "right": "right"}
+    BTN_MAP: Dict[str, Literal["left", "middle", "right"]] = {"left": "left", "middle": "middle", "right": "right"}
     MOD_MAP = {"alt": "Alt", "ctrl": "Control", "shift": "Shift", "meta": "Meta"}
 
     def __init__(self, page: SyncPage, trace: List[Dict[str, Any]], controller: Any,
