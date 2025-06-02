@@ -6,6 +6,7 @@ from typing import Dict, List, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 import inspect
+import collections # For deque for recent_copies
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,11 @@ class Recorder:
     logger.debug(f"Recorder class is being defined. Timestamp: {time.time()}")
     BINDING = "__uit_relay"
 
-    _JS_TEMPLATE = """
-(function () {{
+    # Max size for the recent copies deque to prevent unbounded growth
+    _MAX_RECENT_COPIES = 20 
+
+    _JS_TEMPLATE = """ 
+(function () {{ // Main IIFE - escaped for .format()
   console.log('[UIT SCRIPT] Attempting to run on URL:', location.href, 'Is top window:', window.top === window, 'Timestamp:', Date.now());
 
   if (window.top !== window) {{
@@ -81,152 +85,143 @@ class Recorder:
     return;
   }}
 
-  // Global guard on window.top itself, persists across navigations in the same tab.
   if (window.top.__uit_global_listeners_attached) {{
     console.log('[UIT SCRIPT] GUARDED (globally, listeners already attached by a previous script instance in this tab) on URL:', location.href);
     return; 
   }}
 
-  // If we reach here, we are in the top window, and this is the first script instance in this tab to pass the global guard.
   console.log('[UIT SCRIPT] PASSED GLOBAL GUARD: Marking tab as having listeners and proceeding to setup for URL:', location.href);
-  window.top.__uit_global_listeners_attached = true; // Set the persistent global flag
+  window.top.__uit_global_listeners_attached = true;
 
-  const binding = '{binding}'; 
+  const binding = '{binding}'; // Python .format() placeholder
 
-  function actualListenerSetup() {{
-    console.log('[UIT SCRIPT] actualListenerSetup: Called for document of URL:', document.location.href);
+  function send(type, eventData) {{ // JS function, braces escaped for .format()
+      if (eventData.repeat && type === 'keydown') return;
 
-    function smartSelector(el) {{
-        // Ensure documentElement is available before trying to use it or querySelector
-        if (!document || !document.documentElement) {{
-            console.warn('[UIT SCRIPT] smartSelector: documentElement not available for URL:', document.location.href);
-            return '';
-        }}
+      function smartSelector(el) {{ // JS function, braces escaped
+        if (!document || !document.documentElement) {{ console.warn('[UIT SCRIPT] smartSelector: documentElement not available'); return ''; }}
         if (!el || el.nodeType !== 1) return '';
         if (el.id) return '#' + CSS.escape(el.id);
         const attrs = ['data-testid','aria-label','role','name','placeholder'];
         for (const a of attrs) {{
             const v = el.getAttribute(a);
-            if (v) {{
-                const sel_val = el.localName + '[' + a + '=\\"' + CSS.escape(v) + '\\"]';
-                try {{ if (document.querySelectorAll(sel_val).length === 1) return sel_val; }} catch (e) {{/*ignore*/}}
-            }}
+            if (v) {{ const sel_val = el.localName + '[' + a + '="' + CSS.escape(v) + '"]'; try {{ if (document.querySelectorAll(sel_val).length === 1) return sel_val; }} catch (err) {{}} }}
         }}
-        let path = '', depth = 0, node = el;
+        let path = '', depth = 0, node = eventData.target || el; 
         while (node && node.nodeType === 1 && node !== document.documentElement && depth < 10) {{
             let seg = node.localName;
-            if (node.parentElement) {{
-                const children = node.parentElement.children;
-                const sib = Array.from(children || []).filter(s => s.localName === seg);
-                if (sib.length > 1) {{
-                    const idx = sib.indexOf(node);
-                    if (idx !== -1) {{ seg += ':nth-of-type(' + (idx + 1) + ')'; }}
-                }}
-            }}
+            if (node.parentElement) {{ const children = node.parentElement.children; const sib = Array.from(children || []).filter(s => s.localName === seg); if (sib.length > 1) {{ const idx = sib.indexOf(node); if (idx !== -1) {{ seg += ':nth-of-type(' + (idx + 1) + ')'; }} }} }}
             path = path ? seg + '>' + path : seg;
-            try {{ if (document.querySelectorAll(path).length === 1) return path; }} catch (e) {{/*ignore*/}}
-            if (!node.parentElement) break; 
-            node = node.parentElement; depth++;
+            try {{ if (document.querySelectorAll(path).length === 1) return path; }} catch (err) {{}} 
+            if (!node.parentElement) break; node = node.parentElement; depth++;
         }}
-        return path || (el.localName ? el.localName : ''); // Fallback to localName if path is empty
-    }}
-
-    const send = (type, e) => {{
-      if (e.repeat) return;
-
-      const makePayload = () => ({{
-        type,
-        ts: Date.now(),
-        url: document.location.href, 
-        selector: smartSelector(e.target || document.activeElement),
-        x: e.clientX ?? null,
-        y: e.clientY ?? null,
-        button: e.button ?? null,
-        key: e.key ?? null,
-        code: e.code ?? null,
-        modifiers: {{alt:e.altKey,ctrl:e.ctrlKey,shift:e.shiftKey,meta:e.metaKey}},
-        text: (type === 'mousedown' && e.target?.innerText) ? (e.target.innerText || '').trim().slice(0,50) : ((e.target?.value || '').trim().slice(0,50) || null),
-        // Add file_path and file_name if they exist on e (passed in for file_upload)
-        file_path: e.file_path ?? null, 
-        file_name: e.file_name ?? null
-      }});
-                                  
-      if (typeof window[binding] === 'function') {{
-        window[binding](makePayload());
-      }} else {{
-        console.warn('[UIT SCRIPT] send: Binding not ready for', type, 'on URL:', document.location.href, 'Retrying in 50ms.');
-        setTimeout(() => {{
-            if (typeof window[binding] === 'function') {{
-                console.log('[UIT SCRIPT] send: Binding ready after delay for', type, 'on URL:', document.location.href);
-                window[binding](makePayload());
-            }} else {{
-                console.error('[UIT SCRIPT] send: Binding STILL not ready after delay for', type, 'on URL:', document.location.href);
-            }}
-        }}, 50);
+        return path || (node && node.localName ? node.localName : '');
       }}
-    }};
+      
+      let selectorForPayload;
+      if (type === 'clipboard_copy' && eventData && typeof eventData.text !== 'undefined' && typeof eventData.target === 'undefined') {{
+          selectorForPayload = smartSelector(document.activeElement) || 'document.body'; 
+      }} else if (eventData && eventData.target) {{
+          selectorForPayload = smartSelector(eventData.target);
+      }} else {{ 
+          selectorForPayload = smartSelector(document.activeElement);
+      }}
 
-    // These listeners are attached to the current document (which is window.top.document here)
+      const payload = {{ 
+        type: type,
+        ts: Date.now(),
+        url: document.location.href,
+        selector: selectorForPayload,
+        x: eventData?.clientX ?? null,
+        y: eventData?.clientY ?? null,
+        button: eventData?.button ?? null,
+        key: eventData?.key ?? null,
+        code: eventData?.code ?? null,
+        modifiers: {{alt:eventData?.altKey || false ,ctrl:eventData?.ctrlKey || false ,shift:eventData?.shiftKey || false ,meta:eventData?.metaKey || false}},
+        text: (eventData && typeof eventData.text !== 'undefined') ? eventData.text : 
+              (type === 'mousedown' && eventData?.target?.innerText) ? (eventData.target.innerText || '').trim().slice(0,50) :
+              ((eventData?.target?.value || '').trim().slice(0,50) || null),
+        file_path: eventData?.file_path ?? null, 
+        file_name: eventData?.file_name ?? null
+      }};
+                                  
+      if (typeof window[binding] === 'function') {{ window[binding](payload); }}
+      else {{ console.warn('[UIT SCRIPT] send: Binding not ready for type:', type, 'on URL:', document.location.href); }}
+  }} // End of send function
+
+  // ---- Clipboard-API interception (navigator.clipboard.writeText) ----
+  (function () {{ // IIFE braces escaped
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {{
+      const _origWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+      navigator.clipboard.writeText = async function (textArgument) {{ 
+        console.log('[UIT SCRIPT] Intercepted navigator.clipboard.writeText, text:', textArgument ? String(textArgument).slice(0,30) : '<empty>');
+        try {{ await _origWriteText(textArgument); }}
+        finally {{ send("clipboard_copy", {{ "text": textArgument }}); }} 
+      }};
+      console.log('[UIT SCRIPT] Patched navigator.clipboard.writeText');
+    }} else {{
+      console.log('[UIT SCRIPT] navigator.clipboard.writeText not found or not a function, skipping patch.');
+    }}
+  }})(); // End of IIFE
+
+  // ---- execCommand("copy") interception ----
+  (function () {{ // IIFE braces escaped
+    if (typeof document.execCommand === 'function') {{
+      const _origExec = document.execCommand.bind(document);
+      document.execCommand = function (cmd, showUI, val) {{
+        const ok = _origExec(cmd, showUI, val);
+        if (cmd === "copy" && ok) {{
+          console.log('[UIT SCRIPT] Intercepted document.execCommand("copy")');
+          if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {{
+            navigator.clipboard.readText().then(
+              (clipboardText) => {{ console.log('[UIT SCRIPT] execCommand copy, readText success, text:', clipboardText ? String(clipboardText).slice(0,30): '<empty>'); send("clipboard_copy", {{ "text": clipboardText }}); }}, 
+              ()     => {{ console.log('[UIT SCRIPT] execCommand copy, readText failed, sending empty'); send("clipboard_copy", {{ "text": "" }}); }} 
+            );
+          }} else {{
+            console.log('[UIT SCRIPT] execCommand copy, navigator.clipboard.readText not available, sending empty for copy.');
+            send("clipboard_copy", {{ "text": "" }}); 
+          }}
+        }}
+        return ok;
+      }};
+      console.log('[UIT SCRIPT] Patched document.execCommand');
+    }} else {{
+      console.log('[UIT SCRIPT] document.execCommand not found or not a function, skipping patch.');
+    }}
+  }})(); // End of IIFE
+
+  // Original event listeners
+  function actualListenerSetup() {{ // JS function, braces escaped
+    console.log('[UIT SCRIPT] actualListenerSetup: Called for document of URL:', document.location.href);
     document.addEventListener('mousedown', e => send('mousedown', e), true);
     document.addEventListener('keydown',   e => send('keydown',   e), true);
-
-    // ---------- NEW ----------
-    document.addEventListener('copy',  e => {{
-        // For copy, we need to get the selected text
+    document.addEventListener('copy',  e => {{ // JS arrow function body, braces escaped
+        console.log('[UIT SCRIPT] Native "copy" event triggered.');
         const selectedText = window.getSelection().toString();
-        // We don't have direct access to the clipboard content due to security reasons.
-        // We send the selected text as a proxy for what might be copied.
-        // The actual clipboard content might be different if the user uses OS-level copy.
-        send('clipboard_copy', {{ target: e.target, text: selectedText }});
+        send('clipboard_copy', {{ target: e.target, "text": selectedText }}); 
     }}, true);
-    document.addEventListener('paste', e => send('clipboard_paste', e), true);
+    document.addEventListener('paste', e => send('paste', e), true); 
 
-    // --------- File Upload Listener (Delegated) ----------
-    // Instead of attaching to every existing input[type=file], use a single delegated listener
-    // on the document that captures all change events. This works for dynamically added
-    // file inputs and avoids missing uploads on complex sites that create the input
-    // just-in-time (e.g. after clicking an "Upload" button).
-
-    const delegatedFileChangeListener = (e) => {{
+    const delegatedFileChangeListener = (e) => {{ // JS arrow function, braces escaped
         const tgt = e.target;
         if (!tgt || tgt.nodeType !== 1) return;
-        // Check if the event target is an <input type="file"> element
         if (tgt.tagName === 'INPUT' && tgt.type === 'file') {{
-            console.log('[UIT SCRIPT] Delegated file change detected on', tgt);
             const file = tgt.files && tgt.files.length > 0 ? tgt.files[0] : null;
-            if (file) {{
-                console.log('[UIT SCRIPT] File selected via delegated listener: name=', file.name, 'path=', file.path, 'size=', file.size, 'type=', file.type);
-            }} else {{
-                console.log('[UIT SCRIPT] Delegated file change event but no file in tgt.files');
-            }}
-            send('file_upload', {{
-                target: tgt,
-                file_path: file?.path ?? '',
-                file_name: file?.name ?? ''
-            }});
+            send('file_upload', {{ target: tgt, file_path: file?.path ?? '', file_name: file?.name ?? '' }}); 
         }}
     }};
+
     document.addEventListener('change', delegatedFileChangeListener, true);
-    // Also listen for "drop" events on the document for drag-and-drop uploads that many sites use.
-    // This captures files even if no visible input element is involved.
-    document.addEventListener('drop', (e) => {{
+    document.addEventListener('drop', (e) => {{ // JS arrow function, braces escaped
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {{
             const file = e.dataTransfer.files[0];
-            console.log('[UIT SCRIPT] File selected via drag-and-drop: name=', file.name, 'path=', file.path, 'size=', file.size, 'type=', file.type);
-            // For drag-and-drop, we may not have a meaningful selector; use the drop target element.
-            send('file_upload', {{
-                target: e.target,
-                file_path: file?.path ?? '',
-                file_name: file?.name ?? ''
-            }});
+            send('file_upload', {{ target: e.target, file_path: file?.path ?? '', file_name: file?.name ?? '' }});
         }}
     }}, true);
-    // --------- End File Upload Listener ----------
-
     console.log('[UIT SCRIPT] actualListenerSetup: Event listeners ATTACHED to document of URL:', document.location.href);
-  }}
+  }} // End of actualListenerSetup
 
-  function deferredSetupCaller() {{
+  function deferredSetupCaller() {{ // JS function, braces escaped
     console.log('[UIT SCRIPT] deferredSetupCaller: Checking binding and document state for URL:', document.location.href);
     if (typeof window[binding] === 'function') {{
       console.log('[UIT SCRIPT] Binding found immediately for document:', document.location.href);
@@ -254,12 +249,11 @@ class Recorder:
         }}
       }}, 10);
     }}
-  }}
+  }} // End of deferredSetupCaller
   
-  // Start the setup process
   deferredSetupCaller();
 
-}})();
+}})(); // End of Main IIFE
 """
 
     def __init__(self, *, context: Optional[Any] = None, page: Optional[Any] = None, cdp_client: Optional[Any] = None, event_log_queue: Optional[asyncio.Queue] = None):
@@ -276,10 +270,17 @@ class Recorder:
         self.is_recording = False
         self.current_url: str = ""
         self._cleanup: List[Callable[[], None]] = []
-        self._script_source = self._JS_TEMPLATE.format(binding=self.BINDING)
         self.event_log_queue = event_log_queue
-        logger.debug(f"RECORDER: Formatted _script_source (first 120 chars): {self._script_source[:120]}")
-        logger.debug(f"RECORDER: Length of _script_source: {len(self._script_source)}")
+        
+        # For de-duplicating copy events
+        self._recent_copies: collections.deque[Tuple[str, float]] = collections.deque(maxlen=self._MAX_RECENT_COPIES)
+        
+        # Ensure _script_source is initialized after _JS_TEMPLATE is available
+        self._script_source = "" # Will be properly set after JS update
+        self._script_source = self._JS_TEMPLATE.format(binding=self.BINDING)
+
+        logger.debug(f"RECORDER: Initialized with event_log_queue: {type(self.event_log_queue)}")
+        logger.debug(f"RECORDER: _script_source length: {len(self._script_source)}") # Log length for verification
 
     async def start_tracking(self):
         if self.is_recording:
@@ -451,76 +452,65 @@ class Recorder:
             ts = p.get("ts", time.time()*1000)/1000.0
             url = p.get("url", self.current_url)
             raw_modifiers = p.get("modifiers")
-            mods = []
-            if isinstance(raw_modifiers, dict):
-                mods = [k for k, v in raw_modifiers.items() if v]
-            else: # Fallback or log warning if needed, for now, empty list
-                logger.debug(f"Modifiers field was not a dict: {raw_modifiers}")
-
+            mods = [k for k, v in raw_modifiers.items() if v] if isinstance(raw_modifiers, dict) else []
             typ = p.get("type")
             sel = str(p.get("selector", ""))
 
             user_log_msg: Optional[str] = None
 
             if typ == "clipboard_copy":
-                text_content = p.get("text") 
-                if text_content is None:
-                    text_content = "" 
-                else:
-                    text_content = str(text_content)
+                text_content = p.get("text")
+                if text_content is None: text_content = ""
+                else: text_content = str(text_content)
 
-                evt = ClipboardCopyEvent(timestamp=ts, url=url, event_type="clipboard_copy", text=text_content)
-                self.events.append(evt)
-                
-                log_display_text = f"'{text_content[:40] + '...' if len(text_content) > 40 else text_content}'" if text_content else "<empty>"
-                logger.info(f"📋 Copy {log_display_text}")
-                
-                ui_display_text = f"\"{(text_content[:30] + '...') if len(text_content) > 30 else text_content}\"" if text_content else "<empty selection>"
-                user_log_msg = f"📋 Copied: {ui_display_text}"
+                now = time.time()
+                # Token for de-duplication: (text, coarse_timestamp_to_nearest_100ms)
+                # Using round(now, 1) for 100ms window; round(now, 2) is 10ms as per user example.
+                # Let's use a slightly larger window for robustness, e.g. 200-300ms by adjusting rounding or comparison logic.
+                # For simplicity with set, exact text & rounded time is used. Consider a time window for matching if needed.
+                token = (text_content, round(now, 1)) # 100ms window
+
+                if token not in self._recent_copies:
+                    self._recent_copies.append(token) # deque handles maxlen automatically
+                    
+                    evt = ClipboardCopyEvent(timestamp=ts, url=url, event_type="clipboard_copy", text=text_content)
+                    self.events.append(evt)
+                    log_display_text = f"'{text_content[:40] + '...' if len(text_content) > 40 else text_content}'" if text_content else "<empty>"
+                    logger.info(f"📋 Copy {log_display_text}")
+                    ui_display_text = f"\"{(text_content[:30] + '...') if len(text_content) > 30 else text_content}\"" if text_content else "<empty selection>"
+                    user_log_msg = f"📋 Copied: {ui_display_text}"
+                else:
+                    logger.debug(f"[Recorder._on_dom_event]: Ignoring duplicate clipboard_copy event: {token}")
+                    user_log_msg = None # Do not send duplicate to UI log queue
             elif typ == "clipboard_paste":
                 evt = ClipboardPasteEvent(timestamp=ts, url=url, event_type="clipboard_paste", selector=sel)
                 self.events.append(evt)
                 logger.info(f"📋 Paste into {sel}")
                 user_log_msg = f"📋 Pasted into element: '{sel}'"
             elif typ == "file_upload":
-                # Payload from JS now includes file_path and file_name directly
-                file_path_from_payload = p.get("file_path") or "" # Use p.get("file_path")
-                file_name_from_payload = p.get("file_name") or "" # Use p.get("file_name")
-                
-                # Ensure file_name is derived from file_path if file_name is empty and file_path is not
+                file_path_from_payload = p.get("file_path") or ""
+                file_name_from_payload = p.get("file_name") or ""
                 if not file_name_from_payload and file_path_from_payload:
-                    # Need to import Path from pathlib if not already available at module level
-                    # For now, assume Path is available or use basic string manipulation
-                    # from pathlib import Path # This would be at the top of the file
-                    file_name_from_payload = file_path_from_payload.split('/').pop().split('\\').pop()
-
-                evt = FileUploadEvent(timestamp=ts, 
-                                      url=url, 
-                                      event_type="file_upload", 
-                                      selector=sel, 
-                                      file_path=file_path_from_payload, 
-                                      file_name=file_name_from_payload)
+                    file_name_from_payload = Path(file_path_from_payload).name
+                evt = FileUploadEvent(timestamp=ts, url=url, event_type="file_upload", selector=sel, file_path=file_path_from_payload, file_name=file_name_from_payload)
                 self.events.append(evt)
                 logger.info(f"📤 Upload '{file_name_from_payload}' (path: '{file_path_from_payload}') to {sel}")
                 user_log_msg = f"📤 File Uploaded: '{file_name_from_payload}' to element: '{sel}'"
             elif typ == "mousedown":
                 button_code = p.get("button") 
-                button_name = "unknown"
-                if isinstance(button_code, int): 
-                    button_name = {0:"left",1:"middle",2:"right"}.get(button_code, "unknown")
-                
+                button_name = {0:"left",1:"middle",2:"right"}.get(button_code, "unknown") if isinstance(button_code, int) else "unknown"
                 txt = p.get("text")
-                                
-                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button_name, sel, txt, mods)
+                x_coord, y_coord = int(p.get("x",0)), int(p.get("y",0))
+                evt = MouseClickEvent(timestamp=ts, url=url, event_type="mouse_click", x=x_coord, y=y_coord, button=button_name, selector=sel, text=txt, modifiers=mods)
                 self.events.append(evt)
                 logger.info(f"🖱️ MouseClick, url='{evt.url}', button='{evt.button}' on '{sel}'")
-                user_log_msg = f"🖱️ {button_name.capitalize()} Click at ({evt.x},{evt.y}) on '{sel if sel else 'document'}'"
+                user_log_msg = f"🖱️ {button_name.capitalize()} Click at ({x_coord},{y_coord}) on '{sel if sel else 'document'}'"
                 if txt: 
                     formatted_text = (txt[:20]+'...') if len(txt) > 20 else txt
                     user_log_msg += f" (text: '{formatted_text}')"
             elif typ == "keydown":
                 key_val = str(p.get("key"))
-                evt = KeyboardEvent(ts, url, "keyboard_input", key_val, str(p.get("code")), sel, mods)
+                evt = KeyboardEvent(timestamp=ts, url=url, event_type="keyboard_input", key=key_val, code=str(p.get("code")), selector=sel, modifiers=mods)
                 self.events.append(evt)
                 logger.info(f"⌨️ KeyInput, url='{evt.url}', key='{evt.key}' in '{sel}'")
                 display_key = key_val
@@ -544,7 +534,11 @@ class Recorder:
                 else:
                     logger.debug(f"[Recorder._on_dom_event]: self.event_log_queue is None or False. Skipping put for '{user_log_msg}'.")
         except Exception:
-            logger.exception("Malformed DOM payload: %s", p)
+            logger.exception("Malformed DOM payload or error processing event: %s", p)
+            # Potentially log to UI queue as well if an error occurs during event processing
+            if self.event_log_queue:
+                try: self.event_log_queue.put_nowait(f"⚠️ Error processing recorded DOM event: {p.get('type', 'unknown')}")
+                except asyncio.QueueFull: logger.warning("Recorder event log queue full. Dropped DOM event processing error log.")
 
     # --------------------------------------------------
     # Navigation via Playwright
@@ -555,24 +549,18 @@ class Recorder:
         if frame.parent_frame is None: 
             url = frame.url
             if url and url not in (self.current_url, "about:blank"):
-                nav = NavigationEvent(time.time(), url, "navigation", self.current_url, url)
+                nav = NavigationEvent(timestamp=time.time(), url=url, event_type="navigation", from_url=self.current_url, to_url=url)
                 self.events.append(nav)
-                self.current_url = url
+                # self.current_url = url # Moved after logging
                 logger.info("🧭 Navigation recorded (internal) from %s to %s", self.current_url, url)
                 user_log_msg = f"🧭 Navigated to: {url}"
-
-                # DEBUGGING queue in _on_playwright_nav
                 logger.debug(f"[Recorder._on_playwright_nav]: self.event_log_queue is {type(self.event_log_queue)} for msg: '{user_log_msg}'")
                 if self.event_log_queue:
                     logger.debug(f"[Recorder._on_playwright_nav]: Attempting to put '{user_log_msg}' onto queue id: {id(self.event_log_queue)}")
-                    try:
-                        self.event_log_queue.put_nowait(user_log_msg)
-                        logger.debug(f"[Recorder._on_playwright_nav]: Successfully put '{user_log_msg}'.")
-                    except asyncio.QueueFull:
-                        logger.warning(f"Recorder event log queue full. Dropped: {user_log_msg}")
-                        logger.debug(f"[Recorder._on_playwright_nav]: FAILED to put '{user_log_msg}' (QueueFull)")
-                else:
-                    logger.debug(f"[Recorder._on_playwright_nav]: self.event_log_queue is None or False. Skipping put for '{user_log_msg}'.")
+                    try: self.event_log_queue.put_nowait(user_log_msg); logger.debug(f"[Recorder._on_playwright_nav]: Successfully put '{user_log_msg}'.")
+                    except asyncio.QueueFull: logger.warning(f"Recorder event log queue full. Dropped: {user_log_msg}"); logger.debug(f"[Recorder._on_playwright_nav]: FAILED to put '{user_log_msg}' (QueueFull)")
+                else: logger.debug(f"[Recorder._on_playwright_nav]: self.event_log_queue is None or False. Skipping put for '{user_log_msg}'.")
+                self.current_url = url # Update after logging 'from' URL
 
     # --------------------------------------------------
     # Frame‑eval helpers
