@@ -1,6 +1,6 @@
 import asyncio, json, logging, time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import Page as SyncPage, TimeoutError as SyncPlaywrightTimeoutError, Locator as SyncLocator, ElementHandle as SyncElementHandle
 
@@ -28,7 +28,7 @@ def load_trace(path: str | Path) -> List[Dict[str, Any]]:
 # --------------------------------------------------
 
 class TraceReplayerSync:
-    BTN_MAP = {"left": "left", "middle": "middle", "right": "right"}
+    BTN_MAP: Dict[str, Literal["left", "middle", "right"]] = {"left": "left", "middle": "middle", "right": "right"}
     MOD_MAP = {"alt": "Alt", "ctrl": "Control", "shift": "Shift", "meta": "Meta"}
 
     def __init__(self, page: SyncPage, trace: List[Dict[str, Any]], controller: Any,
@@ -53,6 +53,17 @@ class TraceReplayerSync:
         while i < len(self.trace):
             ev = self.trace[i]
             logger.debug(f"[REPLAYER play] Processing event {i+1}/{len(self.trace)}: Type: {ev.get('type')}, URL: {ev.get('url')}")
+            
+            # Avoid processing 'v' key press before clipboard_paste event
+            # Check if the current event is 'v' key input and the next is 'clipboard_paste'
+            if ev.get("type") == "keyboard_input" and ev.get("key") == "v" and not ev.get("modifiers"):
+                if (i + 1) < len(self.trace):
+                    next_ev = self.trace[i+1]
+                    if next_ev.get("type") == "clipboard_paste":
+                        logger.info(f"[REPLAYER play] Skipping 'v' key press before clipboard_paste. Event {i+1}")
+                        i += 1  # Skip the 'v' key press event
+                        ev = next_ev # Process the clipboard_paste event in this iteration
+                        logger.debug(f"[REPLAYER play] Now processing event {i+1}/{len(self.trace)}: Type: {ev.get('type')}, URL: {ev.get('url')}")
             
             # New concise and iconic log format
             log_type = ev["type"]

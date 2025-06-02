@@ -58,48 +58,40 @@ class CustomBrowserContext(BrowserContext):
     BINDING = "__uit_relay"
 
     async def _ensure_dom_bridge(self):
-        # Instance flag: has THIS CustomBrowserContext instance attempted to set up the binding?
-        # This internal flag _cbc_binding_exposed_by_this_instance is for the Python instance.
-        # The _uit_init_script_added_for_ctx is for the underlying Playwright context.
-
-        from src.utils.recorder import Recorder as UITracker # Alias for clarity, ensure it's here.
+        from src.utils.recorder import Recorder as UITracker # Moved import here to be used
 
         try:
-            # Always ensure *this* CustomBrowserContext instance's _on_binding_wrapper is exposed.
-            # This is crucial if the underlying self._ctx is reused by multiple CustomBrowserContext Python objects over time.
-            logger.debug(f"Ensuring binding '{self.BINDING}' is exposed by CBC instance {id(self)} for context {id(self._ctx)}.")
-            await self._ctx.expose_binding(self.BINDING, self._on_binding_wrapper) # Use this instance's method
-            # No instance flag needed here for expose_binding as it should be called by each instance managing the context.
-            logger.debug(f"Binding '{self.BINDING}' exposed/refreshed by CBC instance {id(self)}.")
+            binding_flag_name = f"_binding_{self.BINDING}_exposed"
+            if not getattr(self._ctx, binding_flag_name, False):
+                logger.debug(f"Binding '{self.BINDING}' not yet exposed on context {id(self._ctx)}. Exposing now via CBC instance {id(self)}.")
+                await self._ctx.expose_binding(self.BINDING, self._on_binding_wrapper)
+                setattr(self._ctx, binding_flag_name, True) # Mark on the Playwright context
+                logger.debug(f"Binding '{self.BINDING}' exposed and marked on context {id(self._ctx)}.")
+            else:
+                logger.debug(f"Binding '{self.BINDING}' already marked as exposed on context {id(self._ctx)}. CBC instance {id(self)} reusing.")
+            
+            await asyncio.sleep(0) # Allow Playwright to process
 
-            # Yield to allow Playwright to process the binding registration before the init script,
-            # which relies on this binding, is added or runs.
-            await asyncio.sleep(0)
-
-            # Check if the init script has been added to the Playwright context itself.
-            # This flag _uit_init_script_added_for_ctx should be set on self._ctx.
-            if not getattr(self._ctx, "_uit_init_script_added_for_ctx", False):
+            init_script_flag_name = "_uit_init_script_added_for_ctx"
+            if not getattr(self._ctx, init_script_flag_name, False):
                 logger.debug(f"Adding init script to context {id(self._ctx)} (first time or not previously marked).")
-                script_to_inject = UITracker._JS_TEMPLATE.format(binding=self.BINDING)
+                # Ensure _JS_TEMPLATE is accessed correctly if Recorder is UITracker
+                script_to_inject = UITracker._JS_TEMPLATE.format(binding=self.BINDING) 
                 await self._ctx.add_init_script(script_to_inject)
-                setattr(self._ctx, "_uit_init_script_added_for_ctx", True) # Mark on the Playwright context
+                setattr(self._ctx, init_script_flag_name, True)
                 logger.debug(f"Init script added to context {id(self._ctx)} and marked.")
             else:
                 logger.debug(f"Init script already marked as added to context {id(self._ctx)}. Not re-adding.")
 
-            # If we've reached here, this CustomBrowserContext instance has done its part,
-            # and the underlying Playwright context should be ready.
-            # We can use the instance's _dom_bridge_initialized_on_context flag as before to prevent
-            # this specific instance from repeating these checks unnecessarily if _ensure_dom_bridge is called multiple times on it.
+            # This instance's flag for having completed its part of the setup
             if not self._dom_bridge_initialized_on_context:
                  self._dom_bridge_initialized_on_context = True
-                 logger.debug(f"DOM bridge setup completed by CBC instance {id(self)} for context {id(self._ctx)}.")
-            else:
-                 logger.debug(f"DOM bridge setup previously completed by this CBC instance {id(self)}.")
-
+                 logger.debug(f"DOM bridge setup sequence completed by this CBC instance {id(self)} for context {id(self._ctx)}.")
+            # else:
+            #      logger.debug(f"DOM bridge setup sequence previously completed by this CBC instance {id(self)}.") # Can be noisy
 
         except Exception as e:
-            # If setup fails, this instance definitely hasn't initialized the bridge.
+            # If setup fails, this instance definitely hasn't initialized the bridge for itself.
             self._dom_bridge_initialized_on_context = False 
             logger.error(f"Failed to ensure DOM bridge for CBC {id(self)}, context {id(self._ctx)}: {e}", exc_info=True)
             raise # Re-raise to indicate a critical setup failure.
