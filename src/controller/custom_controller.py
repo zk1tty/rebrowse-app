@@ -26,6 +26,7 @@ from browser_use.controller.views import (
     SwitchTabAction,
 )
 import logging
+import platform # For OS detection for paste shortcut
 
 logger = logging.getLogger(__name__)
 
@@ -99,34 +100,54 @@ class CustomControllerSync(Controller):
 
         elif action_name == "Copy text to clipboard":
             text = kwargs.get("text")
-            if text is None:
-                logger.error("Missing text for 'Copy text to clipboard'.")
-                raise ValueError("Text is required for Copy text to clipboard action.")
-            logger.info(f"Directly executing 'Copy text to clipboard' for text (first 30 chars): '{text[:30]}'")
+            if text is None: # Should ideally not be Python None if recorder sends "" for empty
+                text = "" # Default to empty string if it was None
+                logger.warning("'text' for 'Copy text to clipboard' was None, defaulting to empty string.")
+            logger.info(f"Executing 'Copy text to clipboard' for text (first 30 chars): '{str(text)[:30]}'")
             try:
-                pyperclip.copy(text)
-                return ActionResult(extracted_content=text)
+                pyperclip.copy(str(text)) # Ensure text is string for pyperclip
+                return ActionResult(extracted_content=str(text))
             except Exception as e:
-                logger.error(f"Error during direct execution of 'Copy text to clipboard': {e}", exc_info=True)
+                logger.error(f"Error during execution of 'Copy text to clipboard': {e}", exc_info=True)
                 raise
         
         elif action_name == "Paste text from clipboard":
-            selector = kwargs.get("selector") 
-            logger.info(f"Directly executing 'Paste text from clipboard' into selector: '{selector if selector else 'current focus'}'")
+            selector = kwargs.get("selector")
+            problematic_selectors = ["br"] # Add other known non-interactive selectors if needed
+            logger.info(f"Attempting to execute 'Paste text from clipboard'. Recorded selector: '{selector}'")
+            
             try:
-                text_to_paste = pyperclip.paste()
-                if selector:
+                can_focus_selector = False
+                if selector and selector not in problematic_selectors:
                     try:
                         target_element = page.locator(selector).first
-                        target_element.wait_for(state="visible", timeout=3000) # SYNC
-                        target_element.focus(timeout=1000) # SYNC
-                        logger.info(f"Focused on selector '{selector}' for pasting.")
+                        is_inputtable = target_element.evaluate(
+                            "el => el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable"
+                        )
+                        if is_inputtable:
+                            target_element.wait_for(state="visible", timeout=3000)
+                            target_element.focus(timeout=1000)
+                            logger.info(f"Successfully focused on selector '{selector}' for pasting.")
+                            can_focus_selector = True
+                        else:
+                            logger.warning(f"Selector '{selector}' is not an inputtable element. Will attempt to paste via keyboard shortcut into general focus.")
                     except Exception as e_focus:
-                        logger.warning(f"Could not focus on selector '{selector}' for paste: {e_focus}. Pasting into current page focus.")
-                page.keyboard.type(text_to_paste) # SYNC
-                return ActionResult(extracted_content=text_to_paste)
+                        logger.warning(f"Could not focus on selector '{selector}' for paste: {e_focus}. Will attempt to paste via keyboard shortcut into general focus.")
+                
+                # Determine the correct paste shortcut
+                paste_keys = "Meta+V" if platform.system() == "Darwin" else "Control+V"
+
+                logger.info(f"Simulating paste action using keys: '{paste_keys}'. Focused element before paste: {page.evaluate('document.activeElement.outerHTML?.slice(0,100)')}")
+                page.keyboard.press(paste_keys)
+                
+                # Confirm what was on clipboard, for logging purposes
+                text_that_was_on_clipboard = pyperclip.paste()
+                logger.info(f"Paste action simulated. Text on clipboard was: '{text_that_was_on_clipboard[:50]}...'")
+                
+                return ActionResult(extracted_content=f"Pasted from clipboard. Content was: {text_that_was_on_clipboard[:30]}...")
+
             except Exception as e:
-                logger.error(f"Error during direct execution of 'Paste text from clipboard': {e}", exc_info=True)
+                logger.error(f"Error during 'Paste text from clipboard': {e}", exc_info=True)
                 raise
         else:
             logger.error(f"CustomControllerSync.execute received unhandled action_name: '{action_name}'. This controller only directly handles specific actions for replay.")
