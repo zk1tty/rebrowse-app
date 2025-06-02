@@ -54,6 +54,17 @@ class TraceReplayerSync:
             ev = self.trace[i]
             logger.debug(f"[REPLAYER play] Processing event {i+1}/{len(self.trace)}: Type: {ev.get('type')}, URL: {ev.get('url')}")
             
+            # Avoid processing 'v' key press before clipboard_paste event
+            # Check if the current event is 'v' key input and the next is 'clipboard_paste'
+            if ev.get("type") == "keyboard_input" and ev.get("key") == "v" and not ev.get("modifiers"):
+                if (i + 1) < len(self.trace):
+                    next_ev = self.trace[i+1]
+                    if next_ev.get("type") == "clipboard_paste":
+                        logger.info(f"[REPLAYER play] Skipping 'v' key press before clipboard_paste. Event {i+1}")
+                        i += 1  # Skip the 'v' key press event
+                        ev = next_ev # Process the clipboard_paste event in this iteration
+                        logger.debug(f"[REPLAYER play] Now processing event {i+1}/{len(self.trace)}: Type: {ev.get('type')}, URL: {ev.get('url')}")
+            
             # New concise and iconic log format
             log_type = ev["type"]
             current_event_url = ev.get("url", "N/A") # URL from the event itself
