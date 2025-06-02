@@ -482,10 +482,10 @@ class Recorder:
                 else:
                     logger.debug(f"[Recorder._on_dom_event]: Ignoring duplicate clipboard_copy event: {token}")
                     user_log_msg = None # Do not send duplicate to UI log queue
-            elif typ == "clipboard_paste":
+            elif typ == "paste":
                 evt = ClipboardPasteEvent(timestamp=ts, url=url, event_type="clipboard_paste", selector=sel)
                 self.events.append(evt)
-                logger.info(f"📋 Paste into {sel}")
+                logger.info(f"📋 Paste detected into element: '{sel}'")
                 user_log_msg = f"📋 Pasted into element: '{sel}'"
             elif typ == "file_upload":
                 file_path_from_payload = p.get("file_path") or ""
