@@ -1,4 +1,4 @@
-[<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
+[<img src="./assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
 
 <br/>
 
@@ -39,14 +39,14 @@ Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
     <li>👍 Robust. </li>
     <li>👎 needs long descriptive prompt. slow.</li>
   </ul>
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
+  <img src="./assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
 
   <span style="font-size: 1.5em;"><strong>▶️ Recording</strong></span>
   <ul>
     <li>👍 Determinictic. 10x fast. 3x Accurate.</li>
     <li>⚠️ AI-powered fall-back is WIP.</li>
   </ul>
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
+  <img src="./assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
 </div>
 
 ---
@@ -128,7 +128,7 @@ cd rebrowse-app
     ```
 ### Step 4: Close all open Chrome tabs. IMPORTANT!!
 
-<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
+<img src="./assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
 
 Or, run this command.
 
@@ -219,7 +219,7 @@ Let's talk more on [X](https://x.com/n0rizkitty) or [Telegram](https://x.com/n0r
 We are going to build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
 Check out our [Roadmap](./doc/ROADMAP.md).   
 
-<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
+<img src="./assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
 
 ### Gradio Development Mode
