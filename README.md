@@ -25,7 +25,9 @@ Click and watch Youtube videos.
 
 ▶ Record and Replay
 
-<a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./frontend/assets/examples/record-replay-demo.png" alt="Replay Demo" width="full"></a>
+<a href="https://youtu.be/CjxfwRO0TC8?si=KB7gndtCMdwM1Qoi&t=40"><img src="./frontend/assets/examples/rm_bg_img.png" alt="Replay: remove bg from img" width="full"></a>
+
+<a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./frontend/assets/examples/record-replay-demo.png" alt="Replay: tweet posting" width="full"></a>
 
 
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
