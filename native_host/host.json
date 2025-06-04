@@ -1,0 +1,9 @@
+{
+  "name": "com.rebrowse.host",
+  "description": "Rebrowse Python backend",
+  "path": "/Users/norikakizawa/Projects/rebrowse-apps/native_host/host.py",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://jpdfchpkdbgkeangahkomcnojhnbcphp/"
+  ]
+} 
