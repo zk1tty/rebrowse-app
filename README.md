@@ -1,4 +1,4 @@
-[<img src="./frontend/assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
+[<img src="./frontend/assets/Rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
 
 <br/>
 
