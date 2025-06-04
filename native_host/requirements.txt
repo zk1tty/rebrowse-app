@@ -1,0 +1,5 @@
+# Add your Python dependencies here
+# e.g.,
+# playwright
+# websockets
+# fastapi 
