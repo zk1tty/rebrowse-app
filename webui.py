@@ -54,6 +54,10 @@ logger.info("WebUI: Base logging configured. UI log: ReplayStreamingManager.")
 # --- NEW Global Queue for Recorder Event Logs ---
 RECORDER_EVENT_LOG_Q: asyncio.Queue[str] = asyncio.Queue()
 
+# --- NEW Global Queue for Native Host Status Logs ---
+HOST_STATUS_LOG_Q: asyncio.Queue[str] = asyncio.Queue()
+HOST_STATUS_PIPE_PATH = "/tmp/rebrowse_host_status.pipe"
+
 # --- Global Constants ---
 MANUAL_TRACES_DIR = "./tmp/input_tracking"
 
@@ -499,6 +503,130 @@ async def _stream_recorder_log() -> AsyncGenerator[str, None]:
         
         await asyncio.sleep(0.3)
 
+# --- NEW: Native Host Status Log Streaming and Pipe Reading Functions ---
+async def _stream_host_status_logs() -> AsyncGenerator[str, None]:
+    """Continuously streams logs from HOST_STATUS_LOG_Q to a Gradio Textbox."""
+    global HOST_STATUS_LOG_Q, logger
+    log_accumulator = "[WebUI] Waiting for Native Host logs..." # Initial message
+    yield log_accumulator.strip() # Yield initial message immediately
+    logger.info("[_stream_host_status_logs] Initial message yielded to UI.")
+
+    while True:
+        try:
+            new_messages = []
+            # Drain the queue for this cycle
+            while not HOST_STATUS_LOG_Q.empty():
+                try:
+                    msg = HOST_STATUS_LOG_Q.get_nowait()
+                    new_messages.append(msg)
+                    HOST_STATUS_LOG_Q.task_done()
+                except asyncio.QueueEmpty:
+                    # logger.debug("[_stream_host_status_logs] Queue became empty during drain.")
+                    break 
+            
+            if new_messages:
+                # logger.debug(f"[_stream_host_status_logs]: Pulled {len(new_messages)} new messages from HOST_STATUS_LOG_Q.")
+                for msg_line in new_messages:
+                    if log_accumulator and not log_accumulator.endswith("\n"):
+                        log_accumulator += "\n"
+                    log_accumulator += msg_line
+                yield log_accumulator.strip()
+            else:
+                # Yield current state even if no new messages, but only if it changed (or to keep alive)
+                # To prevent Gradio from showing processing, we must yield something periodically.
+                # However, if log_accumulator hasn't changed, this yield is redundant if previous was same.
+                # Forcing a yield to keep connection alive or show it's not stuck.
+                yield log_accumulator.strip() 
+
+        except Exception as e_stream_host_log:
+            logger.error(f"Error in _stream_host_status_logs: {e_stream_host_log}", exc_info=True)
+            err_msg_for_ui = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WebUI] ⚠️ Host Logger stream error: {e_stream_host_log}"
+            if log_accumulator and not log_accumulator.endswith("\n"):
+                log_accumulator += "\n"
+            log_accumulator += err_msg_for_ui
+            yield log_accumulator.strip()
+        
+        await asyncio.sleep(0.5) 
+
+async def _read_host_pipe_task():
+    """Creates and reads from a named pipe, putting messages into HOST_STATUS_LOG_Q."""
+    global HOST_STATUS_LOG_Q, HOST_STATUS_PIPE_PATH, logger
+    
+    logger.info(f"[_read_host_pipe_task] Starting. Pipe path: {HOST_STATUS_PIPE_PATH}")
+
+    if os.path.exists(HOST_STATUS_PIPE_PATH):
+        try:
+            os.remove(HOST_STATUS_PIPE_PATH)
+            logger.info(f"[_read_host_pipe_task] Removed existing host status pipe: {HOST_STATUS_PIPE_PATH}")
+        except OSError as e:
+            logger.error(f"[_read_host_pipe_task] Error removing existing host status pipe {HOST_STATUS_PIPE_PATH}: {e}")
+            # Continue to try and create it anyway
+
+    try:
+        os.mkfifo(HOST_STATUS_PIPE_PATH)
+        logger.info(f"[_read_host_pipe_task] Created host status pipe: {HOST_STATUS_PIPE_PATH}")
+        await HOST_STATUS_LOG_Q.put(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WebUI] Named pipe {HOST_STATUS_PIPE_PATH} created successfully.")
+    except OSError as e:
+        logger.error(f"[_read_host_pipe_task] Failed to create host status pipe {HOST_STATUS_PIPE_PATH}: {e}. Host status will not be available.", exc_info=True)
+        await HOST_STATUS_LOG_Q.put(f"CRITICAL ERROR: [WebUI] Could not create named pipe {HOST_STATUS_PIPE_PATH}. Host logs disabled.")
+        return
+
+    logger.info(f"[_read_host_pipe_task] Listener loop started for {HOST_STATUS_PIPE_PATH}")
+    while True:
+        pipe_file = None # Ensure pipe_file is reset for each attempt to open
+        try:
+            logger.info(f"[_read_host_pipe_task] Attempting to open pipe for reading: {HOST_STATUS_PIPE_PATH} (this may block until writer connects)..." )
+            pipe_file = open(HOST_STATUS_PIPE_PATH, 'r') # Blocking open
+            logger.info(f"[_read_host_pipe_task] Pipe opened for reading: {HOST_STATUS_PIPE_PATH}")
+            await HOST_STATUS_LOG_Q.put(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WebUI] Pipe reader connected to {HOST_STATUS_PIPE_PATH}.")
+            
+            while True:
+                # logger.debug(f"[_read_host_pipe_task] Waiting for line from pipe_file.readline()...")
+                line = pipe_file.readline()
+                # logger.debug(f"[_read_host_pipe_task] pipe_file.readline() returned: '{(line.strip() if line else "<EOF or empty line>")}'")
+                if not line: 
+                    logger.warning("[_read_host_pipe_task] Writer closed pipe or EOF detected. Re-opening pipe...")
+                    await HOST_STATUS_LOG_Q.put(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WebUI] Pipe writer disconnected. Attempting to reconnect...")
+                    break # Break inner loop to reopen the pipe
+                
+                message = line.strip()
+                if message: # Ensure not just an empty line
+                    # logger.debug(f"[_read_host_pipe_task] Received from pipe: '{message}'")
+                    await HOST_STATUS_LOG_Q.put(message) # Put the raw message from host.py
+                    # logger.debug(f"[_read_host_pipe_task] Message '{message}' put to HOST_STATUS_LOG_Q.")
+        except FileNotFoundError:
+            logger.error(f"[_read_host_pipe_task] Pipe {HOST_STATUS_PIPE_PATH} not found. Recreating...", exc_info=False) # Less noisy for frequent checks
+            await HOST_STATUS_LOG_Q.put(f"ERROR: [WebUI] Pipe {HOST_STATUS_PIPE_PATH} lost. Attempting to recreate.")
+            if os.path.exists(HOST_STATUS_PIPE_PATH):
+                try:
+                    os.remove(HOST_STATUS_PIPE_PATH)
+                except OSError as e_remove_fnf:
+                    logger.error(f"[_read_host_pipe_task] Error removing existing pipe during FileNotFoundError handling: {e_remove_fnf}")
+            try:
+                os.mkfifo(HOST_STATUS_PIPE_PATH)
+                logger.info(f"[_read_host_pipe_task] Recreated pipe {HOST_STATUS_PIPE_PATH} after FileNotFoundError.")
+                await HOST_STATUS_LOG_Q.put(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WebUI] Pipe {HOST_STATUS_PIPE_PATH} recreated.")
+                await asyncio.sleep(1) # Brief pause before retrying open in the main loop
+            except OSError as e_mkfifo_retry:
+                logger.error(f"[_read_host_pipe_task] Failed to recreate pipe {HOST_STATUS_PIPE_PATH}: {e_mkfifo_retry}. Retrying outer loop in 10s.", exc_info=True)
+                await HOST_STATUS_LOG_Q.put(f"CRITICAL ERROR: [WebUI] Failed to recreate pipe {HOST_STATUS_PIPE_PATH}. Retrying in 10s.")
+                await asyncio.sleep(10) 
+        except Exception as e_pipe_read_outer:
+            logger.error(f"[_read_host_pipe_task] Unhandled error in pipe reading loop: {e_pipe_read_outer}", exc_info=True)
+            await HOST_STATUS_LOG_Q.put(f"ERROR: [WebUI] Pipe reading loop encountered: {e_pipe_read_outer}. Retrying in 5s.")
+            await asyncio.sleep(5) 
+        finally:
+            if pipe_file:
+                try:
+                    pipe_file.close()
+                    logger.info(f"[_read_host_pipe_task] Closed pipe file handle for {HOST_STATUS_PIPE_PATH} in finally block.")
+                except Exception as e_close_finally:
+                    logger.error(f"[_read_host_pipe_task] Error closing pipe in finally: {e_close_finally}")
+        
+        # If loop broken due to readline EOF or other error causing pipe_file to close, 
+        # this sleep prevents a tight loop if open() immediately fails again.
+        await asyncio.sleep(1) # Wait a bit before retrying the main while True loop (re-opening pipe)
+
 # --- Global UI Definitions ---
 css = """ 
     /* Your CSS styles here, e.g.: */
@@ -610,6 +738,18 @@ def create_ui(theme_name="Citrus"):
                         show_label=True, autoscroll=True, elem_id="replay_status_logs_textbox"
                     )
 
+                # --- NEW: Textbox for Native Host Status Logs ---
+                with gr.Row():
+                    host_status_output_tb = gr.Textbox(
+                        label="Native Host Process Logs",
+                        interactive=False,
+                        lines=10,
+                        max_lines=20,
+                        autoscroll=True,
+                        show_label=True,
+                        elem_id="host_status_logs_textbox"
+                    )
+
                 selected_trace_path_for_replay = gr.Textbox(label="Selected Trace Path", interactive=False, visible=False)
                 trace_file_details_state_replay = gr.State([]) # Keep if used by trace_files_list.select
 
@@ -692,6 +832,9 @@ def create_ui(theme_name="Citrus"):
         
         # --- Add demo.load hook for recorder log streaming ---
         demo.load(_stream_recorder_log, inputs=None, outputs=[record_status_logs_output])
+        # --- NEW: Add demo.load hook for host status log streaming and pipe reader ---
+        demo.load(_stream_host_status_logs, inputs=None, outputs=[host_status_output_tb])
+        demo.load(_read_host_pipe_task, inputs=None, outputs=None) # Runs in background
 
     return demo
 # --- End: Main UI ---
