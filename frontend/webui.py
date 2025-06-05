@@ -3,17 +3,19 @@ import logging
 import os
 import gradio as gr
 import queue 
-import threading 
+import threading
 import time 
 import asyncio 
 import tempfile
-from typing import Optional, List, Dict, Any, Union, Callable, Tuple, AsyncGenerator
+from typing import Optional, List, Dict, Any, Union, Callable, Tuple, AsyncGenerator, TextIO
 from pathlib import Path
+from datetime import datetime
 from gradio.themes import Default, Soft, Glass, Monochrome, Ocean, Origin, Base, Citrus
 import pandas as pd
 from playwright.async_api import BrowserContext as PlaywrightBrowserContextType, Browser as PlaywrightBrowser
 from playwright.async_api import Browser # For isinstance check
 # from playwright.async_api import async_playwright # Ensure this is removed if only for old recording logic
+import json # Add json import
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -51,15 +53,19 @@ logging.getLogger('src.controller.custom_controller').setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__) # Logger for webui.py itself
 logger.info("WebUI: Base logging configured. UI log: ReplayStreamingManager.")
 
-# --- NEW Global Queue for Recorder Event Logs ---
-RECORDER_EVENT_LOG_Q: asyncio.Queue[str] = asyncio.Queue()
-
-# --- NEW Global Queue for Native Host Status Logs ---
-HOST_STATUS_LOG_Q: asyncio.Queue[str] = asyncio.Queue()
+# --- Global Queues and Pipe Paths ---
+RECORDER_EVENT_LOG_Q: asyncio.Queue[str] = asyncio.Queue() # This queue might become less central for raw recording
+HOST_STATUS_LOG_Q: asyncio.Queue[str] = asyncio.Queue() # This queue is now KEY for the new recorder
 HOST_STATUS_PIPE_PATH = "/tmp/rebrowse_host_status.pipe"
-
-# --- Global Constants ---
+COMMAND_PIPE_PATH = "/tmp/rebrowse_ui_command.pipe"
+RESPONSE_PIPE_PATH = "/tmp/rebrowse_ui_command_response.pipe"
 MANUAL_TRACES_DIR = "./tmp/input_tracking"
+
+# --- NEW Global State for "Pipe-to-File" Recording ---
+_RECORDING_ACTIVE: bool = False
+_RECORDING_FILE_HANDLE: Optional[TextIO] = None
+_RECORDING_ASYNC_TASK: Optional[asyncio.Task] = None
+_CURRENT_RECORDING_FILE_PATH: Optional[str] = None # To store the path of the current recording
 
 # --- Global Helper Functions (e.g. trace file listing) ---
 def refresh_traces(): 
@@ -121,7 +127,7 @@ def context_is_closed(ctx: Optional[PlaywrightBrowserContextType]) -> bool:
 async def ensure_browser_session(
     force_new_context_if_existing: bool = False,
 ) -> Tuple[Optional[CustomBrowser], Optional[CustomBrowserContext]]:
-    global _ui_global_browser, _ui_global_browser_context, logger
+    global _ui_global_browser, _ui_global_browser_context, logger, _browser_init_lock
     async with _browser_init_lock:
         browser_needs_real_init = False
         if not _ui_global_browser: browser_needs_real_init = True
@@ -175,168 +181,216 @@ async def ensure_browser_session(
 
 # Refactored to be a regular async function, sends logs to RECORDER_EVENT_LOG_Q
 async def start_input_tracking_with_context() -> Tuple[Any, ...]:
-    global _ui_global_browser_context # Uses the shared context populated by ensure_browser_session
-    global _global_input_tracking_active, _last_manual_trace_path, RECORDER_EVENT_LOG_Q
+    global _RECORDING_ACTIVE, _RECORDING_FILE_HANDLE, _RECORDING_ASYNC_TASK, _CURRENT_RECORDING_FILE_PATH
+    global RECORDER_EVENT_LOG_Q, logger, MANUAL_TRACES_DIR
+    # _global_input_tracking_active is no longer the primary flag for this type of recording
 
-    def _log_to_q(msg: str, is_error: bool = False):
+    # Log to RECORDER_EVENT_LOG_Q for the Gradio UI "Record Status Logs" textbox
+    # This queue is separate from HOST_STATUS_LOG_Q used by the pipe writer
+    def _log_to_ui_q(msg: str, is_error: bool = False):
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        formatted_msg = f"[{timestamp}] {msg}"
-        if is_error: logger.error(msg, exc_info=True if "exception" in msg.lower() or "error" in msg.lower() else False)
-        else: logger.info(msg) # Keep internal logging
-        try:
-            RECORDER_EVENT_LOG_Q.put_nowait(formatted_msg)
-        except asyncio.QueueFull:
-            logger.warning(f"RECORDER_EVENT_LOG_Q full. Dropped: {formatted_msg}")
-
-    status_update_val = "Initiating recording..."
-    trace_path_display_val = _last_manual_trace_path or "No trace recorded yet."
-    start_btn_interactive_val = False 
-    stop_btn_interactive_val = False
-    _log_to_q("Attempting to start input tracking...")
-
-    try:
-        _log_to_q("Ensuring browser session...")
-        browser, context = await ensure_browser_session(force_new_context_if_existing=False)
-
-        if not browser or not context: # context here is the local one from ensure_browser_session
-            status_update_val = "Failed to ensure browser session for recording."
-            _log_to_q(status_update_val, is_error=True)
-            return (
-                gr.update(value=status_update_val),
-                gr.update(interactive=True), # Allow retry
-                gr.update(interactive=False),
-                gr.update(value=trace_path_display_val),
-            )
-        
-        _ui_global_browser_context = context # Ensure global is set with the successfully obtained context
-        _log_to_q("Browser session ensured.")
-
-        if _global_input_tracking_active:
-            status_update_val = "Input tracking is already active."
-            _log_to_q(status_update_val)
-            start_btn_interactive_val = False
-            stop_btn_interactive_val = True
-            trace_path_display_val = "Recording... (Path will be shown on stop)"
-        else:
-            if not os.path.exists(MANUAL_TRACES_DIR):
-                os.makedirs(MANUAL_TRACES_DIR, exist_ok=True)
-                _log_to_q(f"Created recordings directory: {MANUAL_TRACES_DIR}")
-            
-            _log_to_q(f"Calling start_input_tracking() on context id: {id(_ui_global_browser_context)}...")
-            await _ui_global_browser_context.start_input_tracking(event_log_queue=RECORDER_EVENT_LOG_Q)
-            # Recorder itself will put "Recording started." message in the queue now.
-            
-            _global_input_tracking_active = True
-            status_update_val = "Input tracking started. See logs for event details."
-            # _log_to_q is handled by Recorder: ("Recording started.")
-            trace_path_display_val = "Recording... (Path will be shown on stop)"
-            start_btn_interactive_val = False
-            stop_btn_interactive_val = True
-            
-    except Exception as e:
-        status_update_val = f"Error starting input tracking: {str(e)}"
-        _log_to_q(f"Exception during start_input_tracking_with_context: {e}", is_error=True)
-        start_btn_interactive_val = True 
-        stop_btn_interactive_val = False
-        _global_input_tracking_active = False
-    
-    return (
-        gr.update(value=status_update_val),
-        gr.update(interactive=start_btn_interactive_val),
-        gr.update(interactive=stop_btn_interactive_val),
-        gr.update(value=trace_path_display_val),
-    )
-
-# Refactored to be a regular async function, sends logs to RECORDER_EVENT_LOG_Q
-async def stop_input_tracking_with_context() -> Tuple[Any, ...]:
-    global _ui_global_browser_context
-    global _global_input_tracking_active, _last_manual_trace_path, RECORDER_EVENT_LOG_Q
-
-    def _log_to_q(msg: str, is_error: bool = False):
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        formatted_msg = f"[{timestamp}] {msg}"
-        if is_error: logger.error(msg, exc_info=True if "exception" in msg.lower() or "error" in msg.lower() else False)
+        formatted_msg = f"[{timestamp}] [WebUI-Record] {msg}"
+        if is_error: logger.error(msg)
         else: logger.info(msg)
         try:
             RECORDER_EVENT_LOG_Q.put_nowait(formatted_msg)
         except asyncio.QueueFull:
-            logger.warning(f"RECORDER_EVENT_LOG_Q full. Dropped: {formatted_msg}")
+            logger.warning(f"RECORDER_EVENT_LOG_Q full for UI. Dropped: {formatted_msg}")
 
-    status_message_val = "Initiating stop sequence..."
-    filepath_update_val = _last_manual_trace_path
-    trace_info_update_val = {"message": "No trace recorded or tracking not active."}
+    status_update_val = "Initiating pipe-to-file recording..."
+    start_btn_interactive_val = False 
+    stop_btn_interactive_val = False
+    _log_to_ui_q("Attempting to start pipe-to-file recording...")
+
+    if _RECORDING_ACTIVE:
+        status_update_val = "Pipe-to-file recording is already active."
+        _log_to_ui_q(status_update_val)
+        start_btn_interactive_val = False
+        stop_btn_interactive_val = True
+        return (
+            gr.update(value=status_update_val),
+            gr.update(interactive=start_btn_interactive_val),
+            gr.update(interactive=stop_btn_interactive_val),
+            gr.update(value=_CURRENT_RECORDING_FILE_PATH or "Recording active...")
+        )
+
+    try:
+        if not os.path.exists(MANUAL_TRACES_DIR):
+            os.makedirs(MANUAL_TRACES_DIR, exist_ok=True)
+            _log_to_ui_q(f"Created recordings directory: {MANUAL_TRACES_DIR}")
+
+        # Generate filename (e.g., YYYYMMDD_HHMMSS_pipe_events.jsonl)
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_trace_filename = f"{timestamp_str}_pipe_events.jsonl" # Using .jsonl as it's line-delimited JSON
+        _CURRENT_RECORDING_FILE_PATH = str(Path(MANUAL_TRACES_DIR) / new_trace_filename)
+        
+        _log_to_ui_q(f"Opening trace file for writing: {_CURRENT_RECORDING_FILE_PATH}")
+        _RECORDING_FILE_HANDLE = open(_CURRENT_RECORDING_FILE_PATH, "w", encoding="utf-8")
+        
+        _RECORDING_ACTIVE = True
+        
+        # Start the background task to write from HOST_STATUS_LOG_Q to the file
+        if _RECORDING_ASYNC_TASK and not _RECORDING_ASYNC_TASK.done():
+            _log_to_ui_q("Warning: Previous recording task was still present. Cancelling it.")
+            _RECORDING_ASYNC_TASK.cancel()
+            try: await _RECORDING_ASYNC_TASK # Allow cancellation to process
+            except asyncio.CancelledError:
+                 _log_to_ui_q("Previous recording task cancelled.")
+        
+        _RECORDING_ASYNC_TASK = asyncio.create_task(_pipe_to_file_writer())
+        _log_to_ui_q(f"Pipe-to-file recording started. Saving to: {_CURRENT_RECORDING_FILE_PATH}")
+        
+        status_update_val = f"Recording to: {Path(_CURRENT_RECORDING_FILE_PATH).name}"
+        start_btn_interactive_val = False # Disable start
+        stop_btn_interactive_val = True  # Enable stop
+            
+    except Exception as e:
+        status_update_val = f"Error starting pipe-to-file recording: {str(e)}"
+        _log_to_ui_q(f"Exception: {e}", is_error=True)
+        logger.error(f"Exception in start_input_tracking_with_context (pipe-to-file): {e}", exc_info=True)
+        start_btn_interactive_val = True # Allow retry
+        stop_btn_interactive_val = False
+        _RECORDING_ACTIVE = False # Ensure state is correct
+        if _RECORDING_FILE_HANDLE and not _RECORDING_FILE_HANDLE.closed:
+            _RECORDING_FILE_HANDLE.close()
+        _RECORDING_FILE_HANDLE = None
+        _CURRENT_RECORDING_FILE_PATH = None
+        if _RECORDING_ASYNC_TASK and not _RECORDING_ASYNC_TASK.done():
+            _RECORDING_ASYNC_TASK.cancel()
+            # No await here as we are in an exception handler already
+    
+    # This tuple is for Gradio UI updates
+    return (
+        gr.update(value=status_update_val),
+        gr.update(interactive=start_btn_interactive_val),
+        gr.update(interactive=stop_btn_interactive_val),
+        gr.update(value=_CURRENT_RECORDING_FILE_PATH or "Error or not started") # Update hidden path field
+    )
+
+# Refactored to be a regular async function, sends logs to RECORDER_EVENT_LOG_Q
+async def stop_input_tracking_with_context() -> Tuple[Any, ...]:
+    global _RECORDING_ACTIVE, _RECORDING_FILE_HANDLE, _RECORDING_ASYNC_TASK, _CURRENT_RECORDING_FILE_PATH
+    global _last_manual_trace_path, RECORDER_EVENT_LOG_Q, logger
+    # _global_input_tracking_active is no longer the primary flag for this type of recording
+
+    # Log to RECORDER_EVENT_LOG_Q for the Gradio UI "Record Status Logs" textbox
+    def _log_to_ui_q(msg: str, is_error: bool = False):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        formatted_msg = f"[{timestamp}] [WebUI-Record] {msg}"
+        if is_error: logger.error(msg)
+        else: logger.info(msg)
+        try:
+            RECORDER_EVENT_LOG_Q.put_nowait(formatted_msg)
+        except asyncio.QueueFull:
+            logger.warning(f"RECORDER_EVENT_LOG_Q full for UI. Dropped: {formatted_msg}")
+
+    status_message_val = "Initiating pipe-to-file stop sequence..."
+    filepath_update_val = _last_manual_trace_path # For the hidden trace path textbox
+    trace_info_update_val = {"message": "Trace info will be updated after stopping."}
     start_btn_interactive_val = False 
     stop_btn_interactive_val = False 
 
-    if _last_manual_trace_path:
-        try:
-            trace_info_update_val = user_input_functions.get_file_info(_last_manual_trace_path)
-        except Exception as e_info_initial:
-            trace_info_update_val = {"error": f"Could not load info for last trace: {str(e_info_initial)}"}
-            _log_to_q(f"Error loading initial trace info: {e_info_initial}", is_error=True)
-    
-    _log_to_q("Attempting to stop input tracking...")
+    _log_to_ui_q("Attempting to stop pipe-to-file recording...")
 
-    if not _ui_global_browser_context or not _global_input_tracking_active:
-        status_message_val = "Input tracking not active or browser context not available."
-        _log_to_q(status_message_val, is_error=True)
+    if not _RECORDING_ACTIVE and not _RECORDING_FILE_HANDLE:
+        status_message_val = "Pipe-to-file recording was not active."
+        _log_to_ui_q(status_message_val)
         start_btn_interactive_val = True 
         stop_btn_interactive_val = False 
+        if _last_manual_trace_path: # Show info of the *actual* last trace if one exists
+            try: trace_info_update_val = user_input_functions.get_file_info(_last_manual_trace_path)
+            except Exception: pass # Ignore error if info can't be loaded
+        else:
+            trace_info_update_val = {"message": "No previous trace recorded."}
         return (
             gr.update(value=status_message_val), 
             gr.update(interactive=start_btn_interactive_val), 
             gr.update(interactive=stop_btn_interactive_val), 
-            gr.update(value=filepath_update_val),
+            gr.update(value=filepath_update_val), # Keep the old path if any
             gr.update(value=trace_info_update_val) 
         )
     
+    stopped_filepath = None
     try:
-        _log_to_q("Calling stop_input_tracking() on context...")
-        filepath = await _ui_global_browser_context.stop_input_tracking()
-        # Recorder will put "Recording stopped." into queue.
-        _global_input_tracking_active = False 
+        _RECORDING_ACTIVE = False # Signal the writer task to stop
+        _log_to_ui_q("Recording flag set to inactive.")
 
-        if filepath:
-            _last_manual_trace_path = filepath 
-            filepath_update_val = filepath
-            status_message_val = f"Input tracking stopped. Trace saved to: {filepath}"
-            _log_to_q(f"Trace saved: {filepath}")
+        if _RECORDING_ASYNC_TASK and not _RECORDING_ASYNC_TASK.done():
+            _log_to_ui_q("Cancelling pipe-to-file writer task...")
+            _RECORDING_ASYNC_TASK.cancel()
             try:
-                trace_info_update_val = user_input_functions.get_file_info(filepath)
-                _log_to_q(f"Successfully loaded info for new trace: {filepath}")
+                await _RECORDING_ASYNC_TASK
+                _log_to_ui_q("Writer task finished after cancellation.")
+            except asyncio.CancelledError:
+                _log_to_ui_q("Writer task successfully cancelled.")
+            except Exception as e_task_await:
+                _log_to_ui_q(f"Error awaiting writer task: {e_task_await}", is_error=True)
+                logger.error(f"Error awaiting _RECORDING_ASYNC_TASK: {e_task_await}", exc_info=True)
+        _RECORDING_ASYNC_TASK = None
+
+        if _RECORDING_FILE_HANDLE and not _RECORDING_FILE_HANDLE.closed:
+            # NEW: Before closing, flush any remaining messages that might still be in HOST_STATUS_LOG_Q
+            try:
+                flushed_count = 0
+                while not HOST_STATUS_LOG_Q.empty():
+                    try:
+                        pending_line = HOST_STATUS_LOG_Q.get_nowait()
+                        _RECORDING_FILE_HANDLE.write(pending_line + "\n")
+                        flushed_count += 1
+                        HOST_STATUS_LOG_Q.task_done()
+                    except asyncio.QueueEmpty:
+                        break
+                if flushed_count:
+                    _RECORDING_FILE_HANDLE.flush()
+                    logger.info(f"[stop_input_tracking_with_context] Flushed {flushed_count} remaining lines from HOST_STATUS_LOG_Q before closing file.")
+            except Exception as e_flush:
+                logger.error(f"[stop_input_tracking_with_context] Error flushing remaining queue messages: {e_flush}", exc_info=True)
+
+            _log_to_ui_q(f"Closing trace file: {_CURRENT_RECORDING_FILE_PATH}")
+            _RECORDING_FILE_HANDLE.flush()
+            _RECORDING_FILE_HANDLE.close()
+            _log_to_ui_q("Trace file closed.")
+        _RECORDING_FILE_HANDLE = None
+
+        if _CURRENT_RECORDING_FILE_PATH:
+            stopped_filepath = _CURRENT_RECORDING_FILE_PATH
+            _last_manual_trace_path = _CURRENT_RECORDING_FILE_PATH # Update for next UI cycle
+            filepath_update_val = _CURRENT_RECORDING_FILE_PATH
+            status_message_val = f"Recording stopped. Trace saved to: {Path(stopped_filepath).name}"
+            _log_to_ui_q(f"Trace saved: {stopped_filepath}")
+            try:
+                trace_info_update_val = user_input_functions.get_file_info(stopped_filepath)
+                _log_to_ui_q(f"Successfully loaded info for new trace: {stopped_filepath}")
             except Exception as e_info:
-                _log_to_q(f"Error getting trace info for display: {e_info}", is_error=True)
-                trace_info_update_val = {"error": f"Could not load trace info: {str(e_info)}"}
+                _log_to_ui_q(f"Error getting trace info for display: {e_info}", is_error=True)
+                trace_info_update_val = {"error": f"Could not load trace info for {Path(stopped_filepath).name}: {str(e_info)}"}
         else:
-            status_message_val = "Input tracking stopped. No new events were recorded to save."
-            _log_to_q(status_message_val) # Also log this to queue
-            if _last_manual_trace_path:
-                 try:
-                    trace_info_update_val = user_input_functions.get_file_info(_last_manual_trace_path)
-                 except Exception as e_info_display_else:
-                    _log_to_q(f"Error getting trace info (no new file path): {e_info_display_else}", is_error=True)
-                    trace_info_update_val = {"error": f"Could not load trace info: {str(e_info_display_else)}"}
-            else:
-                 trace_info_update_val = {"message": "No trace file was saved in this or previous sessions."}
-        
-        start_btn_interactive_val = True
-        stop_btn_interactive_val = False
+            status_message_val = "Recording stopped, but no current file path was set."
+            _log_to_ui_q(status_message_val, is_error=True)
+            trace_info_update_val = {"message": "No file path was recorded for this session."}
+
+        _CURRENT_RECORDING_FILE_PATH = None # Clear for next recording
+        start_btn_interactive_val = True # Enable start button
+        stop_btn_interactive_val = False # Disable stop button
 
     except Exception as e:
-        status_message_val = f"Error stopping input tracking: {str(e)}"
-        _log_to_q(f"Exception during stop_input_tracking_with_context: {e}", is_error=True)
-        start_btn_interactive_val = not _global_input_tracking_active 
-        stop_btn_interactive_val = _global_input_tracking_active    
-        # trace_info_update_val remains as it was, or updated with error if that part failed
-        if "error" not in trace_info_update_val and e: # Add general error if not already specific
-            trace_info_update_val = {"error": f"Error stopping tracking: {str(e)}"}
+        status_message_val = f"Error stopping pipe-to-file recording: {str(e)}"
+        _log_to_ui_q(f"Exception: {e}", is_error=True)
+        logger.error(f"Exception in stop_input_tracking_with_context (pipe-to-file): {e}", exc_info=True)
+        # Try to revert to a safe state
+        start_btn_interactive_val = True 
+        stop_btn_interactive_val = False    
+        if "error" not in trace_info_update_val : 
+            trace_info_update_val = {"error": f"Error stopping: {str(e)}"}
+        # Ensure _RECORDING_ACTIVE is false even if other cleanup failed
+        _RECORDING_ACTIVE = False 
 
     return (
         gr.update(value=status_message_val), 
         gr.update(interactive=start_btn_interactive_val), 
         gr.update(interactive=stop_btn_interactive_val), 
-        gr.update(value=filepath_update_val),
-        gr.update(value=trace_info_update_val)
+        gr.update(value=filepath_update_val), # This is last_recorded_trace_path_hidden
+        gr.update(value=trace_info_update_val) # This is recorded_trace_info_display
     )
 
 async def stream_replay_ui(
@@ -627,6 +681,16 @@ async def _read_host_pipe_task():
         # this sleep prevents a tight loop if open() immediately fails again.
         await asyncio.sleep(1) # Wait a bit before retrying the main while True loop (re-opening pipe)
 
+# --- Test function for demo.load ---
+def _test_load_function():
+    print("[_test_load_function]sync TEST LOAD FUNCTION EXECUTED PRINT STATEMENT AT VERY TOP OF LOAD", flush=True)
+    logging.getLogger(__name__).critical("[_test_load_function] syncTEST LOAD FUNCTION EXECUTED CRITICAL LOG AT VERY TOP OF LOAD")
+
+async def _async_test_load_function():
+    print("[_async_test_load_function] ASYNC TEST LOAD FUNCTION EXECUTED PRINT STATEMENT AT VERY TOP OF LOAD", flush=True)
+    logging.getLogger(__name__).critical("[_async_test_load_function] ASYNC TEST LOAD FUNCTION EXECUTED CRITICAL LOG AT VERY TOP OF LOAD")
+    await asyncio.sleep(0.1) # Minimal async work
+
 # --- Global UI Definitions ---
 css = """ 
     /* Your CSS styles here, e.g.: */
@@ -645,11 +709,150 @@ theme_map = {
 } 
 # --- End Global UI Definitions ---
 
+async def _write_to_response_pipe(response_data: dict):
+    global RESPONSE_PIPE_PATH, logger
+    try:
+        json_response = json.dumps(response_data)
+        logger.info(f"[_write_to_response_pipe] Attempting to open response pipe {RESPONSE_PIPE_PATH} for writing.")
+        fd = os.open(RESPONSE_PIPE_PATH, os.O_WRONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, 'w') as pipe_writer:
+            pipe_writer.write(json_response + '\n')
+            pipe_writer.flush()
+        logger.info(f"[_write_to_response_pipe] Successfully wrote to {RESPONSE_PIPE_PATH}: {json_response}")
+    except FileNotFoundError:
+        logger.error(f"[_write_to_response_pipe] ERROR: Response pipe {RESPONSE_PIPE_PATH} not found. Host.py might not be ready or pipe was removed.")
+    except OSError as e:
+        if e.errno == 6:
+            logger.warning(f"[_write_to_response_pipe] Response pipe {RESPONSE_PIPE_PATH} has no reader. Host.py might not be listening.")
+        else:
+            logger.error(f"[_write_to_response_pipe] OSError writing to response pipe {RESPONSE_PIPE_PATH}: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"[_write_to_response_pipe] Error writing to response pipe {RESPONSE_PIPE_PATH}: {e}", exc_info=True)
+
+async def _process_command_from_pipe(command_str: str):
+    global logger, _RECORDING_ACTIVE, _last_manual_trace_path
+    logger.info(f"[_process_command_from_pipe] Received command: {command_str}")
+    response_payload = {"status": "unknown_command", "command": command_str, "message": "Command not recognized by webui.py"}
+
+    if command_str == "START_RECORDING":
+        try:
+            print(f"[_process_command_from_pipe] PRINT: About to call start_input_tracking_with_context for command: {command_str}", flush=True)
+            logger.info(f"[_process_command_from_pipe] LOG: About to call start_input_tracking_with_context for command: {command_str}")
+            
+            await start_input_tracking_with_context()
+            
+            logger.info(f"[_process_command_from_pipe] LOG: Returned from start_input_tracking_with_context. _RECORDING_ACTIVE state: {_RECORDING_ACTIVE}")
+            print(f"[_process_command_from_pipe] PRINT: Returned from start_input_tracking_with_context. _RECORDING_ACTIVE state: {_RECORDING_ACTIVE}", flush=True)
+
+            if _RECORDING_ACTIVE:
+                response_payload = {"status": "recording_started", "command": command_str, "message": "Recording started successfully via extension command."}
+            else:
+                response_payload = {"status": "error_starting_recording", "command": command_str, "message": "Recording did not activate as expected. Check webui logs."}
+        except Exception as e:
+            logger.error(f"Error calling start_input_tracking_with_context from pipe: {e}", exc_info=True)
+            response_payload = {"status": "error", "command": command_str, "message": f"Exception during start_recording: {str(e)}"}
+    
+    elif command_str == "STOP_RECORDING":
+        try:
+            logger.info(f"Calling stop_input_tracking_with_context from command pipe for command: {command_str}")
+            await stop_input_tracking_with_context()
+
+            logger.info(f"[_process_command_from_pipe] LOG: Returned from stop_input_tracking_with_context. _RECORDING_ACTIVE state: {_RECORDING_ACTIVE}")
+            print(f"[_process_command_from_pipe] PRINT: Returned from stop_input_tracking_with_context. _RECORDING_ACTIVE state: {_RECORDING_ACTIVE}", flush=True)
+            
+            if not _RECORDING_ACTIVE:
+                 response_payload = {
+                    "status": "recording_stopped", 
+                    "command": command_str, 
+                    "message": "Recording stopped successfully via extension command.",
+                    "filePath": _last_manual_trace_path 
+                }
+            else:
+                response_payload = {"status": "error_stopping_recording", "command": command_str, "message": "Recording did not deactivate as expected. Check webui logs."}
+        except Exception as e:
+            logger.error(f"Error calling stop_input_tracking_with_context from pipe: {e}", exc_info=True)
+            response_payload = {"status": "error", "command": command_str, "message": f"Exception during stop_recording: {str(e)}"}
+    
+    response_payload["source"] = "extension_command_response"
+    await _write_to_response_pipe(response_payload)
+
+async def _listen_command_pipe():
+    """Restored: Creates and listens on COMMAND_PIPE_PATH for commands from host.py."""
+    # VERY FIRST LINE - ABSOLUTE ENTRY TEST (KEEP THIS)
+    print("[_listen_command_pipe RESTORED] EXECUTION STARTED - PRINT STATEMENT", flush=True)
+    logging.getLogger(__name__).critical("[_listen_command_pipe RESTORED] EXECUTION STARTED - CRITICAL LOG")
+    
+    global COMMAND_PIPE_PATH, logger 
+    logger.info(f"[_listen_command_pipe RESTORED] Starting. Command pipe path: {COMMAND_PIPE_PATH}")
+
+    if os.path.exists(COMMAND_PIPE_PATH):
+        try:
+            os.remove(COMMAND_PIPE_PATH)
+            logger.info(f"[_listen_command_pipe RESTORED] Removed existing command pipe: {COMMAND_PIPE_PATH}")
+        except OSError as e:
+            logger.error(f"[_listen_command_pipe RESTORED] Error removing existing command pipe {COMMAND_PIPE_PATH}: {e}")
+
+    try:
+        os.mkfifo(COMMAND_PIPE_PATH)
+        logger.info(f"[_listen_command_pipe RESTORED] Created command pipe: {COMMAND_PIPE_PATH}")
+    except OSError as e:
+        logger.error(f"[_listen_command_pipe RESTORED] Failed to create command pipe {COMMAND_PIPE_PATH}: {e}. Extension commands will not be processed.", exc_info=True)
+        return # Exit if pipe creation fails
+
+    logger.info(f"[_listen_command_pipe RESTORED] Listener loop started for {COMMAND_PIPE_PATH}")
+    while True:
+        pipe_file_cmd = None
+        try:
+            logger.info(f"[_listen_command_pipe RESTORED] Attempting to open command pipe for reading: {COMMAND_PIPE_PATH} (blocks until writer)...")
+            # Blocking open in a thread is fine as this whole function runs in its own thread.
+            pipe_file_cmd = open(COMMAND_PIPE_PATH, 'r') 
+            logger.info(f"[_listen_command_pipe RESTORED] Command pipe opened for reading: {COMMAND_PIPE_PATH}")
+            
+            while True:
+                line = pipe_file_cmd.readline()
+                if not line:
+                    logger.warning("[_listen_command_pipe RESTORED] Writer (host.py) closed command pipe or EOF. Re-opening...")
+                    # Close the current pipe_file_cmd before breaking to reopen
+                    if pipe_file_cmd:
+                        try: pipe_file_cmd.close()
+                        except Exception as e_close_inner: logger.error(f"[_listen_command_pipe RESTORED] Error closing pipe in inner loop: {e_close_inner}")
+                        pipe_file_cmd = None # Avoid trying to close again in finally
+                    break # Break inner loop to reopen the pipe in the outer loop
+                
+                command = line.strip()
+                if command:
+                    logger.info(f"[_listen_command_pipe RESTORED] Received command: '{command}'")
+                    # Create an asyncio task to process the command concurrently.
+                    # This needs to be run on an event loop that _process_command_from_pipe can use.
+                    # Since _listen_command_pipe is already running in its own loop (bg_loop/command_pipe_loop),
+                    # we can schedule tasks on that same loop.
+                    loop = asyncio.get_running_loop() # Get the loop this thread is running
+                    loop.create_task(_process_command_from_pipe(command))
+                    # asyncio.create_task(_process_command_from_pipe(command)) # This might try to use the wrong loop if not careful
+        except FileNotFoundError: 
+            logger.error(f"[_listen_command_pipe RESTORED] Command pipe {COMMAND_PIPE_PATH} not found during open/read. This shouldn't happen if created successfully. Retrying outer loop.")
+            # Pipe might have been deleted externally. The outer loop will try to recreate.
+        except Exception as e_cmd_pipe_outer:
+            logger.error(f"[_listen_command_pipe RESTORED] Unhandled error in outer loop: {e_cmd_pipe_outer}", exc_info=True)
+            # Avoid tight loop on persistent error
+            await asyncio.sleep(5) # Use await since this is an async function now
+        finally:
+            if pipe_file_cmd:
+                try: pipe_file_cmd.close()
+                except Exception as e_close: logger.error(f"[_listen_command_pipe RESTORED] Error closing command pipe in finally: {e_close}")
+        
+        # If the pipe was closed (EOF) or an error occurred opening it, wait a bit before retrying the outer loop.
+        logger.info("[_listen_command_pipe RESTORED] End of outer loop, will pause and retry pipe open if necessary.")
+        await asyncio.sleep(1) # Use await
+
 # --- Main UI ---
 def create_ui(theme_name="Citrus"):
-
-    with gr.Blocks(theme=theme_map.get(theme_name, Default()), css=css) as demo: # Added .get for safety
-        # ... (Define trace_file_path Textbox for general use if needed)
+    with gr.Blocks(theme=theme_map.get(theme_name, Default()), css=css) as demo: 
+        print("[create_ui] PRINT: About to call demo.load for _test_load_function", flush=True)
+        demo.load(_test_load_function, inputs=None, outputs=None)
+        print("[create_ui] PRINT: About to call demo.load for _async_test_load_function", flush=True)
+        demo.load(_async_test_load_function, inputs=None, outputs=None)
+        print("[create_ui] PRINT: About to call demo.load for _listen_command_pipe (this line is just for context, actual load removed)", flush=True)
 
         with gr.Tabs() as tabs:
             # ... (Other Tabs: Settings, Prompt Agent, Record, etc.) ...
@@ -830,26 +1033,74 @@ def create_ui(theme_name="Citrus"):
                     concurrency_limit=None # behaves like queue=False performance
                 )
         
-        # --- Add demo.load hook for recorder log streaming ---
+        # --- Original positions of demo.load hooks ---
+        print("[create_ui] PRINT: Reaching original demo.load positions", flush=True)
         demo.load(_stream_recorder_log, inputs=None, outputs=[record_status_logs_output])
-        # --- NEW: Add demo.load hook for host status log streaming and pipe reader ---
         demo.load(_stream_host_status_logs, inputs=None, outputs=[host_status_output_tb])
-        demo.load(_read_host_pipe_task, inputs=None, outputs=None) # Runs in background
+        demo.load(_read_host_pipe_task, inputs=None, outputs=None)
+        # --- TEST: demo.load for a simple sync function (original test position) ---
+        # demo.load(_test_load_function, inputs=None, outputs=None) # Commenting out, moved to top
+        # _listen_command_pipe will be scheduled as a background task at startup, not via demo.load
 
     return demo
 # --- End: Main UI ---
 
 # --- Main entry ----
-if __name__ == "__main__":
-    # Ensure MANUAL_TRACES_DIR exists at startup (MANUAL_TRACES_DIR should be defined globally)
-    # demo variable must be defined before demo.launch(), typically demo = create_ui()
-    demo = create_ui(theme_name="Citrus") # Assuming create_ui() is defined above and returns the demo instance
+def _run_async_in_thread(loop: asyncio.AbstractEventLoop, coro):
+    """Helper function to set the event loop for the new thread and run a coroutine."""
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(coro) 
 
-    if not Path(MANUAL_TRACES_DIR).exists(): # Check before creating
+# --- NEW Pipe-to-File Writer Coroutine ---
+async def _pipe_to_file_writer():
+    """Drains HOST_STATUS_LOG_Q and appends each line to the open trace file."""
+    global _RECORDING_FILE_HANDLE, _RECORDING_ACTIVE, HOST_STATUS_LOG_Q, logger
+    
+    logger.info("[_pipe_to_file_writer] Started.")
+    while _RECORDING_ACTIVE and _RECORDING_FILE_HANDLE:
+        try:
+            # Get from HOST_STATUS_LOG_Q, which is fed by _read_host_pipe_task
+            line = await asyncio.wait_for(HOST_STATUS_LOG_Q.get(), timeout=1.0) 
+            if _RECORDING_FILE_HANDLE and not _RECORDING_FILE_HANDLE.closed:
+                _RECORDING_FILE_HANDLE.write(line + "\n")
+                _RECORDING_FILE_HANDLE.flush() # Flush frequently to see live data in file
+                HOST_STATUS_LOG_Q.task_done()
+            else:
+                # This case means recording was stopped and handle closed while waiting for queue
+                logger.info("[_pipe_to_file_writer] Recording file handle closed or None while writer active. Exiting.")
+                HOST_STATUS_LOG_Q.task_done() # Still mark as done
+                break # Exit loop
+        except asyncio.TimeoutError:
+            # Just a timeout, check _RECORDING_ACTIVE again
+            if not _RECORDING_ACTIVE:
+                logger.info("[_pipe_to_file_writer] Recording became inactive during queue timeout. Exiting.")
+                break
+            continue # Continue loop if still active
+        except Exception as e:
+            logger.error(f"[_pipe_to_file_writer] Error: {e}", exc_info=True)
+            # Potentially stop recording on persistent error or just log and continue
+            await asyncio.sleep(0.1) # Brief pause before retrying get()
+    logger.info("[_pipe_to_file_writer] Exited.")
+
+if __name__ == "__main__":
+    demo = create_ui(theme_name="Citrus")
+
+    if not Path(MANUAL_TRACES_DIR).exists():
         Path(MANUAL_TRACES_DIR).mkdir(parents=True, exist_ok=True)
         logger.info(f"Created MANUAL_TRACES_DIR at: {Path(MANUAL_TRACES_DIR).resolve()}")
     else:
         logger.info(f"MANUAL_TRACES_DIR exists at: {Path(MANUAL_TRACES_DIR).resolve()}")
+
+    # Create and start the background event loop and task for _listen_command_pipe
+    command_pipe_loop = asyncio.new_event_loop()
+    command_pipe_thread = threading.Thread(
+        target=_run_async_in_thread,
+        args=(command_pipe_loop, _listen_command_pipe()), # Pass the loop and the coroutine object
+        daemon=True,
+        name="RebrowseCmdPipeLoop"
+    )
+    command_pipe_thread.start()
+    logger.info("Started _listen_command_pipe in a background daemon thread with its own event loop.")
 
     logger.info(f"Launching Gradio demo. Access at http://127.0.0.1:7860")
     demo.launch(server_name="127.0.0.1", server_port=7860, debug=True, allowed_paths=[MANUAL_TRACES_DIR])
