@@ -1,5 +1,6 @@
 #!/Users/norikakizawa/.pyenv/versions/3.12.2/bin/python3
-import sys, json, asyncio, threading, os, time, struct
+import sys, json, asyncio, threading, os, time, struct, errno
+from typing import Optional
 
 # --- Emergency File Logger (for very early issues) ---
 EMERGENCY_LOG_FILE = "/tmp/rebrowse_host_emergency.log"
@@ -15,6 +16,10 @@ def emergency_log(message):
         pass 
 
 emergency_log("Host script started execution (top of file).")
+
+# --- NEW Named Pipe Paths (must match webui.py) ---
+COMMAND_PIPE_PATH_TO_WEBUI = "/tmp/rebrowse_ui_command.pipe"
+RESPONSE_PIPE_PATH_FROM_WEBUI = "/tmp/rebrowse_ui_command_response.pipe"
 
 # --- Global Send Function (used by early_ready_ping) ---
 # This must be defined before early_ready_ping can be called.
@@ -45,6 +50,12 @@ HOST_STATUS_PIPE_PATH = "/tmp/rebrowse_host_status.pipe"
 _pipe_writer_file = None
 _pipe_lock = threading.Lock()
 
+# CDP_QUEUE will be created after the asyncio event-loop is running so that it
+# is bound to the correct loop.  A thread-safe reference to that loop is also
+# stored so that handle_msg (running from a different thread) can enqueue
+# events with loop.call_soon_threadsafe(...).
+_cdp_queue_loop = None  # type: Optional[asyncio.AbstractEventLoop]
+# Create the queue once at the module level. It will be bound to a loop later.
 CDP_QUEUE = asyncio.Queue()
 
 # --- Main Script Logic (imports and functions) ---
@@ -54,73 +65,119 @@ def _setup_pipe_writer(force_reopen=False):
     global _pipe_writer_file, HOST_STATUS_PIPE_PATH
     with _pipe_lock:
         if _pipe_writer_file and not _pipe_writer_file.closed and not force_reopen:
+            emergency_log(f"[_setup_pipe_writer] Pipe writer already open and valid.")
             return True
 
         if _pipe_writer_file and not _pipe_writer_file.closed:
             try:
+                emergency_log(f"[_setup_pipe_writer] Closing existing pipe writer.")
                 _pipe_writer_file.close()
             except Exception as e_close:
-                print(f"[HostPipe] Error closing existing pipe: {e_close}", file=sys.stderr)
+                emergency_log(f"[_setup_pipe_writer] Error closing existing pipe: {e_close}")
             _pipe_writer_file = None
         
         if not os.path.exists(HOST_STATUS_PIPE_PATH):
-            # print(f"[HostPipe] Pipe {HOST_STATUS_PIPE_PATH} does not exist. Gradio UI may not be ready.", file=sys.stderr)
-            # Don't wait or error here, webui.py is responsible for creating it.
-            # We will simply fail to open it and can retry later.
-            return False
+            emergency_log(f"[_setup_pipe_writer] Pipe {HOST_STATUS_PIPE_PATH} does not exist. WebUI reader might not have created it yet.")
+            return False # Return False, webui.py is responsible for creating it.
         
         try:
-            # Open the FIFO in NON-BLOCKING write-only mode.  If no reader is present we
-            # get an OSError with errno=ENXIO instead of blocking the entire main
-            # thread, which previously prevented the async loop from ever starting.
+            emergency_log(f"[_setup_pipe_writer] Attempting to os.open pipe {HOST_STATUS_PIPE_PATH} (non-blocking write).")
             fd = os.open(HOST_STATUS_PIPE_PATH, os.O_WRONLY | os.O_NONBLOCK)
             _pipe_writer_file = os.fdopen(fd, 'w')
-            print(f"[HostPipe] Successfully opened pipe {HOST_STATUS_PIPE_PATH} for writing (non-blocking).", file=sys.stderr)
+            emergency_log(f"[_setup_pipe_writer] Successfully opened pipe {HOST_STATUS_PIPE_PATH} for writing (non-blocking).")
             return True
-        except FileNotFoundError:
-            # This can happen if webui.py hasn't created the pipe yet.
-            # print(f"[HostPipe] Pipe {HOST_STATUS_PIPE_PATH} not found on open attempt.", file=sys.stderr)
+        except FileNotFoundError: # Should be caught by os.path.exists generally
+            emergency_log(f"[_setup_pipe_writer] Pipe {HOST_STATUS_PIPE_PATH} not found on os.open attempt.")
             _pipe_writer_file = None
             return False
         except OSError as e:
-            # ENXIO (6) means "no reader" – treat as temporary and don't block.
-            if e.errno == 6:
-                # No reader yet; we'll retry later without killing the host.
-                print(f"[HostPipe] Pipe {HOST_STATUS_PIPE_PATH} has no reader yet – will retry later.", file=sys.stderr)
+            if e.errno == 6: # ENXIO
+                emergency_log(f"[_setup_pipe_writer] Pipe {HOST_STATUS_PIPE_PATH} has no reader (ENXIO). Will retry later.")
             else:
-                print(f"[HostPipe] OSError opening pipe {HOST_STATUS_PIPE_PATH}: {e}", file=sys.stderr)
+                emergency_log(f"[_setup_pipe_writer] OSError opening pipe {HOST_STATUS_PIPE_PATH}: {e}")
+            _pipe_writer_file = None
+            return False
+        except Exception as e_unhandled_open:
+            emergency_log(f"[_setup_pipe_writer] Unhandled exception opening pipe {HOST_STATUS_PIPE_PATH}: {e_unhandled_open}")
             _pipe_writer_file = None
             return False
 
 def log_to_gradio(message: str):
     global _pipe_writer_file
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    full_message = f"[{timestamp}] [NativeHost] {message}"
-    # print(f"Attempting to log to Gradio: {full_message}", file=sys.stderr) # For host-side debug
+    # Construct the log entry that would normally be prefixed by Gradio/logger, but here it's raw for the pipe
+    # The message itself is now expected to be a full JSON string from main_async_logic
+    # No, keep it as host.py is the one adding the [NativeHost] prefix for the pipe consumers.
+    # The actual JSON data is just `message`.
+    # However, the current trace file shows `[NativeHost]` prefix from previous versions.
+    # Let's assume for now `message` is the raw data (e.g. JSON string) and the receiver adds prefixes if needed.
+    # OR, if host.py is to add this prefix, it should be consistent.
+    # The current trace file only contains a few lines, one being:
+    # [2025-06-06 00:13:04] [NativeHost] Received recording command from extension: START. Attempting to forward to webui.py...
+    # This suggests host.py *does* add a prefix + timestamp for some of its log_to_gradio calls.
+    # Let's make it consistent: if `message` is already a full JSON, just pass it. 
+    # If it's a string message, prefix it.
+    
+    # Decision: For simplicity and to ensure trace file contains pure JSON lines for events,
+    # this function will now assume `message` is the complete string to be written.
+    # `main_async_logic` is now responsible for `json.dumps()`ing events.
+    # For status messages FROM host.py, they should also be JSON if possible, or clearly distinct strings.
+
+    # emergency_log(f"[log_to_gradio] Attempting to log: '{message[:100]}...'") # Can be too noisy
 
     if not _pipe_writer_file or _pipe_writer_file.closed:
-        if not _setup_pipe_writer(): # Attempt to open/reopen
-            # print(f"[HostPipe] Failed to setup pipe writer. Cannot send: {full_message}", file=sys.stderr)
-            return
+        emergency_log(f"[log_to_gradio] Pipe writer not available or closed. Attempting to set up.")
+        if not _setup_pipe_writer(): 
+            emergency_log(f"[log_to_gradio] Failed to setup pipe writer. Message NOT SENT: '{message[:100]}...'")
+            return # Message not sent
     
     with _pipe_lock:
         if _pipe_writer_file and not _pipe_writer_file.closed:
             try:
-                _pipe_writer_file.write(full_message + '\n')
+                _pipe_writer_file.write(message + '\n')
                 _pipe_writer_file.flush()
+            except BlockingIOError as e_block:
+                # Non-blocking pipe may be temporarily full (EAGAIN). Retry a few times before giving up.
+                retry_count = 0
+                max_retries = 5
+                wrote = False
+                while retry_count < max_retries and not wrote:
+                    time.sleep(0.02)  # brief back-off
+                    try:
+                        _pipe_writer_file.write(message + '\n')
+                        _pipe_writer_file.flush()
+                        wrote = True
+                    except BlockingIOError:
+                        retry_count += 1
+
+                if not wrote:
+                    emergency_log(f"[log_to_gradio] BlockingIOError (pipe full) after {max_retries} retries. Dropping message: '{message[:100]}...'")
             except BrokenPipeError:
-                print(f"[HostPipe] Broken pipe. webui.py may have closed. Attempting to reopen on next log.", file=sys.stderr)
-                _pipe_writer_file.close() # Close our end
+                emergency_log(f"[log_to_gradio] Broken pipe. Message NOT SENT: '{message[:100]}...'. Attempting to reopen on next log.")
+                try:
+                    _pipe_writer_file.close()
+                except Exception:
+                    pass
                 _pipe_writer_file = None
-                _setup_pipe_writer(force_reopen=True) # Try to reopen immediately for next message
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    emergency_log(f"[log_to_gradio] EAGAIN when writing to pipe – buffer full. Message dropped: '{message[:100]}...'")
+                else:
+                    emergency_log(f"[log_to_gradio] OSError writing to pipe: {e}. Message NOT SENT: '{message[:100]}...'")
+                try:
+                    _pipe_writer_file.close()
+                except Exception:
+                    pass
+                _pipe_writer_file = None
             except Exception as e:
-                print(f"[HostPipe] Error writing to pipe: {e}. Message: {full_message}", file=sys.stderr)
-                # Consider closing and reopening on any write error
-                try: _pipe_writer_file.close() 
-                except: pass
+                emergency_log(f"[log_to_gradio] Error writing to pipe: {e}. Message NOT SENT: '{message[:100]}...'")
+                try:
+                    _pipe_writer_file.close()
+                except Exception:
+                    pass
                 _pipe_writer_file = None
-        # else:
-            # print(f"[HostPipe] Pipe not available for writing: {full_message}", file=sys.stderr)
+        else:
+            emergency_log(f"[log_to_gradio] Pipe still not available after setup attempt. Message NOT SENT: '{message[:100]}...'")
 
 
 def recv_loop():
@@ -182,97 +239,230 @@ def handle_msg(msg):
     emergency_log(f"handle_msg: Received msg. Type: '{msg.get('type')}', Method: '{msg.get('method')}'.")
     if msg.get('type') == 'cdp': # Use .get for safer access
         try:
-            CDP_QUEUE.put_nowait(msg) # This is synchronous call from a thread
-            log_to_gradio(f"CDP event enqueued: {msg.get('method', 'UnknownMethod')}")
+            if CDP_QUEUE and _cdp_queue_loop:
+                emergency_log(f"handle_msg: scheduling async put to CDP_QUEUE id={id(CDP_QUEUE)}")
+                try:
+                    fut = asyncio.run_coroutine_threadsafe(CDP_QUEUE.put(msg), _cdp_queue_loop)
+                except Exception as e_put:
+                    emergency_log(f"handle_msg: run_coroutine_threadsafe failed: {e_put}")
+            else:
+                emergency_log("handle_msg: CDP_QUEUE not ready yet — dropping CDP msg.")
+            # log_to_gradio(f"CDP event enqueued: {msg.get('method', 'UnknownMethod')}")
             emergency_log(f"handle_msg: Successfully put_nowait to CDP_QUEUE (CDP event). Method: '{msg.get('method')}'.")
         except asyncio.QueueFull:
             emergency_log("handle_msg: CDP_QUEUE is full during put_nowait (CDP event).")
-            # send({'type': 'error', 'error': 'CDP_QUEUE is full'})
         except Exception as e:
             emergency_log(f"handle_msg: Error during put_nowait to CDP_QUEUE (CDP event): {type(e).__name__}: {e}")
-            # send({'type': 'error', 'error': f'Error adding to CDP_QUEUE: {str(e)}'})
     elif msg.get('type') == 'ui_event_to_host':
         ui_payload = msg.get('payload')
-        if ui_payload and isinstance(ui_payload, dict): # Check if payload exists and is a dictionary
-            event_type_from_payload = ui_payload.get('type') # Get type early for logging
-            selector_from_payload = ui_payload.get('selector') # Get selector early for logging
+        if ui_payload and isinstance(ui_payload, dict): 
+            event_type_from_payload = ui_payload.get('type') 
+            selector_from_payload = ui_payload.get('selector') 
             emergency_log(f"handle_msg: Received UI event. Type: '{event_type_from_payload}', Selector: '{selector_from_payload}'.")
-            try:
-                CDP_QUEUE.put_nowait({"source": "ui_event", "data": ui_payload})
-                log_to_gradio(f"UI event enqueued: {event_type_from_payload}")
-                emergency_log(f"handle_msg: Successfully put_nowait to CDP_QUEUE (UI event). Type: '{event_type_from_payload}'.")
-            except asyncio.QueueFull:
-                emergency_log("handle_msg: CDP_QUEUE is full during put_nowait (UI event).")
-            except Exception as e:
-                emergency_log(f"handle_msg: Error during put_nowait to CDP_QUEUE (UI event): {type(e).__name__}: {e}")
+            if CDP_QUEUE and _cdp_queue_loop:
+                emergency_log(f"handle_msg(UI): scheduling async put to CDP_QUEUE id={id(CDP_QUEUE)}")
+                try:
+                    fut = asyncio.run_coroutine_threadsafe(CDP_QUEUE.put({"source": "ui_event", "data": ui_payload}), _cdp_queue_loop)
+                except Exception as e_ui_put:
+                    emergency_log(f"handle_msg(UI): run_coroutine_threadsafe failed: {e_ui_put}")
+            else:
+                emergency_log("handle_msg: CDP_QUEUE not ready yet — dropping UI event.")
+            # log_to_gradio(f"UI event enqueued: {event_type_from_payload}")
+            # The writing of the UI event payload to the trace file will now be handled
+            # exclusively by main_async_logic to ensure proper ordering and prevent duplicates.
+            # try:
+            #     log_to_gradio(json.dumps(ui_payload))
+            # except TypeError as e_json_ui:
+            #     emergency_log(f"handle_msg(UI): Failed to json.dumps ui_payload: {e_json_ui}. Payload snippet: {str(ui_payload)[:200]}")
+            emergency_log(f"handle_msg: Successfully put_nowait to CDP_QUEUE (UI event). Type: '{event_type_from_payload}'.")
         else:
             emergency_log(f"handle_msg: Received 'ui_event_to_host' message but payload was missing or not a dict. Payload: {str(ui_payload)[:200]}")
     elif msg.get('type') == 'client_ready_ack':
-        # Simply log; no further action needed, but acknowledge reception.
         emergency_log("handle_msg: Received client_ready_ack from extension – connection confirmed active.")
     elif msg.get('type') == 'extension_ping':
-        # Reply with a pong so the extension knows we are still alive.
         emergency_log("handle_msg: Received extension_ping – replying with extension_pong.")
         send({'type': 'extension_pong', 'ts': time.time()})
+    elif msg.get('type') == 'recording_command':
+        command = msg.get('command')
+        emergency_log(f"handle_msg: Received recording_command: {command}")
+        log_to_gradio(f"Received recording command from extension: {command}. Attempting to forward to webui.py...")
+        
+        command_to_webui = ""
+        if command == 'START':
+            command_to_webui = "START_RECORDING"
+        elif command == 'STOP':
+            command_to_webui = "STOP_RECORDING"
+        else:
+            emergency_log(f"handle_msg: Unknown recording_command payload: {command}")
+            send({
+                'type': 'recording_status_update',
+                'payload': {'status': 'error', 'message': f"Unknown recording command '{command}' received by host.py"}
+            })
+            return
+
+        try:
+            emergency_log(f"Attempting to write '{command_to_webui}' to {COMMAND_PIPE_PATH_TO_WEBUI}")
+            fd = os.open(COMMAND_PIPE_PATH_TO_WEBUI, os.O_WRONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, 'w') as pipe_writer:
+                pipe_writer.write(command_to_webui + '\n')
+                pipe_writer.flush()
+            emergency_log(f"Successfully wrote '{command_to_webui}' to {COMMAND_PIPE_PATH_TO_WEBUI}")
+            send({
+                'type': 'ack', 
+                'received_event_type': 'recording_command', 
+                'details': f"Command '{command}' relayed to webui.py via pipe."
+            })
+        except FileNotFoundError:
+            err_msg = f"Failed to send command to webui: Pipe {COMMAND_PIPE_PATH_TO_WEBUI} not found. Webui might not be running or pipe not created."
+            emergency_log(err_msg)
+            log_to_gradio(err_msg)
+            send({'type': 'recording_status_update', 'payload': {'status': 'error', 'message': err_msg}})
+        except OSError as e:
+            if e.errno == 6: 
+                 err_msg = f"Failed to send command to webui: No reader on {COMMAND_PIPE_PATH_TO_WEBUI}. Webui might not be listening."
+            else:
+                 err_msg = f"Failed to send command to webui: OSError writing to {COMMAND_PIPE_PATH_TO_WEBUI}: {e}"
+            emergency_log(err_msg)
+            log_to_gradio(err_msg)
+            send({'type': 'recording_status_update', 'payload': {'status': 'error', 'message': err_msg}})
+        except Exception as e_pipe_write:
+            err_msg = f"Exception sending command to webui via pipe {COMMAND_PIPE_PATH_TO_WEBUI}: {e_pipe_write}"
+            emergency_log(err_msg)
+            log_to_gradio(err_msg)
+            send({'type': 'recording_status_update', 'payload': {'status': 'error', 'message': err_msg}})
     else:
         emergency_log(f"handle_msg: Unknown or unhandled message type received: '{msg.get('type')}'. Full msg: {str(msg)[:200]}...")
 
+async def _listen_command_responses_pipe():
+    """Listens on RESPONSE_PIPE_PATH_FROM_WEBUI for JSON responses from webui.py."""
+    global RESPONSE_PIPE_PATH_FROM_WEBUI
+    emergency_log(f"[_listen_command_responses_pipe] Starting. Response pipe path: {RESPONSE_PIPE_PATH_FROM_WEBUI}")
+
+    # host.py is the reader of this pipe, so it should ensure it exists.
+    if not os.path.exists(RESPONSE_PIPE_PATH_FROM_WEBUI):
+        try:
+            os.mkfifo(RESPONSE_PIPE_PATH_FROM_WEBUI)
+            emergency_log(f"[_listen_command_responses_pipe] Created response pipe: {RESPONSE_PIPE_PATH_FROM_WEBUI}")
+        except OSError as e:
+            emergency_log(f"[_listen_command_responses_pipe] CRITICAL: Failed to create response pipe {RESPONSE_PIPE_PATH_FROM_WEBUI}: {e}. Cannot get command status from webui.")
+            log_to_gradio(f"CRITICAL: host.py could not create response pipe {RESPONSE_PIPE_PATH_FROM_WEBUI}. Extension command feedback disabled.")
+            await asyncio.Future() # Keep task alive forever so gather doesn't exit.
+
+    emergency_log(f"[_listen_command_responses_pipe] Listener loop started for {RESPONSE_PIPE_PATH_FROM_WEBUI}")
+    while True:
+        pipe_file_resp = None
+        try:
+            emergency_log(f"[_listen_command_responses_pipe] Attempting to open response pipe for reading: {RESPONSE_PIPE_PATH_FROM_WEBUI} (blocks until writer)...")
+            pipe_file_resp = open(RESPONSE_PIPE_PATH_FROM_WEBUI, 'r') # Blocking open
+            emergency_log(f"[_listen_command_responses_pipe] Response pipe opened for reading: {RESPONSE_PIPE_PATH_FROM_WEBUI}")
+            
+            while True:
+                line = pipe_file_resp.readline()
+                if not line:
+                    emergency_log("[_listen_command_responses_pipe] Writer (webui.py) closed response pipe or EOF. Re-opening...")
+                    break 
+
+                response_str = line.strip()
+                if response_str:
+                    emergency_log(f"[_listen_command_responses_pipe] Received response string: '{response_str}'")
+                    try:
+                        response_payload = json.loads(response_str)
+                        if isinstance(response_payload, dict) and response_payload.get("source") == "extension_command_response":
+                            emergency_log(f"[_listen_command_responses_pipe] Parsed response: {response_payload}")
+                            send({"type": "recording_status_update", "payload": response_payload})
+                            emergency_log(f"Sent recording_status_update to extension with payload: {response_payload.get('status')}")
+                        else:
+                            emergency_log(f"[_listen_command_responses_pipe] Received valid JSON but not an extension_command_response: {response_str[:200]}")
+                    except json.JSONDecodeError as e_json:
+                        emergency_log(f"[_listen_command_responses_pipe] JSONDecodeError for response '{response_str[:200]}...': {e_json}")
+                    except Exception as e_proc_resp:
+                        emergency_log(f"[_listen_command_responses_pipe] Error processing response '{response_str[:200]}...': {e_proc_resp}")
+        except FileNotFoundError: # Should not happen if created above, but handle defensively
+            emergency_log(f"[_listen_command_responses_pipe] Response pipe {RESPONSE_PIPE_PATH_FROM_WEBUI} not found. Recreating...")
+            try:
+                if os.path.exists(RESPONSE_PIPE_PATH_FROM_WEBUI): os.remove(RESPONSE_PIPE_PATH_FROM_WEBUI)
+                os.mkfifo(RESPONSE_PIPE_PATH_FROM_WEBUI)
+                emergency_log(f"[_listen_command_responses_pipe] Recreated response pipe {RESPONSE_PIPE_PATH_FROM_WEBUI}.")
+            except OSError as e_mkrpipe:
+                emergency_log(f"[_listen_command_responses_pipe] Failed to recreate response pipe: {e_mkrpipe}. Retrying outer loop in 10s.")
+                await asyncio.sleep(10)
+        except Exception as e_resp_pipe_outer:
+            emergency_log(f"[_listen_command_responses_pipe] Unhandled error in response pipe loop: {e_resp_pipe_outer}")
+            await asyncio.sleep(5) # Wait before retrying main loop for robustness
+        finally:
+            if pipe_file_resp:
+                try: pipe_file_resp.close()
+                except Exception as e_close_resp: emergency_log(f"[_listen_command_responses_pipe] Error closing response pipe: {e_close_resp}")
+        
+        await asyncio.sleep(1) # Prevent tight loop on continuous error
+
 async def main_async_logic():
     emergency_log("main_async_logic started.")
-    # The initial send is now done by early_ready_ping before this logic runs.
-    # log_to_gradio("Native host main_async_logic started. Waiting for CDP messages...")
-    # send({"type": "status", "message": "Native host ready and listening for CDP."})
-    # emergency_log("main_async_logic: Sent initial 'ready' status to Chrome.") # This log is now redundant here
+    emergency_log(f"main_async_logic using CDP_QUEUE id={id(CDP_QUEUE)}")
     try:
         while True:
-            emergency_log("main_async_logic: Top of while True loop.")
             try:
-                msg_wrapper = await asyncio.wait_for(CDP_QUEUE.get(), timeout=1.0) # Wait for 1 sec
+                msg_wrapper = await asyncio.wait_for(CDP_QUEUE.get(), timeout=1.0)
+                emergency_log(f"main_async_logic: Retrieved item from CDP_QUEUE: keys={list(msg_wrapper.keys()) if isinstance(msg_wrapper, dict) else type(msg_wrapper)}")
 
                 if msg_wrapper.get("source") == "ui_event":
-                    actual_msg = msg_wrapper.get("data")
+                    actual_msg = msg_wrapper.get("data") 
                     event_type = actual_msg.get('type', 'Unknown UI Event')
-                    selector = actual_msg.get('selector', 'N/A')
-                    key_pressed = actual_msg.get('key', 'N/A') # For keydown
-                    button_clicked = actual_msg.get('button', 'N/A') # For mousedown (0,1,2)
-                    x_coord = actual_msg.get('x', 'N/A') # For mousedown
-                    y_coord = actual_msg.get('y', 'N/A') # For mousedown
-                    text_content = actual_msg.get('text', 'N/A') # For mousedown or copy
-
-                    log_line_parts = [
-                        f"Got UI event from CDP_QUEUE: Type: {event_type}",
-                        f"Selector: '{selector}'"
+                    
+                    # Emergency log can remain detailed for debugging host.py itself
+                    log_line_parts_for_emergency = [
+                        f"Processing UI event from CDP_QUEUE: Type: {event_type}",
+                        f"URL: '{actual_msg.get('url','N/A')[:70]}'",
+                        f"Selector: '{actual_msg.get('selector', 'N/A')}'"
                     ]
-                    if event_type == 'keydown':
-                        log_line_parts.append(f"Key: '{key_pressed}'")
-                    elif event_type == 'mousedown':
-                        log_line_parts.append(f"Button: {button_clicked} @ ({x_coord},{y_coord})")
-                        if text_content and text_content != 'N/A':
-                             log_line_parts.append(f"Text: '{text_content[:50]}'") # Log first 50 chars of text
-                    elif event_type == 'clipboard_copy' and text_content and text_content != 'N/A':
-                        log_line_parts.append(f"CopiedText: '{text_content[:50]}...'")
+                    if event_type == 'keydown': log_line_parts_for_emergency.append(f"Key: '{actual_msg.get('key','N/A')}'")
+                    elif event_type == 'mousedown': 
+                        log_line_parts_for_emergency.append(f"Button: {actual_msg.get('button','N/A')} @ ({actual_msg.get('x','N/A')},{actual_msg.get('y','N/A')})")
+                        text_content = actual_msg.get('text')
+                        if text_content: log_line_parts_for_emergency.append(f"Text: '{str(text_content)[:50]}'")
+                    elif event_type == 'clipboard_copy':
+                        text_content = actual_msg.get('text')
+                        if text_content: log_line_parts_for_emergency.append(f"CopiedText: '{str(text_content)[:50]}...'")
+                    emergency_log(", ".join(log_line_parts_for_emergency))
                     
-                    emergency_log(", ".join(log_line_parts))
-                    log_to_gradio(", ".join(log_line_parts)) # Also send more detail to Gradio
-                    
-                    send({'type': 'ack', 'received_event_type': 'ui_event', 'details': event_type}) # Ack back to extension
-                else: # Assuming it's a direct CDP event
-                    actual_msg = msg_wrapper # The whole message is the CDP event
+                    # For log_to_gradio (which feeds the pipe and thus the trace file),
+                    # send the entire UI event object as a JSON string.
+                    try:
+                        ui_event_json_str = json.dumps(actual_msg) # actual_msg is the full UI event payload
+                        log_to_gradio(ui_event_json_str) # <<< THIS IS THE LINE FOR THE TRACE FILE
+                    except TypeError as e_json_dump:
+                        emergency_log(f"ERROR: Could not dump UI event to JSON: {e_json_dump}. Event: {str(actual_msg)[:200]}")
+                        log_to_gradio(f'{{"error": "json_dump_failed_ui_event", "event_type": "{event_type}", "original_payload_snippet": "{str(actual_msg)[:100].replace("\"", "\\\"")}"}}')
+
+                    send({'type': 'ack', 'received_event_type': 'ui_event', 'details': event_type})
+                
+                else: # Assuming it's a direct CDP event from the extension
+                    actual_msg = msg_wrapper # actual_msg is the full CDP message here
                     cdp_method = actual_msg.get('method', 'Unknown CDP Method')
-                    emergency_log(f"main_async_logic: Got CDP event from CDP_QUEUE: {cdp_method}")
-                    log_to_gradio(f"Processing CDP message: {cdp_method}")
+                    
+                    # USER STORY: Filter out noisy CDP events from the trace file.
+                    if cdp_method.startswith('Network.') or cdp_method.startswith('Runtime.'):
+                        emergency_log(f"main_async_logic: Skipping noisy CDP event for trace file: {cdp_method}")
+                    else:
+                        emergency_log(f"main_async_logic: Processing direct CDP event from CDP_QUEUE: {cdp_method}")
+                        try:
+                            cdp_event_json_str = json.dumps(actual_msg)
+                            log_to_gradio(cdp_event_json_str) # <<< THIS IS THE LINE FOR THE TRACE FILE
+                        except TypeError as e_json_dump_cdp:
+                            emergency_log(f"ERROR: Could not dump CDP event to JSON: {e_json_dump_cdp}. Event: {str(actual_msg)[:200]}")
+                            log_to_gradio(f'{{"error": "json_dump_failed_cdp_event", "method": "{cdp_method}", "original_payload_snippet": "{str(actual_msg)[:100].replace("\"", "\\\"")}"}}')
+
                     send({'type': 'ack', 'received_event_type': 'cdp_event', 'details': cdp_method})
                 
                 CDP_QUEUE.task_done()
-                # Here you would dispatch to Playwright or your recording logic based on msg_wrapper content
             except asyncio.TimeoutError:
-                emergency_log("main_async_logic: Timeout waiting for CDP_QUEUE.get(), queue still empty. Looping.")
-                # send({"type": "heartbeat", "message": "Host alive, queue empty"}) # Optional: send heartbeat to extension
-                pass # Just loop again if queue is empty
-            except Exception as e_loop: # Catch other errors in main processing loop
+                pass 
+            except Exception as e_loop: 
                  emergency_log(f"main_async_logic: Exception in get/process loop: {type(e_loop).__name__}: {e_loop}")
-                 log_to_gradio(f"Error in main_async_logic loop: {e_loop}")
-                 await asyncio.sleep(1) # prevent tight loop on continuous error if get() itself errors somehow
+                 # Escape quotes in error message for JSON compatibility
+                 escaped_error_details = str(e_loop).replace("\"", "\\\"")
+                 log_to_gradio(f'{{"error": "host_processing_loop_exception", "details": "{escaped_error_details}"}}')
+                 await asyncio.sleep(1) 
 
     except asyncio.CancelledError:
         emergency_log("main_async_logic: asyncio.CancelledError caught.")
@@ -280,17 +470,40 @@ async def main_async_logic():
         raise 
     except Exception as e_main_logic:
         emergency_log(f"main_async_logic: Exception caught: {type(e_main_logic).__name__}: {e_main_logic}")
-        log_to_gradio(f"Native host main_async_logic CRITICAL error: {e_main_logic}")
-        # Optionally re-raise or sys.exit depending on desired behavior post-error
+        escaped_e_main_logic = str(e_main_logic).replace("\"", "\\\"")
+        log_to_gradio(f"Native host main_async_logic CRITICAL error: {escaped_e_main_logic}")
     finally:
         emergency_log("main_async_logic finished (entered finally block).")
 
+async def run_async_main_with_listeners():
+    """Start CDP processing and response-pipe listener in the current event loop."""
 
-# This is the main synchronous function that will run the asyncio event loop.
-# It replaces the `asyncio.run(main())` if `main` itself becomes a sync orchestrator.
-# For now, sticking to the provided `asyncio.run(main_async_logic())` with `main_async_logic` defined.
-def run_async_main(): 
-    asyncio.run(main_async_logic())    
+    # The loop is already running (async function), just grab it.
+    loop = asyncio.get_running_loop()
+
+    # Expose loop globally for the recv_thread to use safely.
+    global _cdp_queue_loop
+    # Bind the module-level queue to the now-running event loop.
+    CDP_QUEUE._loop = loop
+    _cdp_queue_loop = loop
+    emergency_log(f"CDP_QUEUE (id={id(CDP_QUEUE)}) bound to loop={loop}")
+
+    emergency_log("run_async_main_with_listeners: Starting main_async_logic and _listen_command_responses_pipe tasks.")
+
+    main_cdp_task = asyncio.create_task(main_async_logic())
+    response_listener_task = asyncio.create_task(_listen_command_responses_pipe())
+
+    try:
+        await asyncio.gather(main_cdp_task, response_listener_task)
+    except Exception as e_gather:
+        emergency_log(f"run_async_main_with_listeners: asyncio.gather threw an exception: {e_gather}")
+        raise
+    finally:
+        emergency_log("run_async_main_with_listeners: asyncio.gather completed or was cancelled.")
+        for task in (main_cdp_task, response_listener_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.sleep(0.1) # Let cancellations propagate
 
 if __name__ == '__main__':
     emergency_log("__main__ block entered.")
@@ -322,16 +535,17 @@ if __name__ == '__main__':
     # Run the main async logic
     # This will block until main_async_logic() completes or is cancelled.
     try:
-        emergency_log("Attempting to call run_async_main().")
-        log_to_gradio("Attempting to start main_async_logic...")
-        run_async_main()
-        emergency_log("run_async_main() completed without error (this means main_async_logic returned normally).")
+        emergency_log("Attempting to call run_async_main_with_listeners().")
+        log_to_gradio("Attempting to start main async logic and command response listener...")
+        # asyncio.run(main_async_logic()) # Old way
+        asyncio.run(run_async_main_with_listeners()) # New way to include response listener
+        emergency_log("run_async_main_with_listeners() completed without error.")
     except KeyboardInterrupt:
         emergency_log("KeyboardInterrupt caught in __main__.")
         # print("Native host shutting down...") # To Chrome stdio
         log_to_gradio("Native host shutting down (KeyboardInterrupt).")
     except Exception as e:
-        emergency_log(f"Exception caught in __main__ after run_async_main: {type(e).__name__}: {e}")
+        emergency_log(f"Exception caught in __main__ after run_async_main_with_listeners: {type(e).__name__}: {e}")
         # print(f"Native host encountered an error: {e}") # To Chrome stdio
         log_to_gradio(f"Native host CRITICAL error: {e}")
         send({'type': 'error', 'error': f'Main loop crashed: {str(e)}'})
