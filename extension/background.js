@@ -46,6 +46,9 @@ let isNativeHostReady = false;
 const MESSAGE_QUEUE_MAX = 500;
 let messageQueue = [];
 
+// NEW: Variable to hold the last known recording status
+let currentRecordingStatus = { status: 'idle', message: 'Awaiting host status.' };
+
 function setupNativePortListeners(port) {
   port.onMessage.addListener(msg => {
     if (port !== NATIVE_PORT && NATIVE_PORT !== null) { 
@@ -83,6 +86,14 @@ function setupNativePortListeners(port) {
       } else {
         log(LOG_LEVEL.INFO, `✓ ACK: Host ➜ ${msg.received_event_type}: ${msg.details}`);
       }
+    } else if (msg.type === 'recording_status_update') {
+      log(LOG_LEVEL.INFO, `[Rebrowse BG] Received recording_status_update from host:`, msg.payload);
+      // Store the latest status
+      currentRecordingStatus = msg.payload;
+      // Forward this to the popup
+      chrome.runtime.sendMessage({ type: 'recording_status', data: msg.payload }).catch(e => {
+        log(LOG_LEVEL.WARN, "[Rebrowse BG] Error sending recording_status to popup (popup might be closed):", e.message);
+      });
     }
   });
 
@@ -98,6 +109,8 @@ function setupNativePortListeners(port) {
       NATIVE_PORT = null; 
       isNativeHostReady = false; 
       portConnectInProgress = false;
+      // Also reset recording status on disconnect, as we don't know the state anymore.
+      currentRecordingStatus = { status: 'error', message: 'Host disconnected.' };
       log(LOG_LEVEL.INFO, '► Current native port nulled by onDisconnect. Attempting to reconnect in 1 second...');
       setTimeout(ensureNativeConnection, 1000);
     }
@@ -285,7 +298,27 @@ chrome.debugger.onEvent.addListener(cdpEventListener);
 log(LOG_LEVEL.INFO, "Global CDP event listener set up.");
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'rebrowse_ui_event' && message.data) {
+  if (message.source === 'popup' && message.action === 'start_recording') {
+    log(LOG_LEVEL.INFO, '[Rebrowse BG] Received start_recording command from popup.');
+    postMessageToNativeHost({ type: 'recording_command', command: 'START' });
+    // Optional: send an immediate acknowledgement back to popup if needed, 
+    // but actual status will come from host.py later.
+    sendResponse({ status: 'start_recording_command_sent_to_host' });
+    return true; // Indicates you wish to send a response asynchronously (or synchronously)
+  } else if (message.source === 'popup' && message.action === 'stop_recording') {
+    log(LOG_LEVEL.INFO, '[Rebrowse BG] Received stop_recording command from popup.');
+    postMessageToNativeHost({ type: 'recording_command', command: 'STOP' });
+    sendResponse({ status: 'stop_recording_command_sent_to_host' });
+    return true;
+  } else if (message.source === 'popup' && message.action === 'get_recording_status') {
+    log(LOG_LEVEL.INFO, `[Rebrowse BG] Popup requested recording status. Sending current status:`, currentRecordingStatus);
+    sendResponse({ type: 'recording_status', data: currentRecordingStatus });
+    // To prevent the "message port closed" error, it's safest to always
+    // return true from a listener that sends a response.
+    return true;
+  }
+  // Keep existing UI event handling
+  else if (message.type === 'rebrowse_ui_event' && message.data) {
     const uiEvent = message.data;
     let eventDetails = `type: ${uiEvent.type}`;
     if (uiEvent.type === 'keydown' && typeof uiEvent.key !== 'undefined') {
@@ -296,8 +329,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     log(LOG_LEVEL.INFO, `►► UI Event (Tab: ${sender.tab ? sender.tab.id : 'N/A'}): ${eventDetails}`);
     postMessageToNativeHost({ type: 'ui_event_to_host', payload: uiEvent });
     sendResponse({status: `UI event '${uiEvent.type}' received by background.js and attempt to forward was made`});
-    return false; 
+    return false; // No async response needed beyond this for UI events handled here.
   }
+  // If the message is not handled by the new popup commands or existing UI event handling,
+  // return false or nothing to indicate no response will be sent.
+  // log(LOG_LEVEL.DEBUG, "[Rebrowse BG] onMessage: No handler for this message type", message);
   return false; 
 });
 

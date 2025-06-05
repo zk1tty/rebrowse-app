@@ -1,1 +1,34 @@
- 
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Rebrowse Recorder</title>
+  <meta charset="utf-8">
+  <style>
+    body {
+      font-family: sans-serif;
+      width: 250px;
+      padding: 10px;
+    }
+    button {
+      width: 100%;
+      padding: 8px;
+      margin-top: 8px;
+      cursor: pointer;
+    }
+    #statusMessage {
+      margin-top: 10px;
+      padding: 5px;
+      border: 1px solid #ccc;
+      min-height: 20px;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <h3>Rebrowse Recorder</h3>
+  <button id="startButton">▶️ Start Recording</button>
+  <button id="stopButton" disabled>⏹️ Stop Recording</button>
+  <div id="statusMessage">Not recording.</div>
+  <script src="popup.js"></script>
+</body>
+</html> 
