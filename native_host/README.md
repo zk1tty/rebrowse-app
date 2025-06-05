@@ -14,6 +14,11 @@ The Native Messaging host manifest file is located at `/Library/Google/Chrome/Na
     ```
     lrwxr-xr-x@ 1 root  wheel Date Time /Library/Google/Chrome/NativeMessagingHosts/com.rebrowse.host.json -> /Users/{username}/Projects/rebrowse/native_host/host.json
     ```
+3.  Link to Chrome application support folder
+    ```
+    mkdir -p ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/
+    cp /Users/norikakizawa/Projects/rebrowse/native_host/host.json ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/com.rebrowse.host.json
+    ```
 
 ## Monitor Log for Native Host
 ```
