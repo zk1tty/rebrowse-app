@@ -23,10 +23,11 @@ Click and watch Youtube videos.
 
 <a href="https://www.youtube.com/watch?v=ozXZqgxUJK0"><img src="https://img.youtube.com/vi/ozXZqgxUJK0/0.jpg" alt="Luma to LinkedIn DM" width="full"></a>
 
-▶ Record and Replay
+▶ Remove background from Rick Rubin image
 
 <a href="https://youtu.be/CjxfwRO0TC8?si=KB7gndtCMdwM1Qoi&t=40"><img src="./frontend/assets/examples/rm_bg_img.png" alt="Replay: remove bg from img" width="full"></a>
 
+▶ Tweet post
 <a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./frontend/assets/examples/record-replay-demo.png" alt="Replay: tweet posting" width="full"></a>
 
 
