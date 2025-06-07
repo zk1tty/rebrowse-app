@@ -1,4 +1,4 @@
-[<img src="./frontend/assets/Rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
+[<img src="./doc/assets/Rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
 
 <br/>
 
@@ -25,10 +25,10 @@ Click and watch Youtube videos.
 
 ▶ Remove background from Rick Rubin image
 
-<a href="https://youtu.be/CjxfwRO0TC8?si=KB7gndtCMdwM1Qoi&t=40"><img src="./frontend/assets/examples/rm_bg_img.png" alt="Replay: remove bg from img" width="full"></a>
+<a href="https://youtu.be/CjxfwRO0TC8?si=KB7gndtCMdwM1Qoi&t=40"><img src="./doc/assets/examples/rm_bg_img.png" alt="Replay: remove bg from img" width="full"></a>
 
 ▶ Tweet post
-<a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./frontend/assets/examples/record-replay-demo.png" alt="Replay: tweet posting" width="full"></a>
+<a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./doc/assets/examples/record-replay-demo.png" alt="Replay: tweet posting" width="full"></a>
 
 
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
@@ -42,14 +42,14 @@ Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
     <li>👍 Robust. </li>
     <li>👎 needs long descriptive prompt. slow.</li>
   </ul>
-  <img src="./frontend/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
+  <img src="./doc/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
 
   <span style="font-size: 1.5em;"><strong>▶️ Recording</strong></span>
   <ul>
     <li>👍 Determinictic. 10x fast. 3x Accurate.</li>
     <li>⚠️ AI-powered fall-back is WIP.</li>
   </ul>
-  <img src="./frontend/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
+  <img src="./doc/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
 </div>
 
 ---
@@ -131,7 +131,7 @@ cd rebrowse-app
     ```
 ### Step 4: Close all open Chrome tabs. IMPORTANT!!
 
-<img src="./frontend/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
+<img src="./doc/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
 
 Or, run this command.
 
@@ -222,7 +222,7 @@ Let's talk more on [X](https://x.com/n0rizkitty) or [Telegram](https://x.com/n0r
 We are going to build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
 Check out our [Roadmap](./doc/ROADMAP.md).   
 
-<img src="./frontend/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
+<img src="./doc/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
 
 ### Gradio Development Mode
