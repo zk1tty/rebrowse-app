@@ -267,13 +267,12 @@ def handle_msg(msg):
                     emergency_log(f"handle_msg(UI): run_coroutine_threadsafe failed: {e_ui_put}")
             else:
                 emergency_log("handle_msg: CDP_QUEUE not ready yet — dropping UI event.")
-            # log_to_gradio(f"UI event enqueued: {event_type_from_payload}")
-            # The writing of the UI event payload to the trace file will now be handled
-            # exclusively by main_async_logic to ensure proper ordering and prevent duplicates.
-            # try:
-            #     log_to_gradio(json.dumps(ui_payload))
-            # except TypeError as e_json_ui:
-            #     emergency_log(f"handle_msg(UI): Failed to json.dumps ui_payload: {e_json_ui}. Payload snippet: {str(ui_payload)[:200]}")
+            # Immediately log the full UI event JSON to the pipe so it is never lost,
+            # even if the main_async_logic loop hasn't processed it yet.
+            try:
+                log_to_gradio(json.dumps(ui_payload))
+            except TypeError as e_json_ui:
+                emergency_log(f"handle_msg(UI): Failed to json.dumps ui_payload: {e_json_ui}. Payload snippet: {str(ui_payload)[:200]}")
             emergency_log(f"handle_msg: Successfully put_nowait to CDP_QUEUE (UI event). Type: '{event_type_from_payload}'.")
         else:
             emergency_log(f"handle_msg: Received 'ui_event_to_host' message but payload was missing or not a dict. Payload: {str(ui_payload)[:200]}")
