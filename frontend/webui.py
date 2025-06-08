@@ -452,97 +452,50 @@ async def stream_replay_ui(
     logger.info("stream_replay_ui: Streaming finished.")
     print(f"[WEBUI stream_replay_ui] Yielded final 'Replay process fully completed'. Exiting function.", flush=True)
 
-# --- NEW: Recorder Log Streaming Function ---
-async def _stream_recorder_log() -> AsyncGenerator[str, None]:
-    """Continuously streams logs from RECORDER_EVENT_LOG_Q to a Gradio Textbox."""
-    global RECORDER_EVENT_LOG_Q
-    log_accumulator = ""
-    while True:
+############### POLLING LOG SNAPSHOTS INSTEAD OF INFINITE STREAMS ###############
+
+# Running infinite async generators via .load() blocks subsequent UI events because
+# the front-end keeps them in a perpetual "running" state.  Instead we expose
+# *snapshot* functions that return the latest accumulated log text and let
+# Gradio poll them every few hundred milliseconds.
+
+_recorder_log_accum = ""
+def poll_recorder_log() -> str:  # called frequently by gr.Timer.tick()
+    global _recorder_log_accum, RECORDER_EVENT_LOG_Q
+    new_messages = []
+    while not RECORDER_EVENT_LOG_Q.empty():
         try:
-            new_messages = []
-            # queue_was_empty_at_start = RECORDER_EVENT_LOG_Q.empty() # Optional: for more refined debug logging
-            while not RECORDER_EVENT_LOG_Q.empty():
-                try:
-                    msg = RECORDER_EVENT_LOG_Q.get_nowait()
-                    new_messages.append(msg)
-                    RECORDER_EVENT_LOG_Q.task_done()
-                except asyncio.QueueEmpty:
-                    break
-            
-            if new_messages:
-                logger.info(f"[_stream_recorder_log]: Pulled {len(new_messages)} new messages from RECORDER_EVENT_LOG_Q: {new_messages}")
-                for msg_line in new_messages:
-                    if log_accumulator and not log_accumulator.endswith("\n"):
-                        log_accumulator += "\n"
-                    log_accumulator += msg_line
-                print("[DIAG] _stream_recorder_log yielded len=", len(log_accumulator), flush=True)
-                yield log_accumulator.strip()
-            else:
-                logger.info(f"[_stream_recorder_log]: No new messages in RECORDER_EVENT_LOG_Q this cycle. Accumulator: '{log_accumulator[:50]}...'") # Optional debug
-                yield log_accumulator.strip()
+            msg = RECORDER_EVENT_LOG_Q.get_nowait()
+            new_messages.append(msg)
+            logger.debug(f"[poll_recorder_log] new_messages: {new_messages}")
+            RECORDER_EVENT_LOG_Q.task_done()
+        except asyncio.QueueEmpty:
+            break
+    if new_messages:
+        if _recorder_log_accum and not _recorder_log_accum.endswith("\n"):
+            _recorder_log_accum += "\n"
+        _recorder_log_accum += "\n".join(new_messages)
+    return _recorder_log_accum.strip()
 
-        except Exception as e_stream_rec_log:
-            logger.error(f"Error in _stream_recorder_log: {e_stream_rec_log}", exc_info=True)
-            err_msg_for_ui = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⚠️ Logger stream error: {e_stream_rec_log}"
-            if log_accumulator and not log_accumulator.endswith("\n"):
-                log_accumulator += "\n"
-            log_accumulator += err_msg_for_ui
-            yield log_accumulator.strip()
-        
-        await asyncio.sleep(0.3)
-
-# --- NEW: Native Host Status Log Streaming and Pipe Reading Functions ---
-async def _stream_host_status_logs() -> AsyncGenerator[str, None]:
-    """Continuously streams logs from HOST_STATUS_LOG_Q to a Gradio Textbox."""
-    global HOST_STATUS_LOG_Q, logger
-    log_accumulator = "[WebUI] Waiting for Native Host logs..." # Initial message
-    yield log_accumulator.strip() # Yield initial message immediately
-    logger.info("[_stream_host_status_logs] Initial message yielded to UI.")
-
-    while True:
+_host_log_accum = "[WebUI] Waiting for Native Host logs..."
+def poll_host_status_log() -> str: # called frequently by gr.Timer.tick()
+    global _host_log_accum, HOST_STATUS_LOG_Q
+    new_messages = []
+    while not HOST_STATUS_LOG_Q.empty():
         try:
-            new_messages = []
-            # Drain the queue for this cycle
-            while not HOST_STATUS_LOG_Q.empty():
-                try:
-                    msg = HOST_STATUS_LOG_Q.get_nowait()
-                    new_messages.append(msg)
-                    HOST_STATUS_LOG_Q.task_done()
-                except asyncio.QueueEmpty:
-                    # logger.debug("[_stream_host_status_logs] Queue became empty during drain.")
-                    break 
-            
-            if new_messages:
-                logger.info(f"[_stream_host_status_logs]: Pulled {len(new_messages)} new messages from HOST_STATUS_LOG_Q.")
-                for msg_line in new_messages:
-                    # Console-print any UI or CDP event JSON line for quick server-side visibility
-                    if msg_line.startswith('{'):
-                        try:
-                            j = json.loads(msg_line)
-                            if j.get('type') in ('cdp', 'ui_event', 'keydown', 'mousedown') or 'method' in j:
-                                print('[HOST_STATUS_STREAM]', msg_line, flush=True)
-                        except Exception:
-                            pass
-                    if log_accumulator and not log_accumulator.endswith("\n"):
-                        log_accumulator += "\n"
-                    log_accumulator += msg_line
-                yield log_accumulator.strip()
-            else:
-                # Yield current state even if no new messages, but only if it changed (or to keep alive)
-                # To prevent Gradio from showing processing, we must yield something periodically.
-                # However, if log_accumulator hasn't changed, this yield is redundant if previous was same.
-                # Forcing a yield to keep connection alive or show it's not stuck.
-                yield log_accumulator.strip() 
+            msg = HOST_STATUS_LOG_Q.get_nowait()
+            new_messages.append(msg)
+            logger.debug(f"[poll_host_status_log] new_messages: {new_messages}")
+            HOST_STATUS_LOG_Q.task_done()
+        except asyncio.QueueEmpty:
+            break
+    if new_messages:
+        if _host_log_accum and not _host_log_accum.endswith("\n"):
+            _host_log_accum += "\n"
+        _host_log_accum += "\n".join(new_messages)
+    return _host_log_accum.strip()
 
-        except Exception as e_stream_host_log:
-            logger.error(f"Error in _stream_host_status_logs: {e_stream_host_log}", exc_info=True)
-            err_msg_for_ui = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WebUI] ⚠️ Host Logger stream error: {e_stream_host_log}"
-            if log_accumulator and not log_accumulator.endswith("\n"):
-                log_accumulator += "\n"
-            log_accumulator += err_msg_for_ui
-            yield log_accumulator.strip()
-        
-        await asyncio.sleep(0.5) 
+###############################################################################
 
 async def _read_host_pipe_task():
     """Creates and reads from a named pipe, putting messages into HOST_STATUS_LOG_Q."""
@@ -623,13 +576,12 @@ async def _read_host_pipe_task():
         # this sleep prevents a tight loop if open() immediately fails again.
         await asyncio.sleep(1) # Wait a bit before retrying the main while True loop (re-opening pipe)
 
+
 # --- Test function for demo.load ---
 def _test_load_function():
-    print("[_test_load_function]sync TEST LOAD FUNCTION EXECUTED PRINT STATEMENT AT VERY TOP OF LOAD", flush=True)
     logging.getLogger(__name__).critical("[_test_load_function] syncTEST LOAD FUNCTION EXECUTED CRITICAL LOG AT VERY TOP OF LOAD")
 
 async def _async_test_load_function():
-    print("[_async_test_load_function] ASYNC TEST LOAD FUNCTION EXECUTED PRINT STATEMENT AT VERY TOP OF LOAD", flush=True)
     logging.getLogger(__name__).critical("[_async_test_load_function] ASYNC TEST LOAD FUNCTION EXECUTED CRITICAL LOG AT VERY TOP OF LOAD")
     await asyncio.sleep(0.1) # Minimal async work
 
@@ -643,7 +595,7 @@ css = """
 theme_map = {
     "Default": Default(),
     "Soft": Soft(),
-    "Citrus": Citrus(),
+    "Citrus": Citrus(font=gr.themes.GoogleFont("Inter")),
     "Monochrome": Monochrome(),
     "Glass": Glass(),
     "Ocean": Ocean(),
@@ -681,7 +633,7 @@ async def _process_command_from_pipe(command_str: str):
             
             await start_recording_logic()
             
-            logger.info(f"[_process_command_from_pipe] LOG: Returned from start_recording_logic. _RECORDING_ACTIVE state: {_RECORDING_ACTIVE}")
+            logger.info(f"[_process_command_from_pipe] _RECORDING_ACTIVE state: {_RECORDING_ACTIVE}")
 
             if _RECORDING_ACTIVE:
                 response_payload = {"status": "recording_started", "command": command_str, "message": "Recording started successfully."}
@@ -806,6 +758,43 @@ def create_ui(theme_name="Citrus"):
                     show_label=True
                 )
 
+                with gr.Row():
+                    host_status_output_tb = gr.Textbox(
+                        label="Native Host Process Logs",
+                        interactive=False,
+                        lines=10,
+                        max_lines=20,
+                        autoscroll=True,
+                        show_label=True,
+                        elem_id="host_status_logs_textbox"
+                    )
+
+                    # NOTE: Use gr.Timer for periodic polling, as demo.load(every=...) is deprecated in Gradio 4+
+                    t_rec = gr.Timer(0.5)
+                    t_host = gr.Timer(0.5)
+
+                    t_rec.tick(
+                        poll_recorder_log,
+                        inputs=None,
+                        outputs=record_status_logs_output,
+                        queue=False,
+                        show_progress="hidden",
+                    )
+                    t_host.tick(
+                        poll_host_status_log,
+                        inputs=None,
+                        outputs=host_status_output_tb,
+                        queue=False,
+                        show_progress="hidden",
+                    )
+                # with gr.Row():
+                #     gr.Button("Pause polling").click(
+                #         lambda: gr.Timer(active=False), None, [t_rec, t_host]
+                #     )
+                #     gr.Button("Resume polling").click(
+                #         lambda: gr.Timer(active=True), None, [t_rec, t_host]
+                #     )
+
             with gr.TabItem("▶️ Replay", id=2):
                 gr.Markdown("### 📂 Input Trace Files")
                 refresh_traces_btn = gr.Button("🔄 Refresh Trace Files", variant="secondary")
@@ -830,18 +819,6 @@ def create_ui(theme_name="Citrus"):
                     replay_status_output = gr.Textbox(
                         label="Replay Status Logs", interactive=False, lines=20, max_lines=40, 
                         show_label=True, autoscroll=True, elem_id="replay_status_logs_textbox"
-                    )
-
-                # --- NEW: Textbox for Native Host Status Logs ---
-                with gr.Row():
-                    host_status_output_tb = gr.Textbox(
-                        label="Native Host Process Logs",
-                        interactive=False,
-                        lines=10,
-                        max_lines=20,
-                        autoscroll=True,
-                        show_label=True,
-                        elem_id="host_status_logs_textbox"
                     )
 
                 selected_trace_path_for_replay = gr.Textbox(label="Selected Trace Path", interactive=False, visible=False)
@@ -926,11 +903,6 @@ def create_ui(theme_name="Citrus"):
         
         # --- Original positions of demo.load hooks ---
         print("[create_ui] PRINT: Reaching original demo.load positions", flush=True)
-        # Bind the host-status log generator to the Record-Status textbox
-        demo.load(_read_host_pipe_task, inputs=[], outputs=[])
-
-        # Diagnostic call removed – gr.Blocks has no public get_event_trigger_count API.
-        print("[DIAG] demo.load binding for record_status_logs_output registered.", flush=True)
 
     return demo
 # --- End: Main UI ---
@@ -992,6 +964,17 @@ if __name__ == "__main__":
     )
     command_pipe_thread.start()
     logger.info("Started _listen_command_pipe in a background daemon thread with its own event loop.")
+
+    # Start _read_host_pipe_task in a background event loop (similar to command pipe listener)
+    host_pipe_loop = asyncio.new_event_loop()
+    host_pipe_thread = threading.Thread(
+        target=_run_async_in_thread,
+        args=(host_pipe_loop, _read_host_pipe_task()),
+        daemon=True,
+        name="RebrowseHostPipeLoop"
+    )
+    host_pipe_thread.start()
+    logger.info("Started _read_host_pipe_task in a background daemon thread with its own event loop.")
 
     logger.info(f"Launching Gradio demo. Access at http://127.0.0.1:7860")
     demo.launch(server_name="127.0.0.1", server_port=7860, debug=False, allowed_paths=[MANUAL_TRACES_DIR])
