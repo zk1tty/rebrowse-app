@@ -28,9 +28,9 @@ from src.browser.custom_browser import CustomBrowser
 from src.browser.custom_context import CustomBrowserContext
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig
 from browser_use.browser.browser import BrowserConfig
-from src.utils.trace_utils import get_upload_file_names_from_trace # ADDED
-from src.utils import user_input_functions # ADDED for get_file_info
-from browser_use.browser.context import BrowserContextWindowSize # ADDED IMPORT
+from src.utils.trace_utils import get_upload_file_names_from_trace
+from src.utils import user_input_functions
+from browser_use.browser.context import BrowserContextWindowSize
 
 # --- Global Logging Setup ---
 from src.utils.replay_streaming_manager import start_replay_sync_api_in_thread, log_q as manager_log_q
