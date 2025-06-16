@@ -62,37 +62,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 id="workflowName"
                 value={workflowName}
                 onChange={(e) => setWorkflowName(e.target.value)}
-                placeholder="Leave empty for AI-generated name"
+                placeholder="Leave empty for AI-gen"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 disabled={isUploading}
               />
-              <div className="text-xs text-gray-500 mt-1">
-                💡 AI will generate a smart name based on your goal if left empty
-              </div>
             </div>
 
             {/* User Goal (Required) */}
             <div className="mb-4">
               <label htmlFor="userGoal" className="block text-sm font-medium text-gray-700 mb-2">
-                What are you trying to accomplish? *
+                Goal? *
               </label>
               <textarea
                 id="userGoal"
                 value={userGoal}
                 onChange={(e) => setUserGoal(e.target.value)}
-                placeholder="Describe what this workflow should do..."
+                placeholder="goal of this workflow"
                 required
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                 disabled={isUploading}
               />
               <div className="text-xs text-gray-500 mt-1">
-                🎯 This helps AI create better workflows with smart optimizations
+                🎯 This helps AI create better workflows
               </div>
             </div>
 
             {/* Examples */}
-            <div className="bg-gray-50 p-4 rounded-md mb-6">
+            {/* <div className="bg-gray-50 p-4 rounded-md mb-6">
               <h4 className="text-sm font-medium text-gray-700 mb-2">💡 Good Goal Examples:</h4>
               <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
                 <li>"Search for JavaScript jobs on LinkedIn and save promising ones"</li>
@@ -101,7 +98,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <li>"Create and share Google Doc for team meeting notes"</li>
                 <li>"Order weekly groceries from online supermarket with my usual items"</li>
               </ul>
-            </div>
+            </div> */}
 
             {/* Action Buttons */}
             <div className="flex justify-end space-x-3">
