@@ -6,8 +6,11 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 const API = import.meta.env.VITE_PUBLIC_API_URL;
 const supabaseUrl = import.meta.env.VITE_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY;
-// console.log("API", API, "\n", "supabaseUrl", supabaseUrl, "\n", "supabaseAnonKey", supabaseAnonKey);
-const supabase = createSupabaseClient(supabaseUrl, supabaseAnonKey);
+console.log(`Auth check:\n✅ API: ${API}\n✅ supabaseUrl: ${supabaseUrl}\n✅ supabaseAnonKey: ${supabaseAnonKey}`);
+const supabase = API && supabaseUrl && supabaseAnonKey ? createSupabaseClient(supabaseUrl, supabaseAnonKey) : null;
+if (!supabase) {
+  console.error("❌ failed to init Supabase client. Please check your .env variables.");
+}
 
 // Custom fetch function with auth headers
 async function authedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
