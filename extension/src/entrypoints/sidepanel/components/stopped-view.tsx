@@ -142,12 +142,22 @@ export const StoppedView: React.FC = () => {
       const screenshotSize = step.screenshot ? step.screenshot.length : 0;
       const isDataUrl = step.screenshot?.includes('base64,') || false;
       
-      console.log(`📍 Step ${index + 1} (${step.type}):`, {
+      const stepInfo: any = {
         hasScreenshot,
         screenshotSize: hasScreenshot ? `${screenshotSize} chars` : 'N/A',
         isDataUrl,
         screenshotPreview: hasScreenshot ? step.screenshot.substring(0, 50) + '...' : 'None'
-      });
+      };
+
+      // Add specific info for clipboard steps
+      if (step.type === 'clipboard_copy' || step.type === 'clipboard_paste') {
+        stepInfo.clipboardContent = step.content ? 
+          `"${step.content.substring(0, 30)}${step.content.length > 30 ? '...' : ''}"`  : 
+          'None';
+        stepInfo.targetElement = step.cssSelector || step.xpath || 'Unknown';
+      }
+      
+      console.log(`📍 Step ${index + 1} (${step.type}):`, stepInfo);
     });
     
     console.groupEnd();
