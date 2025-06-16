@@ -1,0 +1,25 @@
+# Test Dockerfile with minimal requirements
+FROM python:3.9-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV RAILWAY_ENVIRONMENT=production
+
+# Set working directory
+WORKDIR /app
+
+# Upgrade pip and install wheel
+RUN pip install --upgrade pip setuptools wheel
+
+# Copy minimal requirements and install
+COPY requirements-minimal.txt .
+RUN pip install --verbose --no-cache-dir -r requirements-minimal.txt
+
+# Copy application code
+COPY . .
+
+# Create tmp directory
+RUN mkdir -p tmp/logs
+
+# Start command
+CMD python -m uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-8000} 
