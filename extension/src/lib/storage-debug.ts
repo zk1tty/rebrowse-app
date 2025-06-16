@@ -26,7 +26,7 @@ export async function debugStorageContents(): Promise<void> {
     );
     
     if (supabaseKeys.length === 0) {
-      console.warn("⚠️ No Supabase/auth related keys found in storage!");
+      console.log("⚠️ No Supabase/auth related keys found in storage!");
     } else {
       console.info(`✅ Found ${supabaseKeys.length} auth-related keys:`, supabaseKeys);
     }
@@ -47,7 +47,7 @@ export async function debugSupabaseSession(): Promise<void> {
     console.group("🔐 [Session Debug] Supabase Session Analysis:");
     
     if (sessionKeys.length === 0) {
-      console.warn("⚠️ No Supabase session found in storage");
+      console.log("⚠️ No Supabase session found in storage");
     } else {
       sessionKeys.forEach(key => {
         const session = allStorage[key];

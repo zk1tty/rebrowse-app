@@ -85,10 +85,10 @@ export async function ensureAuth(): Promise<string> {
         console.info(`[auth] done in ${Date.now() - started} ms`);
         return session.access_token;
       } else {
-        console.warn("[auth] ⚠️ existing session is expired, will attempt refresh");
+        console.log("[auth] ⚠️ existing session is expired, will attempt refresh");
       }
     } else {
-      console.warn("[auth] ⚠️ no access token in session");
+      console.log("[auth] ⚠️ no access token in session");
     }
   } catch (err) {
     console.error("[auth] ❌ getSession() threw", err);
@@ -110,7 +110,7 @@ export async function ensureAuth(): Promise<string> {
       console.info(`[auth] done in ${Date.now() - started} ms`);
       return refreshed;
     }
-    if (error) console.warn("[auth] ⚠️ refreshSession() error", error);
+    if (error) console.log("[auth] ⚠️ refreshSession() error", error);
   } catch (err) {
     console.error("[auth] ❌ refreshSession() threw", err);
   }
@@ -148,11 +148,11 @@ export async function ensureAuth(): Promise<string> {
               });
               return parsed.access_token;
             } else {
-              console.warn("[auth] ⚠️ fallback token is expired");
+              console.log("[auth] ⚠️ fallback token is expired");
             }
           }
         } catch (parseErr) {
-          console.warn("[auth] ⚠️ failed to parse stored data", parseErr);
+          console.log("[auth] ⚠️ failed to parse stored data", parseErr);
         }
       }
     }
@@ -162,9 +162,16 @@ export async function ensureAuth(): Promise<string> {
   }
 
   // 3. Interactive OAuth ──────────────────────────────────────────────
-  // Use localhost for universal compatibility across all development extension IDs
-  const redirectUrl = "http://localhost:3000";
+  // Use Chrome extension identity URL for OAuth redirects
+  // Option 1: Direct URL construction (recommended for unpacked extensions)
+  const redirectUrl = `https://${chrome.runtime.id}.chromiumapp.org/`;
+  
+  // Option 2: Using chrome.identity.getRedirectURL() (alternative)
+  // Note: getRedirectURL() might add extra paths that cause issues
+  // const redirectUrl = chrome.identity.getRedirectURL('oauth2').replace(/\/$/, ''); // Remove trailing slash
+  
   console.info("[auth] starting OAuth flow – redirectURL:", redirectUrl);
+  console.info("[auth] extension ID:", chrome.runtime.id);
 
   let oauthUrl: string;
   try {

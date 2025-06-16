@@ -49,7 +49,17 @@ export default defineConfig({
     oauth2: {
       client_id: "1058215711784-livolddr65rfj8a36ara0knh8ctivi3s.apps.googleusercontent.com",
       scopes: ["email", "profile", "openid"]
-    }
+    },
+    web_accessible_resources: [
+      {
+        resources: ["*"],
+        matches: ["<all_urls>"]
+      }
+    ],
+    // For production: Add manifest key to ensure consistent extension ID
+    // Generate using: openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt -out key.pem
+    // Then: openssl rsa -in key.pem -pubout -outform DER | openssl base64 -A
+    // key: "YOUR_GENERATED_KEY_HERE"
     // options_page: "options.html",
   },
 });
