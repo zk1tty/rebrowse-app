@@ -1,13 +1,31 @@
 # Rebrowse Workflow — FastAPI service
 
-- ENV: dev
+- venv installation
+    ```
+    # Init venv
+    uv venv --python 3.11
+    source .venv/bin/activate
 
-    ```
-    ENV=dev uvicorn backend.api:app --reload
-    ```
-- ENV: prod
-    ```
+    # Manage Python packages with a pip-compatible interface
+    uv install pip install -r requirement.txt
+
+    # Run uvicorn
     ENV=prod uvicorn backend.api:app --reload
+    ```
+
+- instalation help command
+    ```
+    # Check which Python is being used
+    which python
+
+    # Check Python version
+    python --version
+
+    # Check installed packages (in uv environment)
+    uv pip list
+
+    # Check specific package
+    uv pip list | grep supabase
     ```
 
 This is the python package for Workflow Use. It is used to create and execute workflows.
