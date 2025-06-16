@@ -1,0 +1,40 @@
+.brain-animation {
+  animation: brain-pulse 2s ease-in-out infinite, brain-color-shift 4s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.4));
+}
+
+@keyframes brain-pulse {
+  0%, 100% { 
+    transform: scale(1);
+  }
+  50% { 
+    transform: scale(1.08);
+  }
+}
+
+@keyframes brain-color-shift {
+  0% { 
+    color: #8b5cf6;
+    filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.6));
+  }
+  20% { 
+    color: #06b6d4;
+    filter: drop-shadow(0 0 12px rgba(6, 182, 212, 0.6));
+  }
+  40% { 
+    color: #10b981;
+    filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.6));
+  }
+  60% { 
+    color: #f59e0b;
+    filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6));
+  }
+  80% { 
+    color: #ef4444;
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6));
+  }
+  100% { 
+    color: #8b5cf6;
+    filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.6));
+  }
+} 

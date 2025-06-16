@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+
+    --card: 0 0% 5%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 0 0% 5%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 80%;
+
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 20%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 80%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Dark mode specific styles for ReactFlow */
+.dark .react-flow__edge-path {
+  stroke: #9ca3af !important;
+}
+
+.dark .react-flow__edge-textwrapper {
+  color: #f3f4f6 !important;
+}
+
+.dark .react-flow__node {
+  color: #f3f4f6 !important;
+}
+
+.dark .react-flow__controls {
+  background: #1f2937 !important;
+  border: 1px solid #4b5563 !important;
+}
+
+.dark .react-flow__controls button {
+  background: #374151 !important;
+  color: #f3f4f6 !important;
+  border: 1px solid #4b5563 !important;
+}
+
+.dark .react-flow__controls button:hover {
+  background: #4b5563 !important;
+}
+
+.dark .react-flow__minimap {
+  background: #1f2937 !important;
+  border: 1px solid #4b5563 !important;
+}
+
+/* Neon glow effects for dark mode */
+.dark .shadow-cyan-400\/20 {
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.2), 0 0 40px rgba(34, 211, 238, 0.1);
+}
+
+.dark .border-cyan-400 {
+  border-color: #22d3ee;
+  animation: pulse-border 2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-border {
+  from {
+    border-color: #22d3ee;
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.3);
+  }
+  to {
+    border-color: #06b6d4;
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.5), 0 0 30px rgba(34, 211, 238, 0.2);
+  }
+}
+
+/* Ensure white text on buttons in dark mode */
+.dark button {
+  color: white !important;
+}
+
+.dark .text-cyan-300 {
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+}
+
+.dark .drop-shadow-lg {
+  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.6));
+}
+
+/* Canvas dots pattern for dark mode */
+.canvas-dots-dark {
+  background-image: radial-gradient(circle, rgba(34, 211, 238, 0.4) 50px, transparent 50px);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
