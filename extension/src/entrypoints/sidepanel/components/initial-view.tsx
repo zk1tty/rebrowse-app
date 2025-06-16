@@ -1,10 +1,13 @@
 import React from 'react';
 import { useAuth } from '../context/auth-provider';
+import { useWorkflow } from '../context/workflow-provider';
+import { Button } from '@/components/ui/button';
+import { authClient } from '@/lib/auth';
 
 export const InitialView: React.FC = () => {
-  const { signIn } = useAuth();
+  const { signIn, isAuthenticated } = useAuth();
+  const { startRecording } = useWorkflow();
   
-  const [isAuthenticated, setIsAuthenticated] = React.useState(false);
   const [userName, setUserName] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [signingIn, setSigningIn] = React.useState(false);
@@ -14,48 +17,103 @@ export const InitialView: React.FC = () => {
     return email.split('@')[0];
   };
 
-  // Check authentication status on component mount
+  // Get user name when authenticated
   React.useEffect(() => {
-    const checkAuthStatus = async () => {
-      try {
-        // Get the session token from Chrome storage
-        const result = await chrome.storage.local.get(['supabase.auth.token']);
-        const authData = result['supabase.auth.token'];
-        
-        if (authData && authData.access_token) {
-          // User is authenticated, try to get user info
-          setIsAuthenticated(true);
+    const getUserName = async () => {
+      if (isAuthenticated) {
+        try {
+          console.log('[initial-view] User is authenticated, getting user info...');
           
-          // Extract user info from token payload (JWT decode)
-          try {
-            const tokenPayload = JSON.parse(atob(authData.access_token.split('.')[1]));
-            const email = tokenPayload.email;
-            
-            if (email) {
-              const name = extractNameFromEmail(email);
-              setUserName(name);
+          // First, try to get session directly from authClient
+          const { data: { session }, error } = await authClient.getSession();
+          console.log('[initial-view] AuthClient session:', { hasSession: !!session, error });
+          
+          if (session?.access_token) {
+            try {
+              const tokenPayload = JSON.parse(atob(session.access_token.split('.')[1]));
+              const email = tokenPayload.email;
+              
+              if (email) {
+                const name = extractNameFromEmail(email);
+                console.log('[initial-view] Extracted name from session:', name);
+                setUserName(name);
+                setLoading(false);
+                return;
+              }
+            } catch (jwtError) {
+              console.error('[initial-view] Failed to decode JWT from session:', jwtError);
             }
-          } catch (jwtError) {
-            console.error('Failed to decode JWT token:', jwtError);
-            // Still authenticated, but couldn't get name
-            setUserName('User');
           }
-        } else {
-          // User is not authenticated
-          setIsAuthenticated(false);
-          setUserName(null);
+          
+          // Fallback: Check chrome storage with multiple possible keys
+          const possibleKeys = [
+            'supabase.auth.token',
+            'sb-dmgtsseqqsiyuuzhdxnn-auth-token',
+            'supabase.session',
+            'sb-auth-token'
+          ];
+          
+          for (const key of possibleKeys) {
+            try {
+              const result = await chrome.storage.local.get([key]);
+              const authData = result[key];
+              console.log(`[initial-view] Checking storage key ${key}:`, { hasData: !!authData });
+              
+              if (authData) {
+                let accessToken = '';
+                
+                // Handle different storage formats
+                if (typeof authData === 'string') {
+                  try {
+                    const parsed = JSON.parse(authData);
+                    accessToken = parsed.access_token || '';
+                  } catch {
+                    accessToken = authData;
+                  }
+                } else if (authData.access_token) {
+                  accessToken = authData.access_token;
+                }
+                
+                if (accessToken) {
+                  try {
+                    const tokenPayload = JSON.parse(atob(accessToken.split('.')[1]));
+                    const email = tokenPayload.email;
+                    
+                    if (email) {
+                      const name = extractNameFromEmail(email);
+                      console.log('[initial-view] Extracted name from storage:', name);
+                      setUserName(name);
+                      setLoading(false);
+                      return;
+                    }
+                  } catch (jwtError) {
+                    console.error(`[initial-view] Failed to decode JWT from ${key}:`, jwtError);
+                  }
+                }
+              }
+            } catch (storageError) {
+              console.error(`[initial-view] Failed to read ${key} from storage:`, storageError);
+            }
+          }
+          
+          // If we get here, we're authenticated but couldn't get user info
+          console.warn('[initial-view] Authenticated but could not extract user info');
+          setUserName('User');
+        } catch (error) {
+          console.error('[initial-view] Failed to get user info:', error);
+          setUserName('User');
         }
-      } catch (error) {
-        console.error('Failed to check auth status:', error);
-        setIsAuthenticated(false);
+      } else {
+        console.log('[initial-view] User not authenticated');
         setUserName(null);
-      } finally {
-        setLoading(false);
       }
+      setLoading(false);
     };
 
-    checkAuthStatus();
-  }, []);
+    if (isAuthenticated !== null) {
+      getUserName();
+    }
+  }, [isAuthenticated]);
 
   const handleSignIn = async () => {
     try {
@@ -70,7 +128,8 @@ export const InitialView: React.FC = () => {
     }
   };
 
-  if (loading) {
+  // Show loading while AuthProvider is still checking authentication
+  if (isAuthenticated === null || loading) {
     return (
       <div className="flex flex-col items-center justify-center h-full">
         <div className="text-gray-500">Loading...</div>
@@ -93,14 +152,21 @@ export const InitialView: React.FC = () => {
           </div>
         </div>
       ) : isAuthenticated && userName ? (
-        // Authenticated user - show welcome message
-        <div className="text-center">
-          <div className="mb-4 text-lg text-green-600">
+        // Authenticated user - show welcome message and start recording button
+        <div className="text-center space-y-4">
+          <div className="text-lg text-black-600">
             Welcome back, {userName}! 👋
           </div>
-          <div className="text-sm text-gray-600">
-            You're ready to start recording workflows
-          </div>
+          <Button 
+            onClick={startRecording}
+            className="bg-red-500 hover:bg-red-800 text-white px-6 py-2 rounded-lg font-medium"
+            size="lg"
+          >
+            <span className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-white rounded-full"></span>
+              Start Recording
+            </span>
+          </Button>
         </div>
       ) : (
         // Not authenticated - show sign in button

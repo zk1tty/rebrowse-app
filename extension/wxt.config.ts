@@ -55,8 +55,8 @@ export default defineConfig({
         resources: ["*"],
         matches: ["<all_urls>"]
       }
-    ],
-    // For production: Add manifest key to ensure consistent extension ID
+    ]
+    // TODO: For production: Add manifest key to ensure consistent extension ID
     // Generate using: openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt -out key.pem
     // Then: openssl rsa -in key.pem -pubout -outform DER | openssl base64 -A
     // key: "YOUR_GENERATED_KEY_HERE"
