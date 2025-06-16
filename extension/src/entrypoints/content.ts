@@ -6,7 +6,11 @@ let isRecordingActive = true; // Content script's local state
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastScrollY: number | null = null;
 let lastDirection: "up" | "down" | null = null;
-const DEBOUNCE_MS = 500; // Wait 500ms after scroll stops
+const DEBOUNCE_MS = 150; // Wait 150ms after scroll stops
+
+// Clipboard tracking variables
+let lastCopiedContent = '';
+let lastActiveElement: HTMLElement | null = null;
 
 // --- Helper function to generate XPath ---
 function getXPath(element: HTMLElement): string {
@@ -111,6 +115,64 @@ function getEnhancedCSSSelector(element: HTMLElement, xpath: string): string {
   }
 }
 
+// Clipboard detection utilities
+function getElementSelector(element: HTMLElement | null): string {
+  if (!element) return '';
+  
+  // Priority: id > name > class > tag
+  if (element.id) {
+    return `#${element.id}`;
+  }
+  
+  if (element.getAttribute('name')) {
+    return `${element.tagName.toLowerCase()}[name="${element.getAttribute('name')}"]`;
+  }
+  
+  if (element.className && typeof element.className === 'string') {
+    const classes = element.className.split(' ').filter(c => c.trim());
+    if (classes.length > 0) {
+      return `${element.tagName.toLowerCase()}.${classes[0]}`;
+    }
+  }
+  
+  return element.tagName.toLowerCase();
+}
+
+function emitClipboardEvent(type: 'copy' | 'paste', targetElement: HTMLElement | null, content: string = '') {
+  if (!isRecordingActive) return;
+  
+  try {
+    const clipboardData = {
+      clipboardType: type,
+      content: content,
+      url: document.location.href,
+      frameUrl: window.location.href,
+      xpath: targetElement ? getXPath(targetElement) : '',
+      cssSelector: targetElement ? getElementSelector(targetElement) : '',
+      elementTag: targetElement?.tagName || '',
+      elementText: targetElement?.textContent?.trim().slice(0, 100) || '',
+      timestamp: Date.now()
+    };
+
+    // Emit as rrweb custom event (EventType.Custom = 5)
+    chrome.runtime.sendMessage({
+      type: "RRWEB_EVENT",
+      payload: {
+        type: 5, // EventType.Custom
+        data: {
+          tag: 'clipboard',
+          payload: clipboardData
+        },
+        timestamp: Date.now()
+      }
+    });
+
+    console.log(`📋 Emitted rrweb clipboard ${type} event:`, clipboardData);
+  } catch (error) {
+    console.error(`Error emitting clipboard ${type} event:`, error);
+  }
+}
+
 function startRecorder() {
   if (stopRecording) {
     console.log("Recorder already running.");
@@ -196,12 +258,11 @@ function startRecorder() {
     checkoutEveryNth: 200,
   });
 
-  // Add the stop function to window for potenti
-  // --- End CSS Selector Helper --- al manual cleanup
+  // Add the stop function to window for potential manual cleanup
   (window as any).rrwebStop = stopRecorder;
 
-  // --- Attach Custom Event Listeners Permanently ---
-  // These listeners are always active, but the handlers check `isRecordingActive`
+  // --- Attach Event Listeners ---
+  // Existing custom event listeners
   document.addEventListener("click", handleCustomClick, true);
   document.addEventListener("input", handleInput, true);
   document.addEventListener("change", handleSelectChange, true);
@@ -210,7 +271,14 @@ function startRecorder() {
   document.addEventListener("mouseout", handleMouseOut, true);
   document.addEventListener("focus", handleFocus, true);
   document.addEventListener("blur", handleBlur, true);
-  console.log("Permanently attached custom event listeners.");
+  
+  // --- NEW: Clipboard Event Listeners ---
+  document.addEventListener("copy", handleClipboardCopy, true);
+  document.addEventListener("paste", handleClipboardPaste, true);
+  document.addEventListener("keydown", handleKeyboardShortcuts, true);
+  document.addEventListener("focusin", trackActiveElement, true);
+  
+  console.log("Attached all event listeners including clipboard detection.");
 }
 
 function stopRecorder() {
@@ -220,15 +288,26 @@ function stopRecorder() {
     stopRecording = undefined;
     isRecordingActive = false;
     (window as any).rrwebStop = undefined; // Clean up window property
-    // Remove custom listeners when recording stops
+    
+    // Remove all event listeners
     document.removeEventListener("click", handleCustomClick, true);
     document.removeEventListener("input", handleInput, true);
-    document.removeEventListener("change", handleSelectChange, true); // Remove change listener
-    document.removeEventListener("keydown", handleKeydown, true); // Remove keydown listener
+    document.removeEventListener("change", handleSelectChange, true);
+    document.removeEventListener("keydown", handleKeydown, true);
     document.removeEventListener("mouseover", handleMouseOver, true);
     document.removeEventListener("mouseout", handleMouseOut, true);
     document.removeEventListener("focus", handleFocus, true);
     document.removeEventListener("blur", handleBlur, true);
+    
+    // --- Remove Clipboard Event Listeners ---
+    document.removeEventListener("copy", handleClipboardCopy, true);
+    document.removeEventListener("paste", handleClipboardPaste, true);
+    document.removeEventListener("keydown", handleKeyboardShortcuts, true);
+    document.removeEventListener("focusin", trackActiveElement, true);
+    
+    // Reset clipboard tracking
+    lastCopiedContent = '';
+    lastActiveElement = null;
   } else {
     console.log("Recorder not running, cannot stop.");
   }
@@ -540,6 +619,111 @@ function handleBlur(event: FocusEvent) {
     currentFocusOverlay.remove();
     currentFocusOverlay = null;
   }
+}
+
+// Clipboard event handlers
+function handleClipboardCopy(event: ClipboardEvent) {
+  if (!isRecordingActive) return;
+  
+  try {
+    const targetElement = event.target as HTMLElement;
+    const selection = window.getSelection();
+    const selectedText = selection?.toString() || '';
+    
+    // Get content being copied
+    let contentToCopy = '';
+    if (selectedText) {
+      contentToCopy = selectedText;
+    } else if (targetElement && 'value' in targetElement) {
+      // For input/textarea elements
+      contentToCopy = (targetElement as HTMLInputElement).value || '';
+    } else if (targetElement?.textContent) {
+      contentToCopy = targetElement.textContent.trim();
+    }
+    
+    if (contentToCopy && contentToCopy.length > 0) {
+      lastCopiedContent = contentToCopy;
+      emitClipboardEvent('copy', targetElement, contentToCopy);
+    }
+  } catch (error) {
+    console.error('Error handling clipboard copy:', error);
+  }
+}
+
+function handleClipboardPaste(event: ClipboardEvent) {
+  if (!isRecordingActive) return;
+  
+  try {
+    const targetElement = event.target as HTMLElement;
+    
+    // Try to get pasted content from clipboard event
+    let pastedContent = '';
+    if (event.clipboardData) {
+      pastedContent = event.clipboardData.getData('text') || '';
+    }
+    
+    // Fallback to last copied content if available
+    if (!pastedContent && lastCopiedContent) {
+      pastedContent = lastCopiedContent;
+    }
+    
+    emitClipboardEvent('paste', targetElement, pastedContent);
+  } catch (error) {
+    console.error('Error handling clipboard paste:', error);
+  }
+}
+
+function handleKeyboardShortcuts(event: KeyboardEvent) {
+  if (!isRecordingActive) return;
+  
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const ctrlKey = isMac ? event.metaKey : event.ctrlKey;
+  
+  if (ctrlKey) {
+    const targetElement = event.target as HTMLElement;
+    
+    switch(event.key.toLowerCase()) {
+      case 'c': // Copy
+        setTimeout(() => {
+          // Delay to let copy operation complete
+          const selection = window.getSelection();
+          const selectedText = selection?.toString() || '';
+          
+          if (selectedText) {
+            lastCopiedContent = selectedText;
+            emitClipboardEvent('copy', targetElement, selectedText);
+          } else if (targetElement && 'value' in targetElement) {
+            const value = (targetElement as HTMLInputElement).value || '';
+            if (value) {
+              lastCopiedContent = value;
+              emitClipboardEvent('copy', targetElement, value);
+            }
+          }
+        }, 10);
+        break;
+        
+      case 'v': // Paste
+        // For keyboard paste, we'll detect the actual content change in input handlers
+        emitClipboardEvent('paste', targetElement, lastCopiedContent);
+        break;
+        
+      case 'x': // Cut (copy + delete)
+        setTimeout(() => {
+          const selection = window.getSelection();
+          const selectedText = selection?.toString() || '';
+          
+          if (selectedText) {
+            lastCopiedContent = selectedText;
+            emitClipboardEvent('copy', targetElement, selectedText);
+          }
+        }, 10);
+        break;
+    }
+  }
+}
+
+function trackActiveElement(event: FocusEvent) {
+  lastActiveElement = event.target as HTMLElement;
 }
 
 export default defineContentScript({

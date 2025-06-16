@@ -15,6 +15,8 @@ import {
   ScrollStep,
   Step,
   Workflow,
+  ClipboardCopyStep,
+  ClipboardPasteStep,
 } from "../lib/workflow-types";
 import {
   HttpEvent,
@@ -318,9 +320,48 @@ export default defineBackground(() => {
         }
 
         case "RRWEB_EVENT": {
-          // We only care about scroll events from rrweb for now
           const rrEvent = event as StoredRrwebEvent;
-          if (
+          
+          // Handle rrweb Custom Events (type 5) for clipboard operations
+          if (rrEvent.type === 5 && rrEvent.data?.tag === 'clipboard') {
+            const clipboardData = rrEvent.data.payload;
+            
+            if (clipboardData.clipboardType === 'copy') {
+              const step: ClipboardCopyStep = {
+                type: "clipboard_copy",
+                timestamp: rrEvent.timestamp,
+                tabId: rrEvent.tabId,
+                url: clipboardData.url || '',
+                frameUrl: clipboardData.frameUrl,
+                xpath: clipboardData.xpath,
+                cssSelector: clipboardData.cssSelector,
+                elementTag: clipboardData.elementTag,
+                elementText: clipboardData.elementText,
+                content: clipboardData.content || '',
+                screenshot: undefined, // TODO: Add screenshot capture for clipboard events
+              };
+              steps.push(step);
+              console.log("📋 Added clipboard copy step:", step);
+            } else if (clipboardData.clipboardType === 'paste') {
+              const step: ClipboardPasteStep = {
+                type: "clipboard_paste",
+                timestamp: rrEvent.timestamp,
+                tabId: rrEvent.tabId,
+                url: clipboardData.url || '',
+                frameUrl: clipboardData.frameUrl,
+                xpath: clipboardData.xpath,
+                cssSelector: clipboardData.cssSelector,
+                elementTag: clipboardData.elementTag,
+                elementText: clipboardData.elementText,
+                content: clipboardData.content,
+                screenshot: undefined, // TODO: Add screenshot capture for clipboard events
+              };
+              steps.push(step);
+              console.log("📋 Added clipboard paste step:", step);
+            }
+          }
+          // Handle scroll events from rrweb for scrolling
+          else if (
             rrEvent.type === EventType.IncrementalSnapshot &&
             rrEvent.data.source === IncrementalSource.Scroll
           ) {
