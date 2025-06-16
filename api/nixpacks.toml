@@ -1,0 +1,23 @@
+[phases.setup]
+nixPkgs = ["python311", "python311Packages.pip"]
+
+[phases.install]
+cmds = [
+  "pip install -r requirements.txt",
+  "pip install playwright>=1.40.0",
+  "playwright install chromium",
+  "playwright install-deps chromium"
+]
+
+[phases.build]
+cmds = [
+  "echo 'Build phase complete'",
+  "echo 'Display setup: DISPLAY=$DISPLAY'",
+  "echo 'Playwright installation completed'"
+]
+
+[start]
+cmd = "xvfb-run -a -s '-screen 0 1920x1080x24' python -m uvicorn backend.api:app --host 0.0.0.0 --port $PORT"
+
+[variables]
+DISPLAY = ":99" 

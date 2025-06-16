@@ -1,0 +1,15 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+[environments.production.variables]
+RAILWAY_ENVIRONMENT = "production"
+DISPLAY = ":99"
+
+[env]
+# Railway will automatically set RAILWAY_ENVIRONMENT=production
+PORT = "8000" 
