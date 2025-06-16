@@ -1,20 +1,20 @@
-import React from "react";
+import React, { useState } from "react";
 import { useWorkflow } from "../context/workflow-provider";
 import { ensureAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { EventViewer } from "./event-viewer";
-import { debugStorageContents } from "@/lib/storage-debug";
-import { inspectJWT, validateJWTForAPI } from "@/lib/jwt-debug";
+import { UploadModal } from "./upload-modal";
 
 export const StoppedView: React.FC = () => {
   const { discardAndStartNew, workflow } = useWorkflow();
 
-  const [uploading, setUploading] = React.useState(false);
-  const [link, setLink] = React.useState<string | null>(null);
-  const [err, setErr] = React.useState<string | null>(null);
-  const [showSessionToken, setShowSessionToken] = React.useState(false);
-  const [sessionToken, setSessionToken] = React.useState<string | null>(null);
-  const [tokenCopied, setTokenCopied] = React.useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [showSessionToken, setShowSessionToken] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   /* ─────────── session token handler ────────────────────────────────────── */
   const getSessionToken = async (): Promise<string | null> => {
@@ -37,13 +37,15 @@ export const StoppedView: React.FC = () => {
   };
 
   const handleRevealToken = async () => {
-    if (!showSessionToken) {
-      // Get the token when revealing
-      const token = await getSessionToken();
-      setSessionToken(token);
+    try {
+      const token = await ensureAuth();
+      console.log("🔑 Current JWT token:", token);
+      alert(`🔑 Token copied to console!\n\nLength: ${token.length} chars\nStarts with: ${token.slice(0, 20)}...`);
+      setShowSessionToken(true);
+    } catch (err) {
+      console.error("Failed to get token:", err);
+      alert("Failed to get authentication token. Please try signing in again.");
     }
-    setShowSessionToken(!showSessionToken);
-    setTokenCopied(false); // Reset copy status when toggling
   };
 
   const copyTokenToClipboard = async () => {
@@ -68,7 +70,102 @@ export const StoppedView: React.FC = () => {
   };
 
   /* ─────────── upload handler ────────────────────────────────────── */
-  const uploadJson = async () => {
+  const handleModalClose = () => {
+    if (!uploading) {
+      setShowUploadModal(false);
+    }
+  };
+
+  // Function to process workflow screenshots and remove data URL prefixes
+  const processWorkflowScreenshots = (workflow: any) => {
+    if (!workflow?.steps) return workflow;
+
+    let originalScreenshotCount = 0;
+    let processedScreenshotCount = 0;
+    let screenshotSizes: Array<{stepIndex: number, originalSize: number, processedSize: number}> = [];
+
+    const processedWorkflow = {
+      ...workflow,
+      steps: workflow.steps.map((step: any, index: number) => {
+        if (!step.screenshot) return step;
+
+        originalScreenshotCount++;
+        const originalSize = step.screenshot.length;
+
+        // Remove data URL prefix (e.g., "data:image/jpeg;base64," or "data:image/png;base64,")
+        let processedScreenshot = step.screenshot;
+        if (typeof processedScreenshot === 'string' && processedScreenshot.includes('base64,')) {
+          processedScreenshot = processedScreenshot.split('base64,')[1];
+          processedScreenshotCount++;
+          
+          screenshotSizes.push({
+            stepIndex: index,
+            originalSize,
+            processedSize: processedScreenshot.length
+          });
+        }
+
+        return {
+          ...step,
+          screenshot: processedScreenshot
+        };
+      })
+    };
+
+    // Enhanced logging
+    console.group("📸 Screenshot Processing Summary:");
+    console.log(`🔢 Total steps: ${workflow.steps.length}`);
+    console.log(`📷 Steps with screenshots: ${originalScreenshotCount}`);
+    console.log(`✂️ Screenshots processed (had data URL): ${processedScreenshotCount}`);
+    console.log("📊 Screenshot size reductions:", screenshotSizes);
+    console.groupEnd();
+
+    return processedWorkflow;
+  };
+
+  // Debug function to inspect workflow screenshots (call from console)
+  const debugWorkflowScreenshots = () => {
+    if (!workflow?.steps) {
+      console.log("❌ No workflow data available");
+      return;
+    }
+
+    console.group("🔍 Workflow Screenshot Debug Report:");
+    console.log(`📋 Workflow: "${workflow.name}"`);
+    console.log(`🔢 Total steps: ${workflow.steps.length}`);
+    
+    const stepsWithScreenshots = workflow.steps.filter((step: any) => step.screenshot);
+    console.log(`📷 Steps with screenshots: ${stepsWithScreenshots.length}`);
+    
+    workflow.steps.forEach((step: any, index: number) => {
+      const hasScreenshot = !!step.screenshot;
+      const screenshotSize = step.screenshot ? step.screenshot.length : 0;
+      const isDataUrl = step.screenshot?.includes('base64,') || false;
+      
+      console.log(`📍 Step ${index + 1} (${step.type}):`, {
+        hasScreenshot,
+        screenshotSize: hasScreenshot ? `${screenshotSize} chars` : 'N/A',
+        isDataUrl,
+        screenshotPreview: hasScreenshot ? step.screenshot.substring(0, 50) + '...' : 'None'
+      });
+    });
+    
+    console.groupEnd();
+    return { workflow, stepsWithScreenshots };
+  };
+
+  // Expose debug function to window for console access
+  React.useEffect(() => {
+    (window as any).debugWorkflowScreenshots = debugWorkflowScreenshots;
+    (window as any).currentWorkflow = workflow;
+    
+    return () => {
+      delete (window as any).debugWorkflowScreenshots;
+      delete (window as any).currentWorkflow;
+    };
+  }, [workflow]);
+
+  const uploadJson = async (data: { name: string | null; goal: string }) => {
     if (!workflow) return;
     setUploading(true);
     setErr(null);
@@ -81,12 +178,16 @@ export const StoppedView: React.FC = () => {
       const jwt = await ensureAuth(); // Still ensure user is authenticated
       console.log("🔐 [Upload] Got session token for authenticated upload");
       
+      // 📸 Process workflow to fix screenshot format (remove data URL prefixes)
+      const processedWorkflow = processWorkflowScreenshots(workflow);
+      console.log("📸 [Upload] Processed screenshots - removed data URL prefixes");
+      
       // 🔄 NEW ENDPOINT: Use session-based upload endpoint
       const requestUrl = `${import.meta.env.VITE_API_URL}/workflows/upload/session`;
       const requestBody = {
-        recording: workflow,
-        goal: "Automated workflow",
-        name: workflow.name ?? "Untitled workflow",
+        recording: processedWorkflow, // Use processed workflow with fixed screenshots
+        goal: data.goal, // Use the goal from the modal
+        name: data.name || workflow.name || "Untitled workflow", // Use modal name, fallback to workflow name, then default
         session_token: jwt, // 👈 KEY CHANGE: Pass token in body, not header
       };
       
@@ -96,6 +197,7 @@ export const StoppedView: React.FC = () => {
         name: requestBody.name,
         goal: requestBody.goal,
         stepCount: requestBody.recording?.steps?.length || 0,
+        screenshotCount: requestBody.recording?.steps?.filter((s: any) => s.screenshot)?.length || 0,
         hasSessionToken: !!requestBody.session_token
       });
       
@@ -148,6 +250,7 @@ export const StoppedView: React.FC = () => {
       });
       
       setLink(processingUrl);
+      setShowUploadModal(false); // Close modal on success
     } catch (err: any) {
       console.error("❌ [Upload] Session-based upload failed:", err);
       setErr(err.message ?? String(err));
@@ -190,6 +293,11 @@ export const StoppedView: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleProcessClick = () => {
+    if (!workflow) return;
+    setShowUploadModal(true);
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between p-4 border-b border-border">
@@ -201,7 +309,7 @@ export const StoppedView: React.FC = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={uploadJson}
+            onClick={handleProcessClick}
             disabled={!workflow || uploading}
           >
             {uploading ? "Uploading…" : "🧠 Process"}
@@ -289,6 +397,15 @@ export const StoppedView: React.FC = () => {
       <div className="flex-grow overflow-hidden p-4">
         <EventViewer />
       </div>
+
+      {showUploadModal && (
+        <UploadModal
+          isOpen={showUploadModal}
+          onClose={handleModalClose}
+          onSubmit={uploadJson}
+          isUploading={uploading}
+        />
+      )}
     </div>
   );
 };
