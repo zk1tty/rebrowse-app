@@ -40,8 +40,13 @@ export const StoppedView: React.FC = () => {
     try {
       const token = await ensureAuth();
       console.log("🔑 Current JWT token:", token);
-      alert(`🔑 Token copied to console!\n\nLength: ${token.length} chars\nStarts with: ${token.slice(0, 20)}...`);
+      
+      // Set the token in state so it can be copied
+      setSessionToken(token);
       setShowSessionToken(true);
+      
+      // Also copy to console for backup
+      console.log("🔑 Token available for copying:", token);
     } catch (err) {
       console.error("Failed to get token:", err);
       alert("Failed to get authentication token. Please try signing in again.");
@@ -49,22 +54,45 @@ export const StoppedView: React.FC = () => {
   };
 
   const copyTokenToClipboard = async () => {
-    if (sessionToken) {
+    if (!sessionToken) {
+      console.warn("No session token available to copy");
+      alert("No token available. Please try revealing the token again.");
+      return;
+    }
+
+    try {
+      // Try modern clipboard API first
+      await navigator.clipboard.writeText(sessionToken);
+      setTokenCopied(true);
+      setTimeout(() => setTokenCopied(false), 2000);
+      console.log("✅ Token copied to clipboard successfully");
+    } catch (error) {
+      console.warn('Modern clipboard API failed, trying fallback:', error);
+      
       try {
-        await navigator.clipboard.writeText(sessionToken);
-        setTokenCopied(true);
-        setTimeout(() => setTokenCopied(false), 2000); // Reset after 2 seconds
-      } catch (error) {
-        console.error('Failed to copy token:', error);
-        // Fallback for older browsers
+        // Fallback for older browsers or restricted contexts
         const textArea = document.createElement('textarea');
         textArea.value = sessionToken;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
         document.body.appendChild(textArea);
+        textArea.focus();
         textArea.select();
-        document.execCommand('copy');
+        
+        const successful = document.execCommand('copy');
         document.body.removeChild(textArea);
-        setTokenCopied(true);
-        setTimeout(() => setTokenCopied(false), 2000);
+        
+        if (successful) {
+          setTokenCopied(true);
+          setTimeout(() => setTokenCopied(false), 2000);
+          console.log("✅ Token copied using fallback method");
+        } else {
+          throw new Error("execCommand copy failed");
+        }
+      } catch (fallbackError) {
+        console.error('Both clipboard methods failed:', fallbackError);
+        alert(`Failed to copy token to clipboard. Please copy manually:\n\n${sessionToken.substring(0, 50)}...`);
       }
     }
   };
