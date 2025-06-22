@@ -34,6 +34,30 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Check Python version compatibility
+check_python_version() {
+    if ! command_exists python3; then
+        log_error "Python 3 is required but not installed."
+        return 1
+    fi
+    
+    PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
+    PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
+    PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
+    
+    log_info "Current Python version: $PYTHON_VERSION"
+    
+    # Check if Python version is >= 3.11
+    if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
+        log_error "Python 3.11 or higher is required for browser-use package."
+        log_error "Current version: $PYTHON_VERSION"
+        return 1
+    fi
+    
+    log_success "Python version $PYTHON_VERSION meets requirements (>=3.11)"
+    return 0
+}
+
 # Detect OS
 detect_os() {
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -122,13 +146,35 @@ install_macos_deps() {
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
     
-    # Install Python if not already installed
-    if ! command_exists python3; then
+    # Install Python 3.11+ if current version is too old
+    CURRENT_PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}' || echo "0.0.0")
+    PYTHON_MAJOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f1)
+    PYTHON_MINOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f2)
+    
+    if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
+        log_info "Installing Python 3.11 (current version $CURRENT_PYTHON_VERSION is too old)..."
         brew install python@3.11
+        
+        # Update PATH to use the new Python
+        export PATH="/opt/homebrew/bin:$PATH"
+        
+        # Create symlinks if needed
+        if [ -f "/opt/homebrew/bin/python3.11" ]; then
+            log_info "Using Python 3.11 from Homebrew"
+            alias python3="/opt/homebrew/bin/python3.11"
+            PYTHON3_PATH="/opt/homebrew/bin/python3.11"
+        fi
+    else
+        log_info "Python version $CURRENT_PYTHON_VERSION meets requirements"
+        PYTHON3_PATH="python3"
     fi
     
     # Install Chromium
-    brew install chromium
+    if ! command_exists chromium; then
+        brew install chromium
+    else
+        log_info "Chromium already installed"
+    fi
     
     log_success "macOS dependencies installed"
 }
@@ -137,11 +183,19 @@ install_macos_deps() {
 install_python_deps() {
     log_info "Installing Python dependencies..."
     
+    # Use the correct Python path
+    local python_cmd="${PYTHON3_PATH:-python3}"
+    
+    # Verify Python version again
+    local version=$($python_cmd --version 2>&1 | awk '{print $2}')
+    log_info "Using Python: $python_cmd (version: $version)"
+    
     # Upgrade pip
-    python3 -m pip install --upgrade pip
+    $python_cmd -m pip install --upgrade pip --user
     
     # Install required packages
-    python3 -m pip install \
+    log_info "Installing browser-use and dependencies..."
+    $python_cmd -m pip install --user \
         playwright>=1.40.0 \
         browser-use>=0.2.4 \
         fastapi>=0.115.0 \
@@ -151,18 +205,26 @@ install_python_deps() {
         typer>=0.15.0 \
         python-dotenv>=1.0.0
     
-    log_success "Python dependencies installed"
+    if [ $? -eq 0 ]; then
+        log_success "Python dependencies installed"
+    else
+        log_error "Failed to install Python dependencies"
+        return 1
+    fi
 }
 
 # Install Playwright browsers
 install_playwright_browsers() {
     log_info "Installing Playwright Chromium browser..."
     
+    # Use the correct Python path
+    local python_cmd="${PYTHON3_PATH:-python3}"
+    
     # Install Playwright browsers
-    python3 -m playwright install chromium
+    $python_cmd -m playwright install chromium
     
     # Install system dependencies for Playwright
-    python3 -m playwright install-deps chromium
+    $python_cmd -m playwright install-deps chromium
     
     log_success "Playwright Chromium browser installed"
 }
@@ -220,7 +282,8 @@ if __name__ == "__main__":
 EOF
 
     # Run the test
-    if python3 /tmp/test_chromium.py; then
+    local python_cmd="${PYTHON3_PATH:-python3}"
+    if $python_cmd /tmp/test_chromium.py; then
         log_success "Installation verification passed!"
         return 0
     else
@@ -278,8 +341,9 @@ if __name__ == "__main__":
     asyncio.run(example_workflow())
 EOF
 
+    local python_cmd="${PYTHON3_PATH:-python3}"
     log_success "Usage example created at ~/rebrowse_example.py"
-    log_info "Run it with: python3 ~/rebrowse_example.py"
+    log_info "Run it with: $python_cmd ~/rebrowse_example.py"
 }
 
 # Main installation function
@@ -292,15 +356,6 @@ main() {
     # Detect OS
     OS=$(detect_os)
     log_info "Detected OS: $OS"
-    
-    # Check Python
-    if ! command_exists python3; then
-        log_error "Python 3 is required but not installed."
-        exit 1
-    fi
-    
-    PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-    log_info "Python version: $PYTHON_VERSION"
     
     # Install system dependencies based on OS
     case $OS in
@@ -319,6 +374,30 @@ main() {
             ;;
     esac
     
+    # Check Python version after potential installation/upgrade
+    if ! check_python_version; then
+        echo ""
+        log_error "❌ Python version check failed!"
+        echo ""
+        echo "Solutions:"
+        case $OS in
+            "macos")
+                echo "1. The script attempted to install Python 3.11, but it may not be the default."
+                echo "2. Try running: brew install python@3.11"
+                echo "3. Then add to your shell profile: export PATH=\"/opt/homebrew/bin:\$PATH\""
+                echo "4. Restart your terminal and run: python3.11 --version"
+                echo "5. Re-run this script"
+                ;;
+            "linux")
+                echo "1. Install Python 3.11+: sudo apt install python3.11 python3.11-pip"
+                echo "2. Or use pyenv to manage Python versions"
+                echo "3. Make sure python3 points to version 3.11+"
+                ;;
+        esac
+        echo ""
+        exit 1
+    fi
+    
     # Install Python dependencies
     install_python_deps
     
@@ -331,16 +410,18 @@ main() {
         
         echo ""
         log_success "🎉 Installation completed successfully!"
+        local python_cmd="${PYTHON3_PATH:-python3}"
         echo ""
         echo "Next steps:"
-        echo "1. Test the installation: python3 ~/rebrowse_example.py"
+        echo "1. Test the installation: $python_cmd ~/rebrowse_example.py"
         echo "2. For headless mode, set headless=True in the BrowserProfile"
         echo "3. Check your workflow backend documentation for API usage"
         echo ""
         echo "Troubleshooting:"
-        echo "- If you encounter issues, try: python3 -m playwright install chromium"
+        echo "- If you encounter issues, try: $python_cmd -m playwright install chromium"
         echo "- For production/Docker: set DISPLAY=:99 and use xvfb-run"
         echo "- Logs location: Check your application logs for detailed error messages"
+        echo "- Python path used: $python_cmd"
         echo ""
     else
         log_error "Installation verification failed. Please check the errors above."
