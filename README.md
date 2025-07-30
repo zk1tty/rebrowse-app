@@ -1,65 +1,25 @@
-[<img src="./doc/assets/Rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
-
-<br/>
-
-[![n0rizkitty](https://img.shields.io/twitter/follow/n0rizkitty?style=social)](https://x.com/n0rizkitty)
-
-## About Rebrowse
-
-Rebrowse is a powerful tool that converts screen recordings into automated workflow agents.   
-
-Key features of Rebrowse:
-- Record your screen once and automate the workflow forever
-- Transform recordings into shareable workflow agents
-- Support for cross-application workflows
-- Easy sharing and collaboration   
-
-Explore our Showcases at [rebrowse.me](https://rebrowse.me)
-
-## Watch Demo
-Click and watch Youtube videos.
-
-▶ Lead Gen demo
-
-<a href="https://www.youtube.com/watch?v=ozXZqgxUJK0"><img src="https://img.youtube.com/vi/ozXZqgxUJK0/0.jpg" alt="Luma to LinkedIn DM" width="full"></a>
-
-▶ Remove background from Rick Rubin image
-
-<a href="https://youtu.be/CjxfwRO0TC8?si=KB7gndtCMdwM1Qoi&t=40"><img src="./doc/assets/examples/rm_bg_img.png" alt="Replay: remove bg from img" width="full"></a>
-
-▶ Tweet post
-<a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./doc/assets/examples/record-replay-demo.png" alt="Replay: tweet posting" width="full"></a>
 
 
-Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
+## Rebrowse structure
 
----
-## Two Agent Modes
+```bash
+rebrowse-app
+ L api/ # Web backend server on 127.0.0.1:8000
+ L ui/  # Web frontend server on 127.0.0.1:5173
+ L extension/ # Rebrowse Recorder Chrome extension.
+```
 
-<div style="display: flex; flex-direction: column; align-items: flex-start;">
-  <span style="font-size: 1.5em;"><strong>✍🏻 Text prompt</strong></span>
-  <ul>
-    <li>👍 Robust. </li>
-    <li>👎 needs long descriptive prompt. slow.</li>
-  </ul>
-  <img src="./doc/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
-
-  <span style="font-size: 1.5em;"><strong>▶️ Recording</strong></span>
-  <ul>
-    <li>👍 Determinictic. 10x fast. 3x Accurate.</li>
-    <li>⚠️ AI-powered fall-back is WIP.</li>
-  </ul>
-  <img src="./doc/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
-</div>
-
----
 ## Installation Guide
 
-### Prerequisites
-- Python 3.8 or higher
-- Git
-- Chrome browser (for browser automation)
-- Gradio (for the web interface)
+### Preparation
+1. Supabase(relational DB)   
+Create a new project, and retrieve the follwoing valiables.
+  - `SUPABASE_URL`: `https://YOUR_PROJECT_ID.supabase.co`
+  - `SUPABASE_ANON_KEY`: public key
+  - `SUPABASE_SERVICE_ROLE_KEY`: private key
+  - `SUPABASE_JWT_SECRET`: private secret
+
+2. OpenAI API Key
 
 ### Step 1: Clone the Repository
 ```bash
@@ -67,167 +27,89 @@ git clone https://github.com/zk1tty/rebrowse-app.git
 cd rebrowse-app
 ```
 
-### Step 2: Set Up Python Environment
-1. case: MacOS
+### Step 2: Set up Chrome Extension: Rebrowse Recorder
+
+1. Go to the dir and prep env file.
+    ```bash
+    cd extension
+    cp .env.local .env
+    ```
+
+2. Prep `.env` file.
+    ```bash
+    # project ID
+    VITE_SUPABASE_URL # https://YOUR_PROJECT_ID.supabase.co
+    # anon pub key
+    VITE_SUPABASE_ANON_KEY
+    # prod URL
+    VITE_API_URL # https://api.rebrowse.me
+    VITE_APP_ORIGIN # https://app.rebrowse.me
+    ```
+
+3. Prepare the build file
+    ```bash
+    npm install
+    npm run build:dev # upload recording data to 127.0.0.1:5173(dev)
+    npm run build:prod # upload recording data to https://api.rebrowse.me(prod)
+    ```
+4. Check the build file `chrome-mv3` exists at `.output/` dir.
+    ```bash
+    ls .output
+    # chrome-mv3
+    ```
+5. Open Chrome App, and go to `chrome://extension`
+
+6. Upload `chrome-mv3` file on developer mode.
+
+### Step 3: Set up Web Backend Server
+1. Open a new terminal
+2. Go to the dir and prep env file.
+    ```bash
+    cd api
+    cp .env.local .env
+    ```
+3. Prep `.env` file.
+    ```bash
+    # We support all langchain models, openai only for demo purposes
+    OPENAI_API_KEY=
+    # Supabase Configuration
+    SUPABASE_URL # https://YOUR_PROJECT_ID.supabase.co
+    SUPABASE_SERVICE_ROLE_KEY
+    SUPABASE_JWT_SECRET
+    ```
+4. Prep venv environment.   
+    Note: we use `uv` for python venv management.
     ```bash
     # Install uv:
     curl -LsSf https://astral.sh/uv/install.sh | sh
 
-    # Create and activate a virtual environment
+    # Init venv
     uv venv --python 3.11
-
-    # activate venv:
     source .venv/bin/activate
 
-    # Install python dependencies
-    uv pip install -r requirements.txt
-    ```
+    # Manage Python packages with a pip-compatible interface
+    uv install pip install -r requirement.txt
 
-2. case: Windows
+    # Run uvicorn
+    ENV=prod uvicorn backend.api:app --reload
+    ```
+5. Confirm that public API responses.
+
+### Step 4: Set up Web Frontend Server
+1. Open a new terminal
+2. go to the dir and prep env file
     ```bash
-    # Install uv:
-      powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-    # Create and activate a virtual environment
-    uv venv --python 3.11
-
-    # activate venv:
-    .venv\Scripts\activate
-
-    # Install python dependencies
-    uv pip install -r requirements.txt
+    cd ui
+    cp .env.local .env
     ```
-
-
-### Step 3: Configure Environment Variables
-1. Create a new Chrome profile to be used by rebrowse
-    ```
-    mkdir -p custom_chrome_profile
-    ```
-2. Copy the `.env.example` file to a new file named `.env` in the project root.
-    ```
-    cp .env.example .env
-    ```
-
-3. Open `.env` file
-    ```
-    vim .env
-    ```
-
-4. add API key and chrome paths
+3. prep env file
     ```bash
-    # LLM API Keys
-    OPENAI_API_KEY=your_openai_api_key
+    VITE_PUBLIC_API_URL # https://api.rebrowse.me
+    VITE_PUBLIC_SUPABASE_URL # https://YOUR_PROJECT_ID.supabase.co
+    VITE_PUBLIC_SUPABASE_ANON_KEY 
     ```
-
+4. Install and run
     ```bash
-    # - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
-    # - Linux: `/usr/bin/google-chrome`
-    CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-
-    # ⚠️ Replace {username}
-    CHROME_USER_DATA="/Users/{username}/Projects/rebrowse-app/custom_chrome_profile"
-    CHROME_CDP_URL="http://localhost:9222"
+    npm install
+    npm run dev
     ```
-### Step 4: Close all open Chrome tabs. IMPORTANT!!
-
-<img src="./doc/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
-
-Or, run this command.
-
-```
-pkill -9 "Google Chrome"
-```
-
-
-### Step 5: Launch the Web Application
-```bash
-# Start with Gradio
-gradio webui.py
-
-# Or run directly with Python
-python webui.py
-```
-The application will be available at `http://127.0.0.1:7860`
-
-### Step 6: Use FireFox or Safari to open 127.0.0.1:7860
-- DO NOT use Chrome to open this web app.
-- Open Safari or FIrefox, and go to "http://127.0.0.1:7860"
-
-### Step 7: Run a clean Chrome with CDP session
-  
-⚠️ I am temporarily making the test profile on the same 
-project file, and name it `/custom_chrome_profile` for debugging purposes.
-
-1. Run this Chrome using the new profile.
-    Configuration details to connect to your own Chrome are [here](https://docs.browser-use.com/customize/real-browser). 
-    
-    ```bash
-    sh run_custom_chrome.sh
-    ```
-
-2. Make sure that the DevTools WebSocket session is available
-    ```
-    DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
-    ```
-3. Log in to web apps on the new Chrome profile
-   In this process, you will create a new Chrome profile to be used by browser-agents.
-    - log in to your web accounts: X, LinkedIn, Youtube, etc.
-    - If the browser agent can skip this process, it will be easier to handle executions.
-
-### Step 8: Ready to play ^^
-- Go to "Choose Agent" tab
-- Pick up a Preset Task
-- Try "Run Agent"
-- Enjoy your browsing agent.
-
----
-## Are you a dev?
-
-Let me navigate you through the technical concept and objectives of Rebrowse.
-
-
-### Background
-
-This project builds upon the foundation of [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
-
-The original creator is [WarmShao](https://github.com/warmshao), who made the WebUI.
-
-### Key difference from Browser-use?
-
-I needed to make the workflow of agent behaibier by faster and accurate.   
-One approach to do this is recoeding and make it repeatable.   
-I introduced our technical architecture in [Architecure](./doc/architecture.md).   
-
-Let me share our technical milestones.   
-
-- [x] Make a workflow traceable 
-- [x] Implement Replay mode with `Replayer` 
-- [x] Add an eval process to trigger Drift or not.  <- enough flexible
-- [x] Take a demo video and add here.
-- [ ] Measure the accuracy and speed of replay mode in comparison with agent mode
-- [ ] Add `Analyzer`: a reasoning process to make the process modifiable by test prompt 
-- [ ] Add `Remixer`
-- [ ] Design `Replayer` memory to handle edge cases
-- [ ] Add multi-thread execution of a single workflow on `Replayer`
-
-### Update on 19th May
-
-I found that @browser-use team released [workflow-use](https://github.com/browser-use/workflow-use).
-I'm still researching their approach and objectives.   
-Let's talk more on [X](https://x.com/n0rizkitty) or [Telegram](https://x.com/n0rizkitty).
-
-## Product Roadmap
-
-We are going to build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
-Check out our [Roadmap](./doc/ROADMAP.md).   
-
-<img src="./doc/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
-
-
-### Gradio Development Mode
-For development with auto-reload:
-```bash
-gradio webui.py --watch src
-```
-This will automatically reload the browser when you make changes to files in the `src` directory.

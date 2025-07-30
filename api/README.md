@@ -1,4 +1,4 @@
-# Rebrowse Workflow — FastAPI service
+# Rebrowse Workflow — FastAPI Web Server
 
 - venv installation
     ```

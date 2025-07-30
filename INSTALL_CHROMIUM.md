@@ -40,29 +40,7 @@ The installation script automatically:
    chmod +x install-chromium.sh
    ```
 
-### Step 2: Update the Script URL
-
-Replace `YOUR_USERNAME/YOUR_REPO` in the script with your actual GitHub details:
-
-```bash
-# In install-chromium.sh, line 4:
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install-chromium.sh | bash
-```
-
-For example:
-```bash
-# Usage: curl -fsSL https://raw.githubusercontent.com/rebrowse/workflow-backend/main/install-chromium.sh | bash
-```
-
-### Step 3: Commit and Push
-
-```bash
-git add install-chromium.sh
-git commit -m "Add one-liner Chromium installation script"
-git push origin main
-```
-
-### Step 4: Test the Installation
+### Step 2: Test the Installation
 
 Test your hosted script:
 ```bash
