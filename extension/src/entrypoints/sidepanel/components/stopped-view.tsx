@@ -4,6 +4,7 @@ import { ensureAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { EventViewer } from "./event-viewer";
 import { UploadModal } from "./upload-modal";
+import { RotateCcw, Brain, Download, Key, Copy, Check, X } from "lucide-react";
 
 export const StoppedView: React.FC = () => {
   const { discardAndStartNew, workflow } = useWorkflow();
@@ -342,7 +343,7 @@ export const StoppedView: React.FC = () => {
         <h2 className="text-lg font-semibold">Recording Finished</h2>
         <div className="space-x-2">
           <Button variant="outline" size="sm" onClick={discardAndStartNew}>
-            🔄 Restart
+            <RotateCcw className="h-4 w-4" />
           </Button>
           <Button
             variant="outline"
@@ -350,21 +351,29 @@ export const StoppedView: React.FC = () => {
             onClick={handleProcessClick}
             disabled={!workflow || uploading}
           >
-            {uploading ? "Uploading…" : "🧠 Process"}
+            {uploading ? (
+              <div className="flex items-center space-x-1">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current"></div>
+                <span className="text-xs">Uploading</span>
+              </div>
+            ) : (
+              <Brain className="h-4 w-4" />
+            )}
           </Button>
-          {/* <Button
+          <Button
+            variant="outline"
             size="sm"
             onClick={downloadJson}
             disabled={!workflow}
           >
-            💾 JSON
-          </Button> */}
+            <Download className="h-4 w-4" />
+          </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={handleRevealToken}
           >
-            🔑 Token
+            <Key className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -409,14 +418,18 @@ export const StoppedView: React.FC = () => {
                     onClick={copyTokenToClipboard}
                     className="flex-1"
                   >
-                    {tokenCopied ? "✅ Copied!" : "📋 Copy"}
+                    {tokenCopied ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setShowSessionToken(false)}
                   >
-                    Close
+                    <X className="h-4 w-4" />
                   </Button>
                 </div>
               </div>

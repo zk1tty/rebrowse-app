@@ -3,6 +3,7 @@ import { useAuth } from '../context/auth-provider';
 import { useWorkflow } from '../context/workflow-provider';
 import { Button } from '@/components/ui/button';
 import { authClient } from '@/lib/auth';
+import { Globe } from 'lucide-react';
 
 export const InitialView: React.FC = () => {
   const { signIn, isAuthenticated } = useAuth();
@@ -139,7 +140,10 @@ export const InitialView: React.FC = () => {
 
   return (
     <div className="flex flex-col items-center justify-center h-full">
-      <h1 className="mb-4 text-xl">⏺️ Rebrowse Recorder</h1>
+      <h1 className="mb-4 text-xl flex items-center gap-2">
+        <Globe className="h-6 w-6 text-pink-500" />
+        Rebrowse Recorder
+      </h1>
       
       {signingIn ? (
         // Signing in - show loading state
