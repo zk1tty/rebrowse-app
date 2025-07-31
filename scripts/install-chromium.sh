@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Rebrowse Workflow - Chromium Setup Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install-chromium.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/scripts/install-chromium.sh | bash
 # 
 # Environment variables:
 # FORCE_PYTHON311=1    - Force install Python 3.11 even if newer version exists
@@ -14,6 +14,7 @@ set -e  # Exit on any error
 
 # Configuration (can be overridden by environment variables)
 REPORTING_ENDPOINT="https://dmgtsseqqsiyuuzhdxnn.supabase.co/rest/v1/installation_reports"
+# Supabase anon key(public key)
 REPORTING_API_KEY="REMOVED.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtZ3Rzc2VxcXNpeXV1emhkeG5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3MzE4ODIsImV4cCI6MjA2NTMwNzg4Mn0.e5bQXtdRsPY31fEp2xextWC4QKYUcAvj77hEDVZHuZw"
 
 # Colors for output

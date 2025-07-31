@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Git Subtree Pull All Helper Script
-# This script pulls updates from all subtree repositories
+# NOTE: only pull, not push.
 
 echo "🔄 Pulling all subtrees..."
 

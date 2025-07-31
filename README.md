@@ -32,7 +32,21 @@ Create a new project, and retrieve the follwoing valiables.
   - `SUPABASE_SERVICE_ROLE_KEY`: private key
   - `SUPABASE_JWT_SECRET`: private secret
 
-2. OpenAI API Key
+2. Retrieve OpenAI API Key
+
+3. Install and set up Chromium for local-run mode.   
+    You can choose two modes to run agents; cloud-run or local-run.
+    Chromium is required for local-run mode.
+    <img src="./doc/assets/execution-mode-choice.png" alt="Rebrowse Hero" width="full"/>
+
+    - Install command:
+    ```bash
+    bash ./scripts/install-chromium.sh
+    ```
+    
+    - Installation process
+    <img src="./doc/assets/chromium-setup.png" alt="Chromium setup" width="full"/>
+
 
 ### Step 1: Clone the Repository
 ```bash
