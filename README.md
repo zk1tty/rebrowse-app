@@ -11,10 +11,7 @@ Upcoming features of Rebrowse(v0.2.0) :
 
 ## Demo
 
-https://github.com/zk1tty/rebrowse-app/assets/demo-grok-post.mp4
-
-<!-- Alternative: You can also upload the video file directly to your repository and reference it like this: -->
-<!-- ![Demo Video](./doc/assets/demo-grok-post.mp4) -->
+![X-Bot Demo](./doc/assets/demo-grok-post-compressed.mp4)
 
 ## Repo structure
 
