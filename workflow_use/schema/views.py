@@ -95,6 +95,23 @@ class PageExtractionStep(TimestampedWorkflowStep):
 	goal: str = Field(..., description='The goal of the page extraction.')
 
 
+# --- Simplified Clipboard Actions ---
+class ClipboardCopyStep(TimestampedWorkflowStep):
+	"""Copies content to clipboard using pyperclip."""
+
+	type: Literal['clipboard_copy']
+	content: str = Field(..., description='Content to copy to clipboard')
+	cssSelector: Optional[str] = Field(None, description='Element selector to copy from (if applicable)')
+
+
+class ClipboardPasteStep(TimestampedWorkflowStep):
+	"""Pastes content from clipboard using pyperclip."""
+
+	type: Literal['clipboard_paste']
+	content: Optional[str] = Field(None, description='Content to paste (if None, uses current clipboard)')
+	cssSelector: str = Field(..., description='Target element selector to paste into')
+
+
 # --- Union of all possible step types ---
 # This Union defines what constitutes a valid step in the "steps" list.
 DeterministicWorkflowStep = Union[
@@ -105,6 +122,8 @@ DeterministicWorkflowStep = Union[
 	KeyPressStep,
 	ScrollStep,
 	PageExtractionStep,
+	ClipboardCopyStep,
+	ClipboardPasteStep,
 ]
 
 AgenticWorkflowStep = AgentTaskWorkflowStep

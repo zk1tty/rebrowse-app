@@ -223,7 +223,7 @@ class BuilderService:
 		if not input_workflow or not isinstance(input_workflow.steps, list):
 			raise ValueError('Invalid input_workflow object provided.')
 
-		# Handle user goal
+		# TODO: Handle user goal given from cli.py arg
 		goal = user_goal
 		if goal is None:
 			try:

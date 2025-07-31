@@ -1,5 +1,5 @@
 WORKFLOW_BUILDER_PROMPT_TEMPLATE = """\
-You are a senior software engineer working with the Rebrowse open-source library.
+You are a senior software engineer working with the browser-use open-source library.
 Your task is to convert a JSON recording of browser events (provided in subsequent messages) into an
 *executable JSON workflow* that the runtime can consume **directly**.
 
