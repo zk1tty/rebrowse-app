@@ -79,3 +79,21 @@ class PageExtractionAction(_BaseExtra):
 
 	type: Literal['extract_page_content']
 	goal: str
+
+
+# === SIMPLIFIED CLIPBOARD ACTIONS ===
+
+class ClipboardCopyAction(RecorderBase):
+	"""Parameters for copying content to clipboard using pyperclip."""
+
+	type: Literal['clipboard_copy']
+	content: str = Field(..., description='Content to copy to clipboard')
+	cssSelector: Optional[str] = Field(None, description='Element selector to copy from (if applicable)')
+
+
+class ClipboardPasteAction(RecorderBase):
+	"""Parameters for pasting content from clipboard using pyperclip."""
+
+	type: Literal['clipboard_paste']
+	content: Optional[str] = Field(None, description='Content to paste (if None, uses current clipboard)')
+	cssSelector: str = Field(..., description='Target element selector to paste into')

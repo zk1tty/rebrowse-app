@@ -1,5 +1,6 @@
 # Rebrowse Workflow — FastAPI Web Server
 
+- ENV: `dev` or `prod`
 - venv installation
     ```
     # Init venv
@@ -7,10 +8,28 @@
     source .venv/bin/activate
 
     # Manage Python packages with a pip-compatible interface
-    uv install pip install -r requirement.txt
+    uv pip install -r requirements.txt
 
     # Run uvicorn
-    ENV=prod uvicorn backend.api:app --reload
+    ENV=dev uvicorn backend.api:app --reload
+    ```
+
+
+If you get issue like `ModuleNotFoundError: No module named 'supabase`?
+
+- instalation help command
+    ```
+    # Check which Python is being used
+    which python
+
+    # Check Python version
+    python --version
+
+    # Check installed packages (in uv environment)
+    uv pip list
+
+    # Check specific package
+    uv pip list | grep supabase
     ```
 
 - instalation help command
@@ -42,6 +61,13 @@ GET	| /workflows/tasks/{task_id}/status	| Check execution status
 POST |	/workflows/tasks/{task_id}/cancel	| Cancel workflow execution
 GET	| /workflows/logs/{task_id}	| Get execution logs
 GET	| /health	Health check for | monitoring
+
+## Auth ENdpoint
+
+📊 | Authentication | API
+--|--|--
+Method | Endpoint | Description
+GET | /auth/validate | Validate session token
 
 
 ## Browser instance 
@@ -99,4 +125,16 @@ profile = BrowserProfile(
     ]
 )
 return Browser(browser_profile=profile)
+```
+
+
+## Conversion test
+```
+curl -X POST "http://localhost:8000/workflows/build-from-recording" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recording": {"name":"Test","description":"Test","version":"1.0","steps":[{"type":"navigation","url":"https://amazon.com","timestamp":1650000000000}],"input_schema":[]},
+    "goal": "Shop for products on Amazon",
+    "name": null
+  }'
 ```

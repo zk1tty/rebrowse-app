@@ -4,10 +4,23 @@ uvicorn[standard]>=0.34.0
 supabase>=2.15.0
 aiofiles>=24.1.0
 aiohttp>=3.12.0
-browser-use>=0.2.4
+browser-use>=0.2.7
 playwright>=1.40.0
 fastmcp>=2.3.4
 typer>=0.15.0
 gotrue>=1.0.0
 PyJWT>=2.8.0
-python-dotenv>=1.0.0 
+python-dotenv>=1.0.0
+websockets>=12.0 
+psutil>=5.9.0
+
+# LangChain dependencies
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+langchain>=0.2.0
+
+# rrweb Visual Streaming Dependencies
+asyncio-mqtt>=0.16.0  # For robust async messaging
+python-json-logger>=2.0.7  # For structured logging
+pydantic[email]>=2.0.0  # Enhanced validation for visual events
+orjson>=3.9.0  # Fast JSON serialization for rrweb events
