@@ -1,11 +1,16 @@
 import { workflowService } from '@/services/workflowService';
-import { getStoredSessionToken } from '@/utils/authUtils';
+import { 
+  getStoredSessionToken, 
+  validateSessionToken,
+  hasValidAndAuthenticatedSession,
+  clearStoredAuth 
+} from '@/utils/authUtils';
 import { 
   detectExtensionContext, 
   handleExtensionNavigation, 
   sendMessageToExtension 
 } from '@/utils/extensionUtils';
-import { withExtensionErrorHandling } from '@/utils/extensionErrorHandler';
+import { withExtensionErrorHandling, createExtensionError, ExtensionErrorCodes } from '@/utils/extensionErrorHandler';
 
 /**
  * Upload workflow recording data and navigate to processing page
@@ -20,6 +25,34 @@ export const uploadAndNavigateToProcessing = withExtensionErrorHandling(
     
     // Get session token for authenticated upload
     const sessionToken = getStoredSessionToken();
+    
+    // Validate session token before using it
+    if (sessionToken) {
+      console.log('🚀 [ExtensionHelpers] Validating session token...');
+      const isValidSession = await hasValidAndAuthenticatedSession(sessionToken);
+      
+      if (!isValidSession) {
+        const error = createExtensionError(
+          ExtensionErrorCodes.SESSION_TOKEN_INVALID,
+          'Your session has expired. Please login again through the Chrome extension.',
+          null,
+          { action: 'upload' }
+        );
+        
+        // Notify extension about session expiry
+        if (context.isExtension) {
+          await sendMessageToExtension({
+            type: 'SESSION_EXPIRED',
+            data: { error: error.message }
+          });
+        }
+        
+        throw error;
+      }
+      console.log('🚀 [ExtensionHelpers] Session token is valid');
+    } else {
+      console.log('🚀 [ExtensionHelpers] No session token found');
+    }
     
     // Upload the recording data with session token if available
     const { job_id } = await workflowService.uploadWorkflow(recordingData, sessionToken || undefined);
@@ -70,6 +103,34 @@ export const uploadWorkflowRecording = withExtensionErrorHandling(
     
     // Get session token for authenticated upload
     const sessionToken = getStoredSessionToken();
+    
+    // Validate session token before using it
+    if (sessionToken) {
+      console.log('🚀 [ExtensionHelpers] Validating session token for direct upload...');
+      const isValidSession = await hasValidAndAuthenticatedSession(sessionToken);
+      
+      if (!isValidSession) {
+        const error = createExtensionError(
+          ExtensionErrorCodes.SESSION_TOKEN_INVALID,
+          'Your session has expired. Please login again through the Chrome extension.',
+          null,
+          { action: 'direct_upload' }
+        );
+        
+        // Notify extension about session expiry
+        if (context.isExtension) {
+          await sendMessageToExtension({
+            type: 'SESSION_EXPIRED',
+            data: { error: error.message }
+          });
+        }
+        
+        throw error;
+      }
+      console.log('🚀 [ExtensionHelpers] Session token is valid for direct upload');
+    } else {
+      console.log('🚀 [ExtensionHelpers] No session token found for direct upload');
+    }
     
     const { job_id } = await workflowService.uploadWorkflow(recordingData, sessionToken || undefined);
     console.log('🚀 [ExtensionHelpers] Direct upload successful, job_id:', job_id);

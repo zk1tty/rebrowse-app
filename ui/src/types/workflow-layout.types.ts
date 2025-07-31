@@ -28,6 +28,8 @@ export const stepSchema = z.object({
     'key_press',
     'scroll',
     'extract_page_content',
+    'clipboard_copy',
+    'clipboard_paste',
   ]),
 
   /* optional fields (vary by step type) */
@@ -40,6 +42,50 @@ export const stepSchema = z.object({
   value: z.string().nullable().optional(),
   task: z.string().nullable().optional(),
 });
+
+/* ── Execution Statistics ──────────────────────────────────────────── */
+export interface ExecutionStats {
+  total_executions: number;
+  successful_executions: number;
+  failed_executions: number;
+  success_rate: number;
+  average_execution_time: number | null;
+  last_execution_at: string | null;
+  visual_streaming_usage_rate: number;
+}
+
+/* ── Recent Execution ──────────────────────────────────────────────── */
+export interface RecentExecution {
+  execution_id: string;
+  status: 'completed' | 'failed' | 'running' | 'cancelled';
+  execution_time_seconds: number | null;
+  visual_streaming_enabled: boolean;
+  mode: string;
+  created_at: string;
+}
+
+/* ── Performance Indicators ────────────────────────────────────────── */
+export interface PerformanceMetrics {
+  trend: 'improving' | 'declining' | 'stable';
+  reliability_score: number;
+  avg_execution_time_trend: number;
+}
+
+/* ── Enhanced Workflow (with execution data) ───────────────────────── */
+export interface EnhancedWorkflow extends Workflow {
+  execution_stats?: ExecutionStats;
+  recent_executions?: RecentExecution[];
+  performance?: PerformanceMetrics;
+}
+
+/* ── Active Execution ──────────────────────────────────────────────── */
+export interface ActiveExecution {
+  execution_id: string;
+  workflow_id: string;
+  workflow_name: string;
+  status: string;
+  created_at: string;
+}
 
 /* ── Workflow wrapper ──────────────────────────────────────────────── */
 export const workflowSchema = z.object({

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { detectExtensionContext, isFromExtension, type ExtensionContext } from '@/utils/extensionUtils';
 import { Chrome } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAppContext } from '@/contexts/AppContext';
 
 // Compact version for navigation bar
 interface CompactExtensionIndicatorProps {
@@ -10,18 +11,34 @@ interface CompactExtensionIndicatorProps {
 
 export const CompactExtensionIndicator: React.FC<CompactExtensionIndicatorProps> = ({ 
   className = '' 
-}) => {
-  const { theme } = useTheme();
+  }) => {
+    const { theme } = useTheme();
+    const { currentUserSessionToken, authRefreshTrigger } = useAppContext();
   const [context, setContext] = useState<ExtensionContext | null>(null);
   const [fromExtension, setFromExtension] = useState(false);
 
-  useEffect(() => {
+  // Refresh function to update extension context
+  const refreshExtensionStatus = () => {
     const extensionContext = detectExtensionContext();
     const isFromExt = isFromExtension();
     
     setContext(extensionContext);
     setFromExtension(isFromExt);
+  };
+
+  useEffect(() => {
+    refreshExtensionStatus();
   }, []);
+
+  // Refresh when authentication status changes
+  useEffect(() => {
+    refreshExtensionStatus();
+  }, [currentUserSessionToken]);
+
+  // Refresh when authentication refresh is triggered
+  useEffect(() => {
+    refreshExtensionStatus();
+  }, [authRefreshTrigger]);
 
   // Only show if user came from extension or is in extension context
   if (!fromExtension && !context?.isExtension) {
@@ -44,7 +61,7 @@ export const CompactExtensionIndicator: React.FC<CompactExtensionIndicatorProps>
       </span>
       <div 
         className={`w-2 h-2 rounded-full ${
-          theme === 'dark' ? 'bg-cyan-400 shadow-lg shadow-cyan-400/50' : 'bg-red-500'
+          theme === 'dark' ? 'bg-cyan-400 shadow-lg shadow-cyan-400/50' : 'bg-green-500'
         }`}
         title={context?.isExtension ? 'Active' : 'Connected'}
       />
