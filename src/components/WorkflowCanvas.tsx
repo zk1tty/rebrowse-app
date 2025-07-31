@@ -129,6 +129,8 @@ export function WorkflowCanvas() {
             if (node.data?.action === 'key_press') return theme === 'dark' ? '#a78bfa' : '#8b5cf6';
             if (node.data?.action === 'agent') return theme === 'dark' ? '#9ca3af' : '#6b7280';
             if (node.data?.action === 'select_change') return theme === 'dark' ? '#22d3ee' : '#06b6d4';
+            if (node.data?.action === 'clipboard_copy') return theme === 'dark' ? '#fb923c' : '#ea580c';
+            if (node.data?.action === 'clipboard_paste') return theme === 'dark' ? '#f472b6' : '#db2777';
             return theme === 'dark' ? '#9ca3af' : '#6b7280';
           }}
         />

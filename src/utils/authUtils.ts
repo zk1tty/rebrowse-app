@@ -3,6 +3,8 @@
  * Supports UUID-based ownership with NULL legacy workflows (Option B)
  */
 
+import { API_BASE_URL } from '@/lib/constants';
+
 export interface OwnershipCheckResponse {
   is_owner: boolean;
   owner_id: string | null;
@@ -19,13 +21,7 @@ export const checkWorkflowOwnership = async (
   workflowId: string
 ): Promise<boolean> => {
   try {
-    console.log('🔐 [Auth] Checking ownership for workflow:', workflowId);
-    console.log('🔐 [Auth] Session token type:', sessionToken.startsWith('eyJ') ? 'JWT' : 'Other');
-    
-    const API = import.meta.env.VITE_PUBLIC_API_URL;
-    const url = `${API}/workflows/${workflowId}/ownership?session_token=${encodeURIComponent(sessionToken)}`;
-    
-    console.log('🔐 [Auth] Making ownership request to:', url.replace(sessionToken, '[TOKEN]'));
+    const url = `${API_BASE_URL}/workflows/${workflowId}/ownership?session_token=${encodeURIComponent(sessionToken)}`;
     
     const response = await fetch(url, {
       method: 'GET',
@@ -34,22 +30,14 @@ export const checkWorkflowOwnership = async (
       }
     });
     
-    console.log(`🔐 [Auth] Response status: ${response.status} ${response.statusText}`);
-    
     if (response.ok) {
       const data: OwnershipCheckResponse = await response.json();
-      console.log('🔐 [Auth] ✅ Ownership check successful:', data);
       return data.is_owner;
     } else {
-      const errorText = await response.text();
-      console.error(`🔐 [Auth] ❌ Ownership check failed: ${response.status} - ${errorText}`);
-      
-      if (response.status === 401) {
-        console.log('🔐 [Auth] Unauthorized - invalid or expired session token');
-      } else if (response.status === 404) {
-        console.log('🔐 [Auth] Workflow not found');
+      if (response.status !== 401 && response.status !== 404) {
+        const errorText = await response.text();
+        console.error(`❌ [Auth] Ownership check failed: ${response.status} - ${errorText}`);
       }
-      
       return false;
     }
     
@@ -91,9 +79,8 @@ export const isFromExtension = (): boolean => {
 export const initializeSessionFromExtension = (sessionToken: string): void => {
   try {
     storeSessionToken(sessionToken);
-    console.log('🔐 [Auth] Session initialized from Chrome extension');
   } catch (error) {
-    console.error('🔐 [Auth] Error initializing session from extension:', error);
+    console.error('❌ [Auth] Error initializing session from extension:', error);
   }
 };
 
@@ -105,9 +92,8 @@ export const clearStoredAuth = (): void => {
     sessionStorage.removeItem('workflow_session_token');
     sessionStorage.removeItem('workflow_auth_type');
     sessionStorage.removeItem('from_extension');
-    console.log('🔐 [Auth] Cleared stored auth data');
   } catch (error) {
-    console.error('🔐 [Auth] Error clearing auth data:', error);
+    console.error('❌ [Auth] Error clearing auth data:', error);
   }
 };
 
@@ -128,9 +114,8 @@ export const storeSessionToken = (sessionToken: string): void => {
     sessionStorage.setItem('workflow_session_token', sessionToken);
     sessionStorage.setItem('workflow_auth_type', 'session');
     sessionStorage.setItem('from_extension', 'true');
-    console.log('🔐 [Auth] Session token stored successfully');
   } catch (error) {
-    console.error('🔐 [Auth] Error storing session token:', error);
+    console.error('❌ [Auth] Error storing session token:', error);
   }
 };
 
@@ -155,39 +140,82 @@ export const canEditWorkflow = (
   isPublicWorkflow: boolean,
   isLegacyWorkflow: boolean = false
 ): boolean => {
-  console.log('🔍 [canEditWorkflow] Input parameters:', {
-    sessionToken: sessionToken ? `${sessionToken.slice(0,8)}...` : null,
-    isOwner,
-    isPublicWorkflow,
-    isLegacyWorkflow
-  });
-
   // No session token = no editing
   if (!hasValidSessionToken(sessionToken)) {
-    console.log('🔍 [canEditWorkflow] Result: false (no valid session token)');
     return false;
   }
   
   // Owner can always edit their workflows
   if (isOwner) {
-    console.log('🔍 [canEditWorkflow] Result: true (user is owner)');
     return true;
   }
   
   // Legacy workflows (owner_id = NULL) can be edited by any authenticated user
   if (isLegacyWorkflow) {
-    console.log('🔍 [canEditWorkflow] Result: true (legacy workflow)');
     return true;
   }
   
   // Public workflows owned by others = read-only (fork required)
   if (isPublicWorkflow && !isOwner) {
-    console.log('🔍 [canEditWorkflow] Result: false (public workflow, not owner)');
     return false;
   }
   
   // Private workflows = owner only
-  const result = isOwner;
-  console.log('🔍 [canEditWorkflow] Result:', result, '(private workflow, owner check)');
-  return result;
+  return isOwner;
+};
+
+/**
+ * Validate session token with backend
+ * Makes a lightweight API call to check if the token is still valid
+ */
+export const validateSessionToken = async (sessionToken: string): Promise<boolean> => {
+  try {
+    // Safety check: Don't validate null, undefined, or empty tokens
+    if (!sessionToken || typeof sessionToken !== 'string' || sessionToken.trim().length === 0) {
+      return false;
+    }
+    
+    // Safety check: Ensure API URL exists
+    if (!API_BASE_URL) {
+      console.error('❌ [Auth] API URL not configured');
+      return false;
+    }
+
+    // Use a lightweight endpoint to validate the token
+    const url = `${API_BASE_URL}/auth/validate?session_token=${encodeURIComponent(sessionToken)}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const isValid = response.ok;
+    
+    // If invalid, clear the stored token
+    if (!isValid) {
+      clearStoredAuth();
+    }
+    
+    return isValid;
+    
+  } catch (error) {
+    console.error('❌ [Auth] Error validating session token:', error);
+    return false;
+  }
+};
+
+/**
+ * Check if session token exists and is valid with backend
+ * Replaces the simple hasValidSessionToken for critical operations
+ */
+export const hasValidAndAuthenticatedSession = async (sessionToken: string | null): Promise<boolean> => {
+  // First check if token exists
+  if (!hasValidSessionToken(sessionToken)) {
+    return false;
+  }
+  
+  // Then validate with backend
+  return await validateSessionToken(sessionToken!);
 }; 

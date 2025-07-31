@@ -20,11 +20,18 @@ export interface WorkflowService {
   executeWorkflow(
     workflowId: string,
     inputFields: z.infer<typeof inputFieldSchema>[],
-    sessionToken?: string
+    sessionToken?: string,
+    mode?: 'cloud-run' | 'local-run',
+    visual?: boolean
   ): Promise<{
+    success: boolean;
     task_id: string;
+    workflow: string;
     log_position: number;
     message: string;
+    mode: string;
+    devtools_url?: string;
+    visual_enabled?: boolean;
   }>;
   getWorkflowCategory(timestamp: number): string;
   addWorkflow(name: string, content: string): Promise<void>;
@@ -47,6 +54,37 @@ export interface WorkflowService {
 }
 
 class WorkflowServiceImpl implements WorkflowService {
+  // Utility function to normalize workflow data
+  private normalizeWorkflowData(workflow: any): any {
+    return {
+      ...workflow,
+      steps: workflow.steps?.map((step: any) => ({
+        // Ensure all required fields are present with proper defaults
+        description: step.description ?? null,
+        output: step.output ?? null,
+        timestamp: step.timestamp ?? null,
+        tabId: step.tabId ?? null,
+        type: step.type,
+        // Optional fields - only include if they exist
+        ...(step.url !== undefined && { url: step.url }),
+        ...(step.cssSelector !== undefined && { cssSelector: step.cssSelector }),
+        ...(step.xpath !== undefined && { xpath: step.xpath }),
+        ...(step.elementTag !== undefined && { elementTag: step.elementTag }),
+        ...(step.elementText !== undefined && { elementText: step.elementText }),
+        ...(step.selectedText !== undefined && { selectedText: step.selectedText }),
+        ...(step.value !== undefined && { value: step.value }),
+        ...(step.task !== undefined && { task: step.task }),
+      })) || [],
+      // Normalize input_schema to ensure required field is always boolean
+      input_schema: workflow.input_schema?.map((input: any) => ({
+        name: input.name,
+        type: input.type,
+        // Convert null required to false, ensure it's always boolean
+        required: input.required === null ? false : Boolean(input.required),
+        value: input.value ?? '',
+      })) || []
+    };
+  }
   async getWorkflows(): Promise<Workflow[]> {
     const response = await fetchClient.GET('/api/workflows');
 
@@ -77,19 +115,17 @@ class WorkflowServiceImpl implements WorkflowService {
       throw new Error('Failed to return data from server');
     }
 
-    return data;
+    // Normalize the workflow data to ensure consistent schema
+    return this.normalizeWorkflowData(data);
   }
 
   async getPublicWorkflowById(id: string): Promise<any> {
     try {
       // Since there's no direct /workflows/{id} endpoint, we need to:
       // 1. Fetch all public workflows from /workflows/
-      // 2. Find the one with matching ID
-      console.log('[workflowService] Fetching all public workflows to find ID:', id);
-      
+      // 2. Find the one with matching ID      
       const allWorkflows = await apiFetch<any[]>('/workflows/', { auth: false });
-      console.log('[workflowService] All public workflows:', allWorkflows);
-      
+            
       if (!Array.isArray(allWorkflows)) {
         throw new Error('Invalid response format: expected array of workflows');
       }
@@ -104,10 +140,7 @@ class WorkflowServiceImpl implements WorkflowService {
       
       if (!targetWorkflow) {
         throw new Error(`Workflow with ID "${id}" not found`);
-      }
-      
-      console.log('[workflowService] Found target workflow:', targetWorkflow);
-      
+      }      
       // Extract the actual workflow data from the nested structure
       const workflow = targetWorkflow.json || targetWorkflow;
       
@@ -116,28 +149,7 @@ class WorkflowServiceImpl implements WorkflowService {
       }
       
       // Normalize the workflow data to match our Zod schema expectations
-      const normalizedWorkflow = {
-        ...workflow,
-        steps: workflow.steps?.map((step: any) => ({
-          // Ensure all required fields are present with proper defaults
-          description: step.description ?? null,
-          output: step.output ?? null,
-          timestamp: step.timestamp ?? null,
-          tabId: step.tabId ?? null,
-          type: step.type,
-          // Optional fields - only include if they exist
-          ...(step.url !== undefined && { url: step.url }),
-          ...(step.cssSelector !== undefined && { cssSelector: step.cssSelector }),
-          ...(step.xpath !== undefined && { xpath: step.xpath }),
-          ...(step.elementTag !== undefined && { elementTag: step.elementTag }),
-          ...(step.elementText !== undefined && { elementText: step.elementText }),
-          ...(step.selectedText !== undefined && { selectedText: step.selectedText }),
-          ...(step.value !== undefined && { value: step.value }),
-          ...(step.task !== undefined && { task: step.task }),
-        })) || []
-      };
-      
-      console.log('[workflowService] Normalized workflow data:', normalizedWorkflow);
+      const normalizedWorkflow = this.normalizeWorkflowData(workflow);
       
       return normalizedWorkflow;
     } catch (error) {
@@ -159,7 +171,6 @@ class WorkflowServiceImpl implements WorkflowService {
           auth: false
         });
         
-        console.log('[workflowService] Upload response (session-based):', response);
         return response;
       } else {
         // Fallback to public upload (no auth)
@@ -169,7 +180,6 @@ class WorkflowServiceImpl implements WorkflowService {
           auth: false
         });
         
-        console.log('[workflowService] Upload response (public):', response);
         return response;
       }
     } catch (error) {
@@ -181,7 +191,6 @@ class WorkflowServiceImpl implements WorkflowService {
   async getUploadStatus(jobId: string): Promise<any> {
     try {
       const status = await apiFetch<any>(`/workflows/upload/${jobId}/status`, { auth: false });
-      console.log('[workflowService] Upload status:', status);
       return status;
     } catch (error) {
       console.error('[workflowService] Failed to get upload status:', error);
@@ -290,11 +299,20 @@ class WorkflowServiceImpl implements WorkflowService {
   async executeWorkflow(
     workflowId: string,
     inputFields: z.infer<typeof inputFieldSchema>[],
-    sessionToken?: string
+    sessionToken?: string,
+    mode: 'cloud-run' | 'local-run' = 'cloud-run',
+    visual: boolean = false
   ): Promise<{
+    success: boolean;
     task_id: string;
+    workflow: string;
     log_position: number;
     message: string;
+    mode: string;
+    devtools_url?: string;
+    visual_enabled?: boolean;
+    visual_streaming_enabled?: boolean;
+    session_id?: string;
   }> {
     const inputs: any = {};
     inputFields.forEach((field) => {
@@ -304,20 +322,58 @@ class WorkflowServiceImpl implements WorkflowService {
     // Use session-based API if session token is provided
     if (sessionToken) {
       try {
+        // Use the existing session endpoint for both regular and visual execution
+        const endpoint = `/workflows/${workflowId}/execute/session`;
+        
+        const requestBody = {
+          inputs,
+          session_token: sessionToken,
+          mode: mode,
+          visual: visual,
+          // ✅ Re-enabled: Backend visual streaming is now working!
+          ...(visual && {
+            visual_streaming: true,
+            visual_quality: 'standard',
+            visual_events_buffer: 1000
+          })
+        };
+
+        console.debug('📤 [WorkflowService] Sending execution request:', {
+          endpoint,
+          workflowId,
+          requestBody: {
+            ...requestBody,
+            session_token: sessionToken ? `${sessionToken.slice(0,8)}...` : null
+          }
+        });
+
         const data = await apiFetch<{
+          success: boolean;
           task_id: string;
+          workflow: string;
           log_position: number;
           message: string;
-        }>(`/workflows/${workflowId}/execute/session`, {
+          mode: string;
+          devtools_url?: string;
+          visual_enabled?: boolean;
+          visual_streaming_enabled?: boolean;
+          session_id?: string;
+        }>(endpoint, {
           method: 'POST',
-          body: JSON.stringify({
-            inputs,
-            session_token: sessionToken
-          }),
+          body: JSON.stringify(requestBody),
           auth: false
         });
         
-        console.log('Response from executeWorkflow (session-based):', data);
+        console.debug('📥 [WorkflowService] Response from executeWorkflow (session-based):', {
+          success: data.success,
+          task_id: data.task_id,
+          workflow: data.workflow,
+          mode: data.mode,
+          visual_enabled: data.visual_enabled,
+          visual_streaming_enabled: data.visual_streaming_enabled,
+          session_id: data.session_id,
+          message: data.message
+        });
         return data;
       } catch (error) {
         console.error('Session-based executeWorkflow failed:', error);

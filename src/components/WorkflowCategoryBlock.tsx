@@ -2,12 +2,12 @@
 import React from 'react';
 import { Separator } from '@/components/ui/separator';
 import { WorkflowItem } from '@/components/WorkflowItem';
-import { Workflow } from '@/types/workflow-layout.types';
+import { EnhancedWorkflow } from '@/types/workflow-layout.types';
 import { useTheme } from '@/contexts/ThemeContext';
 
 interface Props {
   label: string;
-  workflows: Workflow[];
+  workflows: EnhancedWorkflow[];
   onDeleteWorkflow: (workflowId: string) => void;
 }
 

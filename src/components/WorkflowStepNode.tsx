@@ -7,6 +7,8 @@ import {
   Clock,
   Info,
   FileSearch,
+  Copy,
+  Clipboard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -19,7 +21,9 @@ interface WorkflowStepNodeData {
     | 'select_change'
     | 'input'
     | 'agent'
-    | 'key_press';
+    | 'key_press'
+    | 'clipboard_copy'
+    | 'clipboard_paste';
   target: string;
   value?: string;
   stepNumber: number;
@@ -37,6 +41,8 @@ const actionIcons = {
   key_press: Clock,
   agent: Info,
   select_change: FileSearch,
+  clipboard_copy: Copy,
+  clipboard_paste: Clipboard,
 };
 
 const actionColors = {
@@ -46,6 +52,8 @@ const actionColors = {
   key_press: 'bg-purple-500',
   agent: 'bg-gray-500',
   select_change: 'bg-cyan-500',
+  clipboard_copy: 'bg-orange-500',
+  clipboard_paste: 'bg-pink-500',
 };
 
 export const WorkflowStepNode = memo(

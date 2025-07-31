@@ -35,8 +35,6 @@ export const useExtensionIntegration = (): ExtensionIntegrationState & Extension
   // Initialize extension integration
   const initialize = useCallback(async () => {
     try {
-      console.log('🔧 [useExtensionIntegration] Initializing...');
-      
       const context = await initializeExtensionIntegration();
       const fromExtension = isFromExtension();
       
@@ -47,10 +45,8 @@ export const useExtensionIntegration = (): ExtensionIntegrationState & Extension
         isInitialized: true,
         error: null
       }));
-      
-      console.log('🔧 [useExtensionIntegration] Initialized:', { context, fromExtension });
     } catch (error) {
-      console.error('🔧 [useExtensionIntegration] Initialization failed:', error);
+      console.error('❌ [useExtensionIntegration] Initialization failed:', error);
       setState(prev => ({
         ...prev,
         error: error instanceof Error ? error.message : String(error),
@@ -65,8 +61,6 @@ export const useExtensionIntegration = (): ExtensionIntegrationState & Extension
     sender: any, 
     sendResponse: (response: any) => void
   ) => {
-    console.log('🔧 [useExtensionIntegration] Received message:', message);
-    
     setState(prev => ({
       ...prev,
       lastMessage: message
@@ -78,7 +72,6 @@ export const useExtensionIntegration = (): ExtensionIntegrationState & Extension
         if (message.sessionToken) {
           // Store the new session token
           sessionStorage.setItem('workflow_session_token', message.sessionToken);
-          console.log('🔧 [useExtensionIntegration] Session token updated');
         }
         sendResponse({ success: true });
         break;
@@ -100,7 +93,6 @@ export const useExtensionIntegration = (): ExtensionIntegrationState & Extension
         break;
         
       default:
-        console.log('🔧 [useExtensionIntegration] Unknown message type:', message.type);
         sendResponse({ success: false, error: 'Unknown message type' });
     }
   }, []);
@@ -111,7 +103,7 @@ export const useExtensionIntegration = (): ExtensionIntegrationState & Extension
       const response = await sendMessageToExtension(message);
       return response;
     } catch (error) {
-      console.error('🔧 [useExtensionIntegration] Failed to send message:', error);
+      console.error('❌ [useExtensionIntegration] Failed to send message:', error);
       setState(prev => ({
         ...prev,
         error: error instanceof Error ? error.message : String(error)

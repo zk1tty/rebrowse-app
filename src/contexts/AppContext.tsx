@@ -6,13 +6,15 @@ import React, {
   useCallback,
   useRef,
   useEffect,
+  useMemo,
 } from 'react';
-import { Workflow, inputFieldSchema } from '../types/workflow-layout.types';
+import { Workflow, EnhancedWorkflow, inputFieldSchema, ActiveExecution } from '../types/workflow-layout.types';
 import { workflowService } from '@/services/workflowService';
+import { createEnhancedWorkflowService } from '@/services/enhancedWorkflowService';
 // import { fetchWorkflowLogs, cancelWorkflow } from '@/services/pollingService';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
-import { hasValidSessionToken } from '@/utils/authUtils';
+import { hasValidSessionToken, getStoredSessionToken } from '@/utils/authUtils';
 
 export type DisplayMode = 'canvas' | 'editor' | 'start';
 export type DialogType =
@@ -44,6 +46,8 @@ interface AppContextType {
   workflowStatus: WorkflowStatus;
   workflowError: string | null;
   currentTaskId: string | null;
+  currentExecutionMode: 'cloud-run' | 'local-run' | null;
+  currentExecutionInputs: any | null;
   currentLogPosition: number;
   sidebarStatus: SidebarStatus;
   editorStatus: EditorStatus;
@@ -52,7 +56,20 @@ interface AppContextType {
   isCurrentWorkflowPublic: boolean;
   currentUserSessionToken: string | null;
   isCurrentUserOwner: boolean;
-  workflows: Workflow[];
+  workflows: EnhancedWorkflow[];
+  activeExecutions: Record<string, ActiveExecution>;
+  // Visual Streaming Overlay States
+  visualOverlayActive: boolean;
+  currentStreamingSession: string | null;
+  overlayWorkflowInfo: {
+    name: string;
+    taskId: string;
+    mode: string;
+    hasStreamingSupport?: boolean;
+  } | null;
+  setVisualOverlayActive: (active: boolean) => void;
+  setCurrentStreamingSession: (sessionId: string | null) => void;
+  setOverlayWorkflowInfo: (info: { name: string; taskId: string; mode: string; hasStreamingSupport?: boolean } | null) => void;
   addWorkflow: (workflow: Workflow) => void;
   deleteWorkflow: (workflowId: string) => void;
   selectWorkflow: (workflowName: string) => void;
@@ -60,7 +77,9 @@ interface AppContextType {
   setActiveDialog: (dialog: DialogType) => void;
   executeWorkflow: (
     workflowId: string,
-    inputFields: z.infer<typeof inputFieldSchema>[]
+    inputFields: z.infer<typeof inputFieldSchema>[],
+    mode?: 'cloud-run' | 'local-run',
+    visual?: boolean
   ) => Promise<void>;
   updateWorkflowUI: (oldWorkflow: Workflow, newWorkflow: Workflow) => void;
   startPollingLogs: (taskId: string) => void;
@@ -78,6 +97,8 @@ interface AppContextType {
   setCurrentWorkflowData: (workflow: Workflow | null, isPublic?: boolean) => void;
   setCurrentUserSessionToken: (sessionToken: string | null) => void;
   setIsCurrentUserOwner: (isOwner: boolean) => void;
+  refreshAuthenticationStatus: () => void;
+  authRefreshTrigger: number;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -88,12 +109,27 @@ interface AppProviderProps {
 
 export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const { toast } = useToast();
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflows, setWorkflows] = useState<EnhancedWorkflow[]>([]);
+  const [activeExecutions, setActiveExecutions] = useState<Record<string, ActiveExecution>>({});
   const [displayMode, setDisplay] = useState<DisplayMode>('start');
   const [currentWorkflowData, setCurrentWorkflowDataState] =
     useState<Workflow | null>(null);
   const [isCurrentWorkflowPublic, setIsCurrentWorkflowPublic] = useState<boolean>(false);
-  const [currentUserSessionToken, setCurrentUserSessionToken] = useState<string | null>(null);
+  
+  // Initialize with any existing session token from storage
+  const [currentUserSessionToken, setCurrentUserSessionToken] = useState<string | null>(() => {
+    try {
+      const storedToken = getStoredSessionToken();
+      if (storedToken) {
+        return storedToken;
+      }
+      return null;
+    } catch (error) {
+      console.error('❌ [AppContext] Error loading initial session token:', error);
+      return null;
+    }
+  });
+  
   const [isCurrentUserOwner, setIsCurrentUserOwner] = useState<boolean>(false);
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus>('idle');
   const [workflowError, setWorkflowError] = useState<string | null>(null);
@@ -103,18 +139,31 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const [logData, setLogData] = useState<string[]>([]);
   const [logPosition, setLogPosition] = useState<number>(0);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [currentExecutionMode, setCurrentExecutionMode] = useState<'cloud-run' | 'local-run' | null>(null);
+  const [currentExecutionInputs, setCurrentExecutionInputs] = useState<any | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const [recordingStatus, setRecordingStatus] =
     useState<RecordingStatus>('idle');
   const [recordingData, setRecordingData] = useState<any>(null);
+  const [authRefreshTrigger, setAuthRefreshTrigger] = useState<number>(0);
+
+  // Visual Streaming Overlay States
+  const [visualOverlayActive, setVisualOverlayActive] = useState(false);
+  const [currentStreamingSession, setCurrentStreamingSession] = useState<string | null>(null);
+  const [overlayWorkflowInfo, setOverlayWorkflowInfo] = useState<{
+    name: string;
+    taskId: string;
+    mode: string;
+    hasStreamingSupport?: boolean;
+  } | null>(null);
+
+
 
   // Wrapper function to handle both workflow data and public flag
   const setCurrentWorkflowData = useCallback((workflow: Workflow | null, isPublic: boolean = false) => {
     setCurrentWorkflowDataState(workflow);
     setIsCurrentWorkflowPublic(isPublic);
   }, []);
-
-
 
   const checkForUnsavedChanges = useCallback(() => {
     if (recordingStatus === 'recording') {
@@ -157,7 +206,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     [workflows, checkForUnsavedChanges]
   );
 
-  const addWorkflow = async (workflow: Workflow) => {
+  const addWorkflow = useCallback(async (workflow: Workflow) => {
     try {
       await workflowService.addWorkflow(
         workflow.name,
@@ -174,9 +223,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         description: `Failed to add the workflow. ${err}`,
       });
     }
-  };
+  }, [toast]);
 
-  const deleteWorkflow = async (workflowName: string) => {
+  const deleteWorkflow = useCallback(async (workflowName: string) => {
     try {
       await workflowService.deleteWorkflow(workflowName);
       setWorkflows((prev) => prev.filter((wf) => wf.name !== workflowName));
@@ -190,7 +239,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         description: `Failed to delete the workflow. ${err}`,
       });
     }
-  };
+  }, [toast]);
 
   const updateWorkflowUI = useCallback(
     (oldWorkflow: Workflow, newWorkflow: Workflow) => {
@@ -221,14 +270,21 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
             taskId,
             logPosition
           );
+          
+          // Only update logs if there are actually new logs
           if (data.logs?.length) {
             setLogData((prev) => {
               const newLogs = data.logs.filter((log) => !prev.includes(log));
-              return [...prev, ...newLogs];
+              return newLogs.length > 0 ? [...prev, ...newLogs] : prev;
             });
           }
-          setLogPosition(data.log_position);
+          
+          // Only update log position if it actually changed
+          if (data.log_position !== logPosition) {
+            setLogPosition(data.log_position);
+          }
 
+          // Only update status if it actually changed
           if (data.status && data.status !== workflowStatus) {
             setWorkflowStatus(data.status as WorkflowStatus);
             if (data.status === 'failed' && data.error) {
@@ -263,7 +319,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     [logPosition, workflowStatus, stopPollingLogs]
   );
 
-  const cancelWorkflowExecution = async (taskId: string) => {
+  const cancelWorkflowExecution = useCallback(async (taskId: string) => {
     try {
       setWorkflowStatus('cancelling');
       await workflowService.cancelWorkflow(taskId);
@@ -272,47 +328,95 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       setWorkflowError('Failed to cancel workflow');
       setWorkflowStatus('failed');
     }
-  };
+  }, []);
 
   const executeWorkflow = useCallback(
-    async (workflowId: string, inputFields: z.infer<typeof inputFieldSchema>[]) => {
-      if (!workflowId) return;
-      const missingInputs = inputFields.filter(
-        (field) => field.required && !field.value
-      );
-      if (missingInputs.length > 0) {
-        setWorkflowError(
-          `Missing required inputs: ${missingInputs
-            .map((f) => f.name)
-            .join(', ')}`
-        );
-        return;
-      }
-
-      // Check authentication before attempting execution
+    async (
+      workflowId: string,
+      inputFields: z.infer<typeof inputFieldSchema>[],
+      mode: 'cloud-run' | 'local-run' = 'cloud-run',
+      visual: boolean = false
+    ) => {
       if (!hasValidSessionToken(currentUserSessionToken)) {
-        setWorkflowError('Please login through the Chrome extension to execute workflows.');
-        setWorkflowStatus('failed');
+        toast({
+          title: 'Authentication Required',
+          description: 'Please login through the Chrome extension to execute workflows.',
+          variant: 'destructive',
+        });
         return;
       }
 
+      setWorkflowStatus('starting');
       setWorkflowError(null);
-      setCurrentTaskId(null);
-      setLogPosition(0);
-      setWorkflowStatus('idle');
+      setActiveDialog(null);
 
       try {
-        // Use session token for execution
+        // Show toast for visual mode
+        if (visual) {
+          toast({
+            title: 'Visual Mode Enabled',
+            description: `Starting ${mode === 'cloud-run' ? '☁️ cloud-run' : '🖥️ local-run'} execution with live browser view...`,
+          });
+        }
+
         const result = await workflowService.executeWorkflow(
-          workflowId, 
-          inputFields, 
-          currentUserSessionToken!  // We've already validated it's not null above
+          workflowId,
+          inputFields,
+          currentUserSessionToken!,
+          mode,
+          visual
         );
+        
         setCurrentTaskId(result.task_id);
+        setCurrentExecutionMode(mode);
+        setCurrentExecutionInputs(inputFields);
         setLogPosition(result.log_position);
         setWorkflowStatus('running');
-        setDisplayMode('canvas');
-        startPollingLogs(result.task_id);
+        
+        // Store execution parameters in sessionStorage for DevTools execution trigger
+        if (visual && result.task_id) {
+          const executionParams = {
+            workflowId: workflowId,
+            inputs: inputFields,
+            sessionToken: currentUserSessionToken,
+            mode: mode,
+            visual: true,
+            timestamp: Date.now(),
+          };
+          sessionStorage.setItem(`execution_params_${result.task_id}`, JSON.stringify(executionParams));
+        }
+        
+        // Handle visual mode - redirect to appropriate viewer based on streaming capability
+        if (visual) {
+          if (result.visual_streaming_enabled && result.session_id) {
+            // Visual streaming mode - use RRWebVisualizer
+            setCurrentStreamingSession(result.session_id);
+            setOverlayWorkflowInfo({
+              name: result.workflow,
+              taskId: result.task_id,
+              mode: result.mode,
+              hasStreamingSupport: true,
+            });
+            setVisualOverlayActive(true);
+            setDisplayMode('canvas');
+          } else if (result.visual_enabled && result.devtools_url) {
+            // Traditional visual mode - use DevTools iframe
+            setDisplayMode('canvas');
+            // DevTools will handle the execution
+          } else {
+            // Fallback to traditional execution
+            setDisplayMode('canvas');
+          }
+        } else {
+          // Non-visual mode
+          setDisplayMode('canvas');
+        }
+        
+        // Only start log polling for non-visual workflows
+        // Visual streaming workflows handle their own status through RRWebVisualizer
+        if (!visual || (!result.visual_enabled && !result.visual_streaming_enabled)) {
+          startPollingLogs(result.task_id);
+        }
       } catch (err) {
         console.error('Workflow execution failed:', err);
         
@@ -353,66 +457,214 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   //   return () => clearInterval(logInterval);
   // }, [workflows, currentWorkflowData]);
 
-  // Fetch workflows on mount(everytime the page is called)
-  const fetchWorkflows = async () => {
+  // Enhanced workflow service instance - memoized to prevent recreation
+  const enhancedWorkflowService = useMemo(() => 
+    createEnhancedWorkflowService(currentUserSessionToken), 
+    [currentUserSessionToken]
+  );
+
+  // Fetch workflows with execution statistics
+  const fetchWorkflows = useCallback(async () => {
     try {
       setSidebarStatus('loading');
+      
+      // Try to fetch enhanced workflows with stats if session token exists
+      if (hasValidSessionToken(currentUserSessionToken)) {
+        try {
+          const enhancedWorkflows = await enhancedWorkflowService.getAllWorkflowsWithStats();
+          setWorkflows(enhancedWorkflows);
+          setSidebarStatus('ready');
+          return;
+        } catch (error) {
+          console.warn('[fetchWorkflows] Failed to fetch enhanced workflows, falling back to basic:', error);
+        }
+      }
+      
+      // Fallback to basic workflows
       const response = await workflowService.getWorkflows();
-      const parsedWorkflows = response.map((wf: any) => JSON.parse(wf));
-      console.log("[fetchWorkflows] parsedWorkflows:", parsedWorkflows);
-      setWorkflows(parsedWorkflows);
+      const basicWorkflows: EnhancedWorkflow[] = response.map(workflow => ({
+        ...workflow,
+        execution_stats: undefined,
+        recent_executions: undefined,
+        performance: undefined
+      }));
+      setWorkflows(basicWorkflows);
       setSidebarStatus('ready');
     } catch (err) {
       console.error('Failed to fetch workflows:', err);
       setSidebarStatus('error');
     }
-  };
+  }, [currentUserSessionToken, enhancedWorkflowService]);
+
+  // Poll for active executions
+  const pollActiveExecutions = useCallback(async () => {
+    if (!hasValidSessionToken(currentUserSessionToken)) {
+      setActiveExecutions(prev => Object.keys(prev).length === 0 ? prev : {});
+      return;
+    }
+
+    try {
+      const active = await enhancedWorkflowService.getActiveExecutions();
+      
+      // Only update if active executions actually changed
+      setActiveExecutions(prev => {
+        const prevKeys = Object.keys(prev).sort();
+        const activeKeys = Object.keys(active).sort();
+        
+        // Quick check if keys are different
+        if (prevKeys.length !== activeKeys.length || 
+            prevKeys.some((key, index) => key !== activeKeys[index])) {
+          return active;
+        }
+        
+        // Check if any execution details changed
+        const hasChanges = activeKeys.some(key => 
+          JSON.stringify(prev[key]) !== JSON.stringify(active[key])
+        );
+        
+        return hasChanges ? active : prev;
+      });
+    } catch (error) {
+      console.warn('Failed to poll active executions:', error);
+    }
+  }, [currentUserSessionToken, enhancedWorkflowService]);
 
   useEffect(() => {
     fetchWorkflows();
   }, []);
 
+  // Poll for active executions every 5 seconds when authenticated
+  useEffect(() => {
+    if (!hasValidSessionToken(currentUserSessionToken)) {
+      return;
+    }
+
+    // Initial poll
+    pollActiveExecutions();
+
+    // Set up polling interval - reduced frequency to minimize re-renders
+    const interval = setInterval(pollActiveExecutions, 10000);
+    
+    return () => clearInterval(interval);
+  }, [currentUserSessionToken, pollActiveExecutions]); // Added pollActiveExecutions to dependencies
+
+  // Update enhanced service when session token changes
+  useEffect(() => {
+    enhancedWorkflowService.updateSessionToken(currentUserSessionToken);
+  }, [currentUserSessionToken]);
+
+  const refreshAuthenticationStatus = useCallback(() => {
+    console.log('🔄 [AppContext] Refreshing authentication status across all components');
+    // Trigger a re-render of all components that depend on authentication state
+    setAuthRefreshTrigger(prev => prev + 1);
+    
+    // Also trigger a small delay to ensure state has propagated
+    setTimeout(() => {
+      console.log('🔄 [AppContext] Authentication refresh completed');
+    }, 100);
+  }, []);
+
+  // Memoize context value to prevent unnecessary re-renders
+  const contextValue = useMemo(() => ({
+    selectWorkflow,
+    displayMode,
+    setDisplayMode,
+    workflowStatus,
+    workflowError,
+    currentTaskId,
+    currentExecutionMode,
+    currentExecutionInputs,
+    currentLogPosition: logPosition,
+    currentWorkflowData,
+    isCurrentWorkflowPublic,
+    currentUserSessionToken,
+    isCurrentUserOwner,
+    workflows,
+    addWorkflow,
+    deleteWorkflow,
+    activeDialog,
+    setActiveDialog,
+    executeWorkflow,
+    updateWorkflowUI,
+    startPollingLogs,
+    stopPollingLogs,
+    logData,
+    cancelWorkflowExecution,
+    sidebarStatus,
+    editorStatus,
+    setEditorStatus,
+    checkForUnsavedChanges,
+    recordingStatus,
+    setRecordingStatus,
+    recordingData,
+    setRecordingData,
+    fetchWorkflows,
+    setWorkflows,
+    setSidebarStatus,
+    setCurrentWorkflowData,
+    setCurrentUserSessionToken,
+    setIsCurrentUserOwner,
+    refreshAuthenticationStatus,
+    authRefreshTrigger,
+    activeExecutions,
+    visualOverlayActive,
+    currentStreamingSession,
+    overlayWorkflowInfo,
+    setVisualOverlayActive,
+    setCurrentStreamingSession,
+    setOverlayWorkflowInfo
+  }), [
+    selectWorkflow,
+    displayMode,
+    setDisplayMode,
+    workflowStatus,
+    workflowError,
+    currentTaskId,
+    currentExecutionMode,
+    currentExecutionInputs,
+    logPosition,
+    currentWorkflowData,
+    isCurrentWorkflowPublic,
+    currentUserSessionToken,
+    isCurrentUserOwner,
+    workflows,
+    addWorkflow,
+    deleteWorkflow,
+    activeDialog,
+    setActiveDialog,
+    executeWorkflow,
+    updateWorkflowUI,
+    startPollingLogs,
+    stopPollingLogs,
+    logData,
+    cancelWorkflowExecution,
+    sidebarStatus,
+    editorStatus,
+    setEditorStatus,
+    checkForUnsavedChanges,
+    recordingStatus,
+    setRecordingStatus,
+    recordingData,
+    setRecordingData,
+    fetchWorkflows,
+    setWorkflows,
+    setSidebarStatus,
+    setCurrentWorkflowData,
+    setCurrentUserSessionToken,
+    setIsCurrentUserOwner,
+    refreshAuthenticationStatus,
+    authRefreshTrigger,
+    activeExecutions,
+    visualOverlayActive,
+    currentStreamingSession,
+    overlayWorkflowInfo,
+    setVisualOverlayActive,
+    setCurrentStreamingSession,
+    setOverlayWorkflowInfo
+  ]);
+
   return (
-    <AppContext.Provider
-      value={{
-        selectWorkflow,
-        displayMode,
-        setDisplayMode,
-        workflowStatus,
-        workflowError,
-        currentTaskId,
-        currentLogPosition: logPosition,
-        currentWorkflowData,
-        isCurrentWorkflowPublic,
-        currentUserSessionToken,
-        isCurrentUserOwner,
-        workflows,
-        addWorkflow,
-        deleteWorkflow,
-        activeDialog,
-        setActiveDialog,
-        executeWorkflow,
-        updateWorkflowUI,
-        startPollingLogs,
-        stopPollingLogs,
-        logData,
-        cancelWorkflowExecution,
-        sidebarStatus,
-        editorStatus,
-        setEditorStatus,
-        checkForUnsavedChanges,
-        recordingStatus,
-        setRecordingStatus,
-        recordingData,
-        setRecordingData,
-        fetchWorkflows,
-        setWorkflows,
-        setSidebarStatus,
-        setCurrentWorkflowData,
-        setCurrentUserSessionToken,
-        setIsCurrentUserOwner
-      }}
-    >
+    <AppContext.Provider value={contextValue}>
       {children}
     </AppContext.Provider>
   );

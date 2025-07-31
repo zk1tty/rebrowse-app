@@ -1,13 +1,36 @@
-import { Play, Settings, Edit3, Blocks, SidebarOpen, Terminal, Palette, LogIn, Moon, Sun, Link, ExternalLink } from 'lucide-react';
+import { 
+  Play, 
+  Settings, 
+  Edit3, 
+  Blocks, 
+  SidebarOpen, 
+  Terminal, 
+  Palette, 
+  LogIn, 
+  LogOut,
+  Moon, 
+  Sun, 
+  Link, 
+  ExternalLink,
+  CheckCircle,
+  AlertTriangle,
+  Loader2,
+  UserCheck,
+  RefreshCw,
+  User,
+  BarChart3
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useEffect, useState } from 'react';
-import { hasValidSessionToken, canEditWorkflow } from '@/utils/authUtils';
+import { hasValidSessionToken, canEditWorkflow, clearStoredAuth } from '@/utils/authUtils';
+import { useSessionValidation } from '@/hooks/useSessionValidation';
 import SessionLoginModal from '@/components/SessionLoginModal';
 import SessionStatus from '@/components/SessionStatus';
 import { CompactExtensionIndicator } from '@/components/ExtensionBanner';
+import UserConsole from '@/components/UserConsole';
 import { useToast } from '@/hooks/use-toast';
 
 export function TopToolbar() {
@@ -20,14 +43,21 @@ export function TopToolbar() {
     workflowStatus,
     currentUserSessionToken,
     isCurrentUserOwner,
-    isCurrentWorkflowPublic
+    isCurrentWorkflowPublic,
+    authRefreshTrigger,
+    setCurrentUserSessionToken
   } = useAppContext();
   
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showUserConsole, setShowUserConsole] = useState(false);
   
-  const hasSessionToken = hasValidSessionToken(currentUserSessionToken);
+  // Use the new session validation hook for real-time authentication status
+  const { isValid: hasValidSession, isChecking: isValidatingSession, error: sessionError } = useSessionValidation(30000);
+  
+  // For backward compatibility, also check the stored token
+  const hasSessionToken = hasValidSessionToken(currentUserSessionToken) && hasValidSession;
   const isLegacyWorkflow = currentWorkflowData?.owner_id === null;
   const canEdit = canEditWorkflow(
     currentUserSessionToken, 
@@ -37,26 +67,93 @@ export function TopToolbar() {
   );
   const canExecute = hasSessionToken || isCurrentWorkflowPublic;
 
-  // 🔍 Debug logging for authentication state
-  console.log('🔍 [TopToolbar] Auth Debug:', {
-    currentUserSessionToken: currentUserSessionToken ? `${currentUserSessionToken.slice(0,8)}...` : null,
-    hasSessionToken,
-    isCurrentUserOwner,
-    isCurrentWorkflowPublic,
-    isLegacyWorkflow,
-    canEdit,
-    canExecute,
-    workflowName: currentWorkflowData?.name,
-    workflowOwnerId: currentWorkflowData?.owner_id
-  });
+  // Handle logout
+  const handleLogout = () => {
+    clearStoredAuth();
+    setCurrentUserSessionToken(null);
+    toast({
+      title: 'Logged Out',
+      description: 'You have been successfully logged out.',
+    });
+  };
 
-  // Debug log to see if currentWorkflowData is updating
-  console.log("TopToolbar: currentWorkflowData:", currentWorkflowData?.name || "null");
+  // Dynamic Login Banner Component
+  const LoginStatusBanner = () => {
+    // Case 1: No session token at all
+    if (!currentUserSessionToken) {
+      return (
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={() => setShowLoginModal(true)}
+          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 text-base px-6 py-3 border-blue-200"
+        >
+          <LogIn className="w-5 h-5" />
+          Login
+        </Button>
+      );
+    }
 
-  // Track changes to currentWorkflowData
+    // Case 2: Session is being validated
+    if (isValidatingSession) {
+      return (
+        <Button
+          variant="outline"
+          size="lg"
+          disabled
+          className="flex items-center gap-2 text-yellow-600 border-yellow-200 bg-yellow-50 text-base px-6 py-3"
+        >
+          <Loader2 className="w-5 h-5 animate-spin" />
+          Checking...
+        </Button>
+      );
+    }
+
+    // Case 3: Session is valid and authenticated - show nothing
+    if (hasValidSession && hasSessionToken) {
+      return null;
+    }
+
+    // Case 4: Session token exists but is invalid/expired
+    if (currentUserSessionToken && !hasValidSession) {
+      return (
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={() => setShowLoginModal(true)}
+          className="flex items-center gap-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-200 bg-orange-50 text-base px-6 py-3"
+        >
+          <AlertTriangle className="w-5 h-5" />
+          Session Expired
+        </Button>
+      );
+    }
+
+    // Fallback
+    return (
+      <Button
+        variant="outline"
+        size="lg"
+        onClick={() => setShowLoginModal(true)}
+        className="flex items-center gap-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 text-base px-6 py-3"
+      >
+        <LogIn className="w-5 h-5" />
+        Login
+      </Button>
+    );
+  };
+
+
+
+  // Listen for custom event to open user console
   useEffect(() => {
-    console.log("TopToolbar: currentWorkflowData changed to:", currentWorkflowData?.name || "null");
-  }, [currentWorkflowData]);
+    const handleOpenUserConsole = () => {
+      setShowUserConsole(true);
+    };
+    
+    window.addEventListener('openUserConsole', handleOpenUserConsole);
+    return () => window.removeEventListener('openUserConsole', handleOpenUserConsole);
+  }, []);
 
   const handleRunWithInputs = () => {
     if (!canExecute) {
@@ -107,8 +204,9 @@ export function TopToolbar() {
   const handleShareWorkflow = async () => {
     if (!currentWorkflowData) return;
     
-    // Generate the workflow URL
-    const workflowUrl = isCurrentWorkflowPublic 
+    // Prefer modern /wf/{id} route for both public and private workflows when ID is available
+    // Fall back to legacy /workflows/{name} only for private workflows without IDs
+    const workflowUrl = currentWorkflowData.id 
       ? `${window.location.origin}/wf/${currentWorkflowData.id}`
       : `${window.location.origin}/workflows/${currentWorkflowData.name}`;
     
@@ -168,6 +266,23 @@ export function TopToolbar() {
             {/* Chrome Extension Indicator */}
             <CompactExtensionIndicator />
             
+            {/* User Console Button - Only show if logged in */}
+            {hasSessionToken && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowUserConsole(true)}
+                className={`flex items-center gap-2 ${
+                  theme === 'dark' 
+                    ? 'text-cyan-400 hover:text-cyan-300 hover:bg-gray-800 border-gray-600' 
+                    : 'text-purple-600 hover:text-purple-700 hover:bg-purple-50'
+                }`}
+                title="Open Analytics"
+              >
+                <BarChart3 className="w-4 h-4" />
+              </Button>
+            )}
+
             {/* Dark Mode Toggle */}
             <Button
               variant="outline"
@@ -183,17 +298,7 @@ export function TopToolbar() {
               )}
             </Button>
             
-            {!hasSessionToken && (
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={() => setShowLoginModal(true)}
-                className="flex items-center gap-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 text-base px-6 py-3"
-              >
-                <LogIn className="w-5 h-5" />
-                Login
-              </Button>
-            )}
+            <LoginStatusBanner />
 
             <Button
               variant="outline"
@@ -208,10 +313,10 @@ export function TopToolbar() {
               title={!canExecute ? 'Login required to execute workflows' : ''}
             >
               <Play className="w-5 h-5" />
-              {!canExecute ? 'Login to Run' : 'Run with Inputs'}
+              {!canExecute ? 'Run' : 'Run'}
             </Button>
 
-            {/* tempolary disabled
+            {/* tempolary disabled Run as Tool
             <Button
               variant="outline"
               size="lg"
@@ -267,6 +372,15 @@ export function TopToolbar() {
         open={showLoginModal} 
         onOpenChange={setShowLoginModal} 
       />
+
+      {/* User Console Modal */}
+      {showUserConsole && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="w-full h-full max-w-none bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
+            <UserConsole onClose={() => setShowUserConsole(false)} />
+          </div>
+        </div>
+      )}
     </>
   );
 }

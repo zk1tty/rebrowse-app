@@ -10,7 +10,10 @@ import {
   Chrome,
   AlertCircle,
   CheckCircle,
-  Clock
+  Clock,
+  RefreshCw,
+  LogIn,
+  BarChart3
 } from 'lucide-react';
 import { 
   getStoredSessionToken, 
@@ -21,6 +24,7 @@ import {
 import { detectExtensionContext } from '@/utils/extensionUtils';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useSessionValidation } from '@/hooks/useSessionValidation';
 
 interface SessionStatusProps {
   className?: string;
@@ -35,36 +39,36 @@ export const SessionStatus: React.FC<SessionStatusProps> = ({
 }) => {
   const { currentUserSessionToken, setCurrentUserSessionToken } = useAppContext();
   const { theme } = useTheme();
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [authType, setAuthType] = useState<string | null>(null);
   const [fromExtension, setFromExtension] = useState(false);
-  const [lastChecked, setLastChecked] = useState<Date>(new Date());
+  
+  // Use the new session validation hook
+  const { 
+    isValid: isAuthenticated, 
+    isChecking, 
+    lastChecked, 
+    error: sessionError, 
+    checkSession,
+    refreshSession 
+  } = useSessionValidation(60000); // Check every minute
 
-  // Refresh session status
+  // Refresh session status (for extension context and auth type)
   const refreshStatus = () => {
-    const token = getStoredSessionToken();
     const type = getAuthType();
     const extensionContext = detectExtensionContext();
     const fromExt = extensionContext.isExtension;
     
-    setSessionToken(token);
     setAuthType(type);
     setFromExtension(fromExt);
-    setLastChecked(new Date());
-    
-    // Update app context if needed
-    if (token !== currentUserSessionToken) {
-      setCurrentUserSessionToken(token);
-    }
   };
 
   useEffect(() => {
     refreshStatus();
     
-    // Refresh every 30 seconds
+    // Refresh every 30 seconds for extension context
     const interval = setInterval(refreshStatus, 30000);
     return () => clearInterval(interval);
-  }, [currentUserSessionToken, setCurrentUserSessionToken]);
+  }, []);
 
   const handleLogout = () => {
     clearStoredAuth();
@@ -72,8 +76,13 @@ export const SessionStatus: React.FC<SessionStatusProps> = ({
     refreshStatus();
   };
 
-  const isAuthenticated = hasValidSessionToken(sessionToken);
+  const handleRefresh = async () => {
+    refreshStatus();
+    await refreshSession();
+  };
+
   const isSessionAuth = authType === 'session';
+  const sessionToken = getStoredSessionToken();
 
   if (compact) {
     return (
@@ -144,27 +153,56 @@ export const SessionStatus: React.FC<SessionStatusProps> = ({
                 theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
               }`}>
                 {isAuthenticated 
-                  ? `Session active • Last checked: ${lastChecked.toLocaleTimeString()}`
-                  : 'Login through Chrome extension to edit workflows'
+                  ? `Session active • Last checked: ${lastChecked ? lastChecked.toLocaleTimeString() : 'Never'}`
+                  : sessionError || 'Login through Chrome extension to edit workflows'
                 }
+                {isChecking && (
+                  <span className="ml-2">
+                    <RefreshCw className="h-3 w-3 inline animate-spin" />
+                  </span>
+                )}
               </p>
             )}
           </div>
         </div>
         
         <div className="flex items-center space-x-2">
+          {showDetails && isAuthenticated && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const event = new CustomEvent('openUserConsole');
+                window.dispatchEvent(event);
+              }}
+              className={`${
+                theme === 'dark' 
+                  ? 'text-cyan-400 hover:text-cyan-300 hover:bg-gray-800' 
+                  : 'text-purple-600 hover:text-purple-700 hover:bg-purple-50'
+              }`}
+            >
+              <BarChart3 className="h-3 w-3 mr-1" />
+              Console
+            </Button>
+          )}
+          
           {showDetails && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={refreshStatus}
+              onClick={handleRefresh}
+              disabled={isChecking}
               className={`${
                 theme === 'dark' 
                   ? 'text-gray-300 hover:text-white hover:bg-gray-800' 
                   : 'text-gray-600 hover:text-gray-800'
               }`}
             >
-              <Clock className="h-3 w-3 mr-1" />
+              {isChecking ? (
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Clock className="h-3 w-3 mr-1" />
+              )}
               Refresh
             </Button>
           )}
@@ -176,7 +214,7 @@ export const SessionStatus: React.FC<SessionStatusProps> = ({
               onClick={handleLogout}
               className="text-red-600 hover:text-red-800 hover:bg-red-50"
             >
-              <LogOut className="h-3 w-3 mr-1" />
+              <LogIn className="h-3 w-3 mr-1" />
               Logout
             </Button>
           )}

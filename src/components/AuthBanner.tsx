@@ -11,7 +11,8 @@ import {
   Lock,
   Unlock,
   GitFork,
-  Crown
+  Crown,
+  RefreshCw
 } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import { 
@@ -19,6 +20,7 @@ import {
   canEditWorkflow, 
   getAuthType 
 } from '@/utils/authUtils';
+import { useSessionValidation } from '@/hooks/useSessionValidation';
 import { detectExtensionContext } from '@/utils/extensionUtils';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -37,11 +39,16 @@ export const AuthBanner: React.FC<AuthBannerProps> = ({
     currentUserSessionToken,
     isCurrentUserOwner,
     isCurrentWorkflowPublic,
-    currentWorkflowData
+    currentWorkflowData,
+    authRefreshTrigger
   } = useAppContext();
   const { theme } = useTheme();
 
-  const hasSessionToken = hasValidSessionToken(currentUserSessionToken);
+  // Use the new session validation hook for real-time authentication status
+  const { isValid: hasValidSession, isChecking: isValidatingSession } = useSessionValidation(60000);
+  
+  // For backward compatibility, also check the stored token
+  const hasSessionToken = hasValidSessionToken(currentUserSessionToken) && hasValidSession;
   const authType = getAuthType();
   const extensionContext = detectExtensionContext();
   const fromExtension = extensionContext.isExtension;
@@ -54,6 +61,21 @@ export const AuthBanner: React.FC<AuthBannerProps> = ({
     isLegacyWorkflow
   );
 
+  console.log('🏷️ [AuthBanner] Status:', {
+    hasValidSession,
+    hasSessionToken,
+    isValidatingSession,
+    canEdit,
+    isCurrentUserOwner,
+    isCurrentWorkflowPublic,
+    authRefreshTrigger
+  });
+
+  // Add effect to handle authentication refresh
+  React.useEffect(() => {
+    console.log('🏷️ [AuthBanner] Authentication refresh triggered:', authRefreshTrigger);
+  }, [authRefreshTrigger]);
+
   // Don't show banner if user is authenticated and has edit permissions
   if (hasSessionToken && canEdit && !isCurrentWorkflowPublic) {
     return null;
@@ -65,8 +87,13 @@ export const AuthBanner: React.FC<AuthBannerProps> = ({
       <Alert className={`border-yellow-200 bg-yellow-50 ${className}`}>
         <Chrome className="h-4 w-4 text-yellow-600" />
         <AlertDescription className="flex items-center justify-between">
-          <div>
-            <span className="font-medium text-yellow-800">Chrome Extension Login Required</span>
+          <div className="flex-1">
+            <div className="flex items-center space-x-2">
+              <span className="font-medium text-yellow-800">Chrome Extension Login Required</span>
+              {isValidatingSession && (
+                <RefreshCw className="h-3 w-3 text-yellow-600 animate-spin" />
+              )}
+            </div>
             <p className="text-yellow-700 text-sm mt-1">
               To edit workflows, upload recordings, and manage your collection, please login through our Chrome extension.
             </p>

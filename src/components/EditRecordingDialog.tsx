@@ -12,7 +12,7 @@ import { workflowService } from '@/services/workflowService';
 import { Workflow } from '@/types/workflow-layout.types';
 import { useAppContext } from '@/contexts/AppContext';
 import { toast } from './ui/use-toast';
-import { Clock, ListChecks, Activity, Loader2 } from 'lucide-react';
+import { Clock, ListChecks, Activity, Loader2, MessageSquare } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 
 interface WorkflowRecordResponse {
@@ -195,10 +195,11 @@ export function EditRecordingDialog({
       >
         <DialogContent className="sm:max-w-7xl max-h-[90vh] p-10">
           <DialogHeader>
-            <DialogTitle className={`text-2xl font-bold ${
+            <DialogTitle className={`text-2xl font-bold flex items-center gap-2 ${
               theme === 'dark' ? 'text-white' : 'text-black'
             }`}>
-              Edit Recorded Workflow
+              <MessageSquare className="w-6 h-6" />
+              Prompt Workflow
             </DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-8 h-full overflow-hidden">

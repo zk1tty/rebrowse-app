@@ -24,7 +24,8 @@ import { useAppContext } from '@/contexts/AppContext';
 import { 
   storeSessionToken, 
   hasValidSessionToken,
-  initializeSessionFromExtension 
+  initializeSessionFromExtension,
+  validateSessionToken 
 } from '@/utils/authUtils';
 import { useToast } from '@/hooks/use-toast';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -38,7 +39,7 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
   open,
   onOpenChange
 }) => {
-  const { setCurrentUserSessionToken } = useAppContext();
+  const { setCurrentUserSessionToken, refreshAuthenticationStatus } = useAppContext();
   const { toast } = useToast();
   const { theme } = useTheme();
   const [sessionToken, setSessionToken] = useState('');
@@ -60,21 +61,32 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
         throw new Error('Session token appears to be too short');
       }
 
+      // Validate with backend before storing
+      const isValid = await validateSessionToken(sessionToken);
+      
+      if (!isValid) {
+        throw new Error('Session token is invalid or expired. Please get a new one from the Chrome extension.');
+      }
+
       // Store the session token
       initializeSessionFromExtension(sessionToken);
       setCurrentUserSessionToken(sessionToken);
-
-      toast({
-        title: 'Login Successful! ✅',
-        description: 'You are now authenticated and can edit workflows.',
-      });
 
       // Close modal and reset form
       onOpenChange(false);
       setSessionToken('');
       setValidationError(null);
+
+      // NEW: Trigger authentication refresh across all components
+      refreshAuthenticationStatus();
+
+      toast({
+        title: 'Login Successful! ✅',
+        description: 'You are now authenticated and can edit workflows.',
+      });
+      
     } catch (error) {
-      console.error('Session token validation failed:', error);
+      console.error('❌ [SessionLoginModal] Session token validation failed:', error);
       setValidationError(
         error instanceof Error ? error.message : 'Invalid session token'
       );

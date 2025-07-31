@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Globe, Search, Plus, Loader, Workflow, HelpCircle, MessageCircle, ExternalLink } from 'lucide-react';
+import { Globe, Search, Plus, Loader, Workflow, HelpCircle, MessageCircle, ExternalLink, MessageSquare } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -13,7 +13,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { DeleteWorkflowDialog } from '@/components/DeleteWorkflowDialog';
-import { WorkflowCategoryBlock } from '@/components/WorkflowCategoryBlock';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { workflowService } from '@/services/workflowService';
@@ -29,8 +28,6 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 
-type Category = 'today' | 'yesterday' | 'last-week' | 'last-month' | 'older';
-
 export function WorkflowSidebar() {
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteWorkflowId, setDeleteWorkflowId] = useState<string | null>(null);
@@ -40,6 +37,7 @@ export function WorkflowSidebar() {
   const { state } = useSidebar();
   const {
     workflows,
+    activeExecutions,
     deleteWorkflow,
     sidebarStatus,
     checkForUnsavedChanges,
@@ -49,6 +47,10 @@ export function WorkflowSidebar() {
     setRecordingData,
     activeDialog,
     setActiveDialog,
+    currentWorkflowData,
+    selectWorkflow,
+    displayMode,
+    setDisplayMode,
   } = useAppContext();
 
   // Important, this ref keeps track of the recording status
@@ -67,45 +69,6 @@ export function WorkflowSidebar() {
         workflow.description.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [searchTerm, workflows]);
-
-  const workflowsByCategory = useMemo(() => {
-    const result: Record<Category, typeof workflows> = {
-      today: [],
-      yesterday: [],
-      'last-week': [],
-      'last-month': [],
-      older: [],
-    };
-
-    const sorted = [...filteredWorkflows].sort((a, b) => {
-      const getLatest = (wf: typeof a) =>
-        Math.max(
-          ...wf.steps
-            .map((step) => step.timestamp || 0)
-            .filter((ts) => ts !== null)
-        );
-      return getLatest(b) - getLatest(a);
-    });
-
-    sorted.forEach((workflow) => {
-      const timestamps = workflow.steps
-        .map((step) => step.timestamp)
-        .filter((timestamp) => timestamp !== null);
-
-      const mostRecentTimestamp =
-        timestamps.length > 0 ? Math.max(...timestamps) : 0;
-
-      const category = workflowService.getWorkflowCategory(
-        mostRecentTimestamp
-      ) as Category;
-
-      if (category in result) {
-        result[category].push(workflow);
-      }
-    });
-
-    return result;
-  }, [filteredWorkflows]);
 
   const handleRecordNewWorkflow = async () => {
     if (checkForUnsavedChanges()) {
@@ -217,37 +180,140 @@ export function WorkflowSidebar() {
       );
     }
 
+    // Filter out invalid workflows (those without proper name/description)
+    const validWorkflows = filteredWorkflows.filter(workflow => 
+      workflow.name && 
+      workflow.name.trim() !== '' && 
+      workflow.name !== 'undefined'
+    );
+
+    // For now, show a clean placeholder until we implement execution history
+    if (validWorkflows.length === 0) {
+      return (
+        <div className="p-6 text-center space-y-4">
+          <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center ${
+            theme === 'dark' 
+              ? 'bg-gray-800 border-2 border-gray-700' 
+              : 'bg-gray-100 border-2 border-gray-200'
+          }`}>
+            <Workflow className={`w-8 h-8 ${
+              theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+            }`} />
+          </div>
+          <div className="space-y-2">
+            <h3 className={`font-medium ${
+              theme === 'dark' ? 'text-gray-200' : 'text-gray-700'
+            }`}>
+              No workflows yet
+            </h3>
+            <p className={`text-sm ${
+              theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+            }`}>
+              Start by creating or importing a workflow
+            </p>
+          </div>
+          <Button 
+            variant="outline" 
+            size="sm"
+            className={`${
+              theme === 'dark' 
+                ? 'border-gray-600 text-gray-300 hover:bg-gray-800' 
+                : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Create Workflow
+          </Button>
+        </div>
+      );
+    }
+
     return (
       <>
-        <WorkflowCategoryBlock
-          label="Today"
-          workflows={workflowsByCategory.today}
-          onDeleteWorkflow={handleDeleteWorkflow}
-        />
-        <WorkflowCategoryBlock
-          label="Yesterday"
-          workflows={workflowsByCategory.yesterday}
-          onDeleteWorkflow={handleDeleteWorkflow}
-        />
-        <WorkflowCategoryBlock
-          label="Last Week"
-          workflows={workflowsByCategory['last-week']}
-          onDeleteWorkflow={handleDeleteWorkflow}
-        />
-        <WorkflowCategoryBlock
-          label="Last Month"
-          workflows={workflowsByCategory['last-month']}
-          onDeleteWorkflow={handleDeleteWorkflow}
-        />
-        <WorkflowCategoryBlock
-          label="Older"
-          workflows={workflowsByCategory.older}
-          onDeleteWorkflow={handleDeleteWorkflow}
-        />
+        {/* 
+        TODO: FUTURE FEATURE - Recent Execution History
+        Add a section here to show:
+        - Recently executed workflows
+        - Execution status (running, completed, failed)
+        - Quick re-run buttons
+        - Execution timestamps
+        */}
+        
+        <div className="px-4 py-2">
+          <div className="flex items-center w-full">
+            <div className={`h-px flex-1 ${
+              theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'
+            }`} />
+            <span className={`px-3 text-xs font-medium ${
+              theme === 'dark' 
+                ? 'text-gray-400 bg-gray-900' 
+                : 'text-gray-500 bg-white'
+            }`}>
+              Available Workflows
+            </span>
+            <div className={`h-px flex-1 ${
+              theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'
+            }`} />
+          </div>
+        </div>
 
-        {filteredWorkflows.length === 0 && (
-          <div className="p-4 text-center text-gray-500">
-            No workflows found matching "{searchTerm}"
+        {/* Show valid workflows in a simple list for now */}
+        {validWorkflows.slice(0, 5).map((workflow, index) => (
+          <div
+            key={`${workflow.name}-${workflow.version || index}`}
+            className={`mx-2 p-3 rounded-lg cursor-pointer transition-colors ${
+              theme === 'dark' 
+                ? 'hover:bg-gray-800 border border-gray-700' 
+                : 'hover:bg-gray-50 border border-gray-200'
+            } ${
+              currentWorkflowData?.name === workflow.name &&
+              (theme === 'dark' 
+                ? 'bg-cyan-900 border-cyan-400' 
+                : 'bg-purple-50 border-purple-300')
+            }`}
+            onClick={() => {
+              selectWorkflow(workflow.name);
+              if (displayMode === 'start') {
+                setDisplayMode('canvas');
+              }
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
+                theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'
+              }`}>
+                <Workflow className={`w-4 h-4 ${
+                  theme === 'dark' ? 'text-cyan-400' : 'text-purple-600'
+                }`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className={`font-medium text-sm truncate ${
+                  theme === 'dark' ? 'text-white' : 'text-gray-900'
+                }`}>
+                  {workflow.name}
+                </h4>
+                <p className={`text-xs truncate ${
+                  theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+                }`}>
+                  {workflow.description || 'No description'}
+                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-xs ${
+                    theme === 'dark' ? 'text-gray-500' : 'text-gray-400'
+                  }`}>
+                    {workflow.steps?.length || 0} steps
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {validWorkflows.length > 5 && (
+          <div className={`px-4 py-2 text-center text-xs ${
+            theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+          }`}>
+            +{validWorkflows.length - 5} more workflows
           </div>
         )}
       </>
@@ -318,7 +384,7 @@ export function WorkflowSidebar() {
                   ? 'bg-cyan-600 hover:bg-cyan-700' 
                   : 'bg-purple-600 hover:bg-purple-700'
               }`}
-              title={state === 'collapsed' ? 'Record New Workflow' : ''}
+              title={state === 'collapsed' ? 'Prompt New Workflow' : ''}
             >
               {recordingStatus === 'recording' ? (
                 <>
@@ -327,8 +393,8 @@ export function WorkflowSidebar() {
                 </>
               ) : (
                 <>
-                  <Plus className={`${state === 'collapsed' ? 'w-5 h-5' : 'w-4 h-4'} ${state !== 'collapsed' ? 'mr-2' : ''}`} />
-                  {state !== 'collapsed' && 'Record New Workflow'}
+                  <MessageSquare className={`${state === 'collapsed' ? 'w-5 h-5' : 'w-4 h-4'} ${state !== 'collapsed' ? 'mr-2' : ''}`} />
+                  {state !== 'collapsed' && 'Prompt New Workflow'}
                 </>
               )}
             </Button>

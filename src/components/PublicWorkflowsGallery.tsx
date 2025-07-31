@@ -2,15 +2,17 @@ import React from 'react';
 import { usePublicWorkflows } from '@/hooks/usePublicWorkflows';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Globe, Clock, User, Loader2, Palette} from 'lucide-react';
+import { Globe, Clock, User, Loader2, Palette, Footprints, Brain, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { checkWorkflowOwnership, hasValidSessionToken } from '@/utils/authUtils';
+import EnhancedWorkflowDashboard from '@/components/EnhancedWorkflowDashboard';
+import '@/styles/brainAnimation.css';
 
 export const PublicWorkflowsGallery = () => {
   const { rows: workflows, loading, error } = usePublicWorkflows();
-  const { currentUserSessionToken } = useAppContext();
+  const { currentUserSessionToken, workflows: userWorkflows, activeExecutions } = useAppContext();
   const { theme } = useTheme();
   const [ownershipStatus, setOwnershipStatus] = React.useState<{[key: string]: boolean}>({});
 
@@ -46,14 +48,44 @@ export const PublicWorkflowsGallery = () => {
   if (loading) {
     return (
       <div className={`flex flex-col items-center justify-center min-h-screen p-8 ${theme === 'dark' ? 'bg-black' : 'bg-white'}`}>
-        <Loader2 className={`w-8 h-8 animate-spin mb-4 ${
-          theme === 'dark' ? 'text-cyan-400' : 'text-purple-600'
-        }`} />
-        <p className={`text-lg ${
-          theme === 'dark' ? 'text-cyan-300' : 'text-gray-600'
+        {/* App Logo */}
+        <div className="flex justify-center mb-6">
+          <Brain className={`w-16 h-16 brain-animation ${
+            theme === 'dark' ? 'text-cyan-400' : 'text-purple-600'
+          }`} />
+        </div>
+
+        {/* App Title */}
+        <h1 className={`text-2xl font-bold mb-6 ${
+          theme === 'dark' ? 'text-white' : 'text-gray-900'
         }`}>
-          Loading public workflows...
-        </p>
+          Workflow Gallery
+        </h1>
+
+        {/* Loading Spinner and Text */}
+        <div className="flex items-center space-x-3">
+          <Loader2 className={`w-5 h-5 animate-spin ${
+            theme === 'dark' ? 'text-cyan-400' : 'text-purple-600'
+          }`} />
+          <p className={`text-lg ${
+            theme === 'dark' ? 'text-cyan-300' : 'text-gray-600'
+          }`}>
+            Loading public workflows...
+          </p>
+        </div>
+
+        {/* Loading Progress Indicator */}
+        <div className="mt-8 flex space-x-1">
+          <div className={`w-2 h-2 rounded-full animate-bounce ${
+            theme === 'dark' ? 'bg-cyan-400' : 'bg-purple-600'
+          }`} style={{ animationDelay: '0ms' }} />
+          <div className={`w-2 h-2 rounded-full animate-bounce ${
+            theme === 'dark' ? 'bg-cyan-400' : 'bg-purple-600'
+          }`} style={{ animationDelay: '150ms' }} />
+          <div className={`w-2 h-2 rounded-full animate-bounce ${
+            theme === 'dark' ? 'bg-cyan-400' : 'bg-purple-600'
+          }`} style={{ animationDelay: '300ms' }} />
+        </div>
       </div>
     );
   }
@@ -111,7 +143,7 @@ export const PublicWorkflowsGallery = () => {
           <h1 className={`text-4xl font-bold mb-4 ${
             theme === 'dark' ? 'text-cyan-300' : 'text-gray-800'
           }`}>
-            <Palette className={`inline-block w-10 h-10 mr-3 ${
+            <Brain className={`inline-block w-10 h-10 mr-3 ${
               theme === 'dark' ? 'text-cyan-400' : 'text-purple-600'
             }`} />
             Workflow Gallery
@@ -122,6 +154,38 @@ export const PublicWorkflowsGallery = () => {
             Discover workflows created by the community.
           </p>
         </div>
+
+        {/* Global User Dashboard - Only show if user has workflows */}
+        {hasSessionToken && userWorkflows && userWorkflows.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-2xl font-semibold ${
+                theme === 'dark' ? 'text-cyan-300' : 'text-gray-900'
+              }`}>
+                Your Workflow Analytics
+              </h2>
+              <Button 
+                variant="outline"
+                onClick={() => {
+                  // We'll use a simple approach - open in new tab or modal
+                  const event = new CustomEvent('openUserConsole');
+                  window.dispatchEvent(event);
+                }}
+                className={`flex items-center gap-2 ${
+                  theme === 'dark' 
+                    ? 'text-cyan-400 hover:text-cyan-300 hover:bg-gray-800 border-gray-600' 
+                    : 'text-purple-600 hover:text-purple-700 hover:bg-purple-50'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                </Button>
+            </div>
+            <EnhancedWorkflowDashboard 
+              workflows={userWorkflows} 
+              activeExecutions={activeExecutions}
+            />
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {workflows.map((workflow) => {
@@ -177,10 +241,11 @@ export const PublicWorkflowsGallery = () => {
 
                     {/* Steps Count */}
                     {workflow.steps && (
-                      <div className={`text-sm ${
+                      <div className={`text-sm flex items-center space-x-1 ${
                         theme === 'dark' ? 'text-white' : 'text-gray-600'
                       }`}>
-                        <span className="font-medium">{workflow.steps.length}</span> steps
+                        <span className="font-medium">{workflow.steps.length}</span>
+                        <Footprints className="w-3 h-3" />
                       </div>
                     )}
 
@@ -195,7 +260,7 @@ export const PublicWorkflowsGallery = () => {
                         window.location.href = `/wf/${workflow.id}`;
                       }}
                     >
-                      View Workflow
+                      View
                     </Button>
                   </div>
                 </CardContent>

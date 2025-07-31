@@ -29,6 +29,7 @@ import { workflowService } from '@/services/workflowService';
 import { canEditWorkflow } from '@/utils/authUtils';
 import AuthBanner from '@/components/AuthBanner';
 import SessionStatus from '@/components/SessionStatus';
+import WorkflowStatsCard from '@/components/WorkflowStatsCard';
 import { useTheme } from '@/contexts/ThemeContext';
 
 type Workflow = z.infer<typeof workflowSchema>;
@@ -288,6 +289,15 @@ export function WorkflowEditor() {
           onGetExtension={handleGetExtension}
           onForkWorkflow={handleForkWorkflow}
         />
+
+        {/* Workflow Statistics */}
+        {workflow && (
+          <WorkflowStatsCard 
+            workflow={workflow as any} 
+            showRecentExecutions={true}
+          />
+        )}
+
         <div className="space-y-2">
           <h2 className={`text-xl font-semibold mb-3 ${
             theme === 'dark' ? 'text-white' : 'text-black'
