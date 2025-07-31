@@ -9,9 +9,9 @@
 Upcoming features of Rebrowse(v0.2.0) :
 [<img src="./doc/assets/v0.2-core-feature.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
 
-## Demo
+## Demo: Grok-powered X Bot
 
-![X-Bot Demo](./doc/assets/demo-grok-post-small.gif)
+![X-Bot Demo](./doc/assets/demo-grok-post-hd.gif)
 
 ## Repo structure
 
