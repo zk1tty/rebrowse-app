@@ -1,6 +1,22 @@
+[<img src="./doc/assets/rebrowse-hero-image.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
+[![n0rizkitty](https://img.shields.io/twitter/follow/n0rizkitty?style=social)](https://x.com/n0rizkitty)
+<br/>
 
+## About Rebrowse
 
-## Rebrowse structure
+[Rebrowse]((https://rebrowse.me)) is a powerful tool that converts screen recordings into automated browser workflows.   
+
+Upcoming features of Rebrowse(v0.2.0) :
+[<img src="./doc/assets/v0.2-core-feature.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
+
+## Demo
+
+https://github.com/zk1tty/rebrowse-app/assets/demo-grok-post.mp4
+
+<!-- Alternative: You can also upload the video file directly to your repository and reference it like this: -->
+<!-- ![Demo Video](./doc/assets/demo-grok-post.mp4) -->
+
+## Repo structure
 
 ```bash
 rebrowse-app
