@@ -11,7 +11,7 @@ Upcoming features of Rebrowse(v0.2.0) :
 
 ## Demo
 
-![X-Bot Demo](./doc/assets/demo-grok-post-compressed.mp4)
+![X-Bot Demo](./doc/assets/demo-grok-post-small.gif)
 
 ## Repo structure
 
