@@ -12,6 +12,10 @@ export default defineConfig({
       '@lib': path.resolve(__dirname, "./src/lib"),
     },
   },
+  build: {
+    minify: false,        // ⛔ prevent obfuscation
+    sourcemap: true       // ✅ Generated .map files for debugging
+  },
   define: {
     // Inject environment variables at build time
     'import.meta.env.VITE_API_URL': JSON.stringify(process.env.VITE_API_URL || getEnvironmentConfig().VITE_API_URL),
