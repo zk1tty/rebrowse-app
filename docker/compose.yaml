@@ -1,0 +1,45 @@
+services:
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - RAILWAY_ENVIRONMENT=production
+      - DISPLAY=:99
+      - INTERACTIVE_MODE=false
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+    volumes:
+      - ./tmp:/app/tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ui:
+    build:
+      context: ../ui
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_PUBLIC_API_URL=http://localhost:8000
+      - VITE_PUBLIC_SUPABASE_URL=${VITE_PUBLIC_SUPABASE_URL}
+      - VITE_PUBLIC_SUPABASE_ANON_KEY=${VITE_PUBLIC_SUPABASE_ANON_KEY}
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ../ui/src:/app/src
+      - ../ui/public:/app/public
+
+networks:
+  default:
+    name: rebrowse-network 
