@@ -9,7 +9,7 @@ interface EnvConfig {
 export const envConfigs: Record<string, EnvConfig> = {
   dev: {
     VITE_API_URL: 'http://127.0.0.1:8000',
-    VITE_APP_ORIGIN: 'http://127.0.0.1:5173',
+    VITE_APP_ORIGIN: 'localhost:5173',
     VITE_SUPABASE_URL: 'https://dmgtsseqqsiyuuzhdxnn.supabase.co',
     VITE_SUPABASE_ANON_KEY: 'REMOVED.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtZ3Rzc2VxcXNpeXV1emhkeG5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3MzE4ODIsImV4cCI6MjA2NTMwNzg4Mn0.e5bQXtdRsPY31fEp2xextWC4QKYUcAvj77hEDVZHuZw'
   },
