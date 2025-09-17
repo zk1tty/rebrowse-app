@@ -23,7 +23,12 @@ import {
   HttpRecordingStartedEvent,
   HttpRecordingStoppedEvent,
   HttpWorkflowUpdateEvent,
+  CookieSyncProgressMessage,
+  CookieSyncDoneMessage,
 } from "../lib/message-bus-types";
+import { COOKIE_SITES } from "../lib/cookie-sites";
+import type { CookieSiteId } from "../lib/cookie-sites";
+import { getSiteHostPermissions, checkOrigins, buildHostPermissionPatternsForDomain } from "../lib/host-permissions";
 import { ensureAuth } from '@/lib/auth';
 
 export default defineBackground(() => {
@@ -35,6 +40,8 @@ export default defineBackground(() => {
 
   let isRecordingEnabled = false; // Default to disabled (OFF)
   let lastWorkflowHash: string | null = null; // Cache for the last logged workflow hash
+  // Persisted cookie sync statuses (mirror to avoid storage write races)
+  let cookieStatusMap: Record<string, { status: string; lastUpdated: number; message?: string }> = {};
 
   const PYTHON_SERVER_ENDPOINT = `${import.meta.env.VITE_API_URL}/event`;
 
@@ -427,168 +434,341 @@ export default defineBackground(() => {
     return steps;
   }
 
-  // --- Message Listener ---
+  // --- Message Handlers & Dispatcher ---
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    let isAsync = false; // Flag to indicate if sendResponse will be called asynchronously
-
-    // --- Event Listener from Content Scripts ---
     const customEventTypes = [
       "CUSTOM_CLICK_EVENT",
       "CUSTOM_INPUT_EVENT",
       "CUSTOM_SELECT_EVENT",
       "CUSTOM_KEY_EVENT",
     ];
-    if (
-      message.type === "RRWEB_EVENT" ||
-      customEventTypes.includes(message.type)
-    ) {
-      if (!isRecordingEnabled) {
-        return false; // Don't process if disabled, not async
-      }
+
+  const handleContentEvent = (type: string, message: any, sender: chrome.runtime.MessageSender) => {
+    if (!isRecordingEnabled) return false;
       if (!sender.tab?.id) {
         console.warn("Received event without tab ID:", message);
-        return false; // Ignore events without a tab ID, not async
+      return false;
       }
-
       const tabId = sender.tab.id;
-      const isCustomEvent = customEventTypes.includes(message.type);
 
-      // Function to store the event
       const storeEvent = (eventPayload: any, screenshotDataUrl?: string) => {
-        if (!sessionLogs[tabId]) {
-          sessionLogs[tabId] = [];
-        }
-        if (!tabInfo[tabId]) {
-          tabInfo[tabId] = {};
-        }
-        if (sender.tab?.url && !tabInfo[tabId].url) {
-          tabInfo[tabId].url = sender.tab.url;
-        }
-        if (sender.tab?.title && !tabInfo[tabId].title) {
-          tabInfo[tabId].title = sender.tab.title;
-        }
+      if (!sessionLogs[tabId]) sessionLogs[tabId] = [];
+      if (!tabInfo[tabId]) tabInfo[tabId] = {};
+      if (sender.tab?.url && !tabInfo[tabId].url) tabInfo[tabId].url = sender.tab.url;
+      if (sender.tab?.title && !tabInfo[tabId].title) tabInfo[tabId].title = sender.tab.title;
 
-        const eventWithMeta = {
-          ...eventPayload,
-          tabId: tabId,
-          messageType: message.type,
-          screenshot: screenshotDataUrl,
-        };
+      const eventWithMeta = { ...eventPayload, tabId, messageType: type, screenshot: screenshotDataUrl };
         sessionLogs[tabId].push(eventWithMeta);
-        broadcastWorkflowDataUpdate(); // Call is async, will not block
-        // console.log(`Stored ${message.type} from tab ${tabId}`);
+      broadcastWorkflowDataUpdate();
       };
 
-      // If it's a custom event from content script, try capture screenshot
-      if (isCustomEvent && sender.tab?.windowId) {
-        isAsync = true; // Indicate async response for screenshot capture
+    const isCustom = customEventTypes.includes(type);
+    if (isCustom && sender.tab?.windowId) {
         chrome.tabs.captureVisibleTab(
           sender.tab.windowId,
           { format: "jpeg", quality: 75 },
           (dataUrl) => {
             if (chrome.runtime.lastError) {
-              console.error(
-                "Screenshot failed:",
-                chrome.runtime.lastError.message
-              );
-              storeEvent(message.payload); // Store event without screenshot
+            console.error("Screenshot failed:", chrome.runtime.lastError.message);
+            storeEvent(message.payload);
             } else {
-              storeEvent(message.payload, dataUrl); // Store event with screenshot
+            storeEvent(message.payload, dataUrl);
             }
-            // Note: sendResponse is not called here, as the event listener just stores data
           }
         );
-      } else if (message.type === "RRWEB_EVENT") {
-        // For RRWEB_EVENT, store immediately (synchronous)
-        storeEvent(message.payload);
-      } else if (isCustomEvent) {
-        // Custom event but couldn't get screenshot (e.g., missing windowId)
-        console.warn(
-          "Storing custom event without screenshot due to missing windowId or other issue."
-        );
-        storeEvent(message.payload);
-      }
+      return false;
     }
+    if (type === "RRWEB_EVENT") {
+        storeEvent(message.payload);
+      return false;
+    }
+    if (isCustom) {
+      console.warn("Storing custom event without screenshot due to missing windowId or other issue.");
+        storeEvent(message.payload);
+      return false;
+    }
+    return false;
+  };
 
-    // --- Control Messages from Sidepanel ---
-    else if (message.type === "GET_RECORDING_DATA") {
-      isAsync = true; // Indicate async response for sendResponse
-      (async () => {
+  const handleGetRecordingData = async (_message: any, _sender: any, sendResponse: (res: any) => void) => {
         const workflowData = await broadcastWorkflowDataUpdate();
-
-        const statusString = isRecordingEnabled
-          ? "recording"
-          : workflowData.steps.length > 0
-          ? "stopped"
-          : "idle";
-
+    const statusString = isRecordingEnabled ? "recording" : workflowData.steps.length > 0 ? "stopped" : "idle";
         sendResponse({ workflow: workflowData, recordingStatus: statusString });
-      })();
-      return isAsync; // Crucial: return true to keep message channel open for async sendResponse
-    } else if (message.type === "START_RECORDING") {
+  };
+
+  const handleStartRecording = (_message: any, _sender: any, sendResponse: (res: any) => void) => {
       console.log("Received START_RECORDING request.");
-      // Clear previous data
-      Object.keys(sessionLogs).forEach(
-        (key) => delete sessionLogs[parseInt(key)]
-      );
+    Object.keys(sessionLogs).forEach((key) => delete sessionLogs[parseInt(key)]);
       Object.keys(tabInfo).forEach((key) => delete tabInfo[parseInt(key)]);
       console.log("Cleared previous recording data.");
-
-      // Start recording
       if (!isRecordingEnabled) {
         isRecordingEnabled = true;
         console.log("Recording status set to: true");
-        broadcastRecordingStatus(); // Inform content scripts and sidepanel
-
-        // Send recording started event to Python server
-        const eventToSend: HttpRecordingStartedEvent = {
-          type: "RECORDING_STARTED",
-          timestamp: Date.now(),
-          payload: { message: "Recording has started" },
-        };
+      broadcastRecordingStatus();
+      const eventToSend: HttpRecordingStartedEvent = { type: "RECORDING_STARTED", timestamp: Date.now(), payload: { message: "Recording has started" } };
         sendEventToServer(eventToSend);
       }
-      sendResponse({ status: "started" }); // Send simple confirmation
-    } else if (message.type === "STOP_RECORDING") {
+    sendResponse({ status: "started" });
+  };
+
+  const handleStopRecording = (_message: any, _sender: any, sendResponse: (res: any) => void) => {
       console.log("Received STOP_RECORDING request.");
       if (isRecordingEnabled) {
         isRecordingEnabled = false;
         console.log("Recording status set to: false");
-        broadcastRecordingStatus(); // Inform content scripts and sidepanel
-
-        // Send recording stopped event to Python server
-        const eventToSend: HttpRecordingStoppedEvent = {
-          type: "RECORDING_STOPPED",
-          timestamp: Date.now(),
-          payload: { message: "Recording has stopped" },
-        };
+      broadcastRecordingStatus();
+      const eventToSend: HttpRecordingStoppedEvent = { type: "RECORDING_STOPPED", timestamp: Date.now(), payload: { message: "Recording has stopped" } };
         sendEventToServer(eventToSend);
       }
-      sendResponse({ status: "stopped" }); // Send simple confirmation
-    }
-    // --- Status Request from Content Script ---
-    else if (message.type === "REQUEST_RECORDING_STATUS" && sender.tab?.id) {
-      console.log(
-        `Sending initial status (${isRecordingEnabled}) to tab ${sender.tab.id}`
-      );
-      // This response must be sent async, and we must return true to
-      // keep the message channel open for the sendResponse call.
-      setTimeout(() => {
-        sendResponse({ isRecordingEnabled });
-      }, 50);
-      return true; // Keep message port open for async response
-    }
+    sendResponse({ status: "stopped" });
+  };
 
-    // --- TODO: Removed Handlers ---
-    // else if (message.type === "CLEAR_RECORDING_DATA") { ... } // Now handled by START_RECORDING
-    // else if (message.type === "GET_RECORDING_STATUS") { ... } // Sidepanel uses GET_RECORDING_DATA
-    // else if (message.type === "TOGGLE_RECORDING") { ... } // Replaced by START/STOP
+  const handleStartCookieSync = async (message: any, _sender: any, sendResponse: (res: any) => void) => {
+    try {
+      const { requestId, sites = [], others = [] } = message.payload || {};
+      console.log("[CookieSync] START received:", { requestId, sites, others });
+      sendResponse({ ok: true });
+      const allTargets: string[] = [...sites, ...others.map((d: string) => `other:${d}`)];
 
-    // Return true if sendResponse will be called asynchronously (screenshotting, GET_RECORDING_DATA)
-    // Otherwise, return false or undefined (implicitly false).
-    return isAsync;
+      const persistStatus = async (
+        siteId: string,
+        status: 'ready' | 'processing' | 'success' | 'failed',
+        message?: string
+      ) => {
+        const key = 'cookieSyncStatusMap';
+        cookieStatusMap[siteId] = { status, lastUpdated: Date.now(), message };
+        await chrome.storage.local.set({ [key]: cookieStatusMap });
+      };
+
+      const runForTarget = async (siteId: string) => {
+        const progressStart: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: 'processing', lastUpdated: Date.now() } } };
+        chrome.runtime.sendMessage(progressStart).catch(() => {});
+        await persistStatus(siteId, 'processing');
+        // Permission pre-check to avoid silent failures
+        try {
+          if (siteId.startsWith('other:')) {
+            const domain = siteId.split(':', 2)[1];
+            const origins = buildHostPermissionPatternsForDomain(domain);
+            const perm = await checkOrigins(origins);
+            if (perm.missing?.length) {
+              const msg = 'Permission not granted';
+              const deniedMsg: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: 'failed', lastUpdated: Date.now(), message: msg } } };
+              chrome.runtime.sendMessage(deniedMsg).catch(() => {});
+              await persistStatus(siteId, 'failed', msg);
+              return { siteId, ok: false };
+            }
+          } else {
+            const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
+            if (isCookieSiteId(siteId)) {
+              const origins = getSiteHostPermissions(siteId);
+              const perm = await checkOrigins(origins);
+              if (perm.missing?.length) {
+                const msg = 'Permission not granted';
+                const deniedMsg: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: 'failed', lastUpdated: Date.now(), message: msg } } };
+                chrome.runtime.sendMessage(deniedMsg).catch(() => {});
+                await persistStatus(siteId, 'failed', msg);
+                return { siteId, ok: false };
+              }
+            }
+          }
+        } catch {}
+        let cookies: chrome.cookies.Cookie[] = [];
+        try {
+          if (siteId.startsWith('other:')) {
+            const domain = siteId.split(':', 2)[1];
+            const list1 = await chrome.cookies.getAll({ domain });
+            const list2 = await chrome.cookies.getAll({ domain: `.${domain}` });
+            cookies = [...(list1 || []), ...(list2 || [])];
+          } else {
+            const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
+            if (isCookieSiteId(siteId)) {
+              const domains = COOKIE_SITES[siteId].cookieDomains;
+              for (const d of domains) {
+                const list = await chrome.cookies.getAll({ domain: d });
+                if (list?.length) cookies.push(...list);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[CookieSync] collection failed for', siteId, e);
+        }
+        let ok = true; const missing: string[] = []; let reason: string | undefined;
+        const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
+        if (isCookieSiteId(siteId)) {
+          const req = COOKIE_SITES[siteId].requiredCookies || [];
+          const cookiesByName = cookies.reduce<Record<string, chrome.cookies.Cookie[]>>((acc, c) => {
+            (acc[c.name] ||= []).push(c);
+            return acc;
+          }, {});
+          for (const r of req) if (!cookiesByName[r]?.length) missing.push(r);
+
+          if (missing.length === 0) {
+            // Site-specific validation hardening
+            if (siteId === 'facebook') {
+              const xsList = cookiesByName['xs'] || [];
+              const xsGood = xsList.some((c) => c.httpOnly === true && c.secure === true);
+              if (!xsGood) { ok = false; reason = 'xs must be httpOnly & secure'; }
+              const cUserList = cookiesByName['c_user'] || [];
+              const cUserGood = cUserList.some((c) => (c.value ?? '').length > 0);
+              if (!cUserGood) { ok = false; reason = 'c_user missing or empty'; }
+            } else if (siteId === 'linkedin') {
+              const liAtList = cookiesByName['li_at'] || [];
+              const liAtGood = liAtList.some((c) => c.httpOnly === true);
+              if (!liAtGood) { ok = false; reason = 'li_at must be httpOnly'; }
+            } else if (siteId === 'instagram') {
+              const sidList = cookiesByName['sessionid'] || [];
+              const sidGood = sidList.some((c) => c.httpOnly === true);
+              if (!sidGood) { ok = false; reason = 'sessionid must be httpOnly'; }
+            } else if (siteId === 'x') {
+              const atList = cookiesByName['auth_token'] || [];
+              const atGood = atList.some((c) => c.httpOnly === true);
+              if (!atGood) { ok = false; reason = 'auth_token must be httpOnly'; }
+            }
+          } else {
+            ok = false;
+          }
+        }
+        const msgText = ok ? undefined : (missing.length ? `Missing: ${missing.join(', ')}` : (reason || 'Validation failed'));
+        const progressEnd: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: ok ? 'success' : 'failed', lastUpdated: Date.now(), message: msgText } } };
+        chrome.runtime.sendMessage(progressEnd).catch(() => {});
+        await persistStatus(siteId, ok ? 'success' : 'failed', msgText);
+        return { siteId, ok };
+      };
+
+      const results = await Promise.all(allTargets.map(runForTarget));
+      const done: CookieSyncDoneMessage = { type: 'COOKIE_SYNC_DONE', payload: { requestId, results: results.map((r) => ({ siteId: r.siteId, status: r.ok ? 'success' : 'failed', lastUpdated: Date.now() })) } };
+      chrome.runtime.sendMessage(done).catch(() => {});
+    } catch (err) {
+      console.error('[CookieSync] START handler failed:', err);
+      try {
+        chrome.runtime.sendMessage({ type: 'COOKIE_SYNC_ERROR', payload: { requestId: message?.payload?.requestId, error: String(err) } }).catch(() => {});
+      } catch {}
+    }
+  };
+
+  const handleGetSiteCookies = (message: any, _sender: any, sendResponse: (res: any) => void) => {
+    (async () => {
+      try {
+        const { siteId, domain, storeId } = message.payload || {};
+        const siteKey = siteId ?? (domain ? `other:${domain}` : 'unknown');
+        let queryDomains: string[] = [];
+        const isCookieSiteId = (v: any): v is CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
+        if (isCookieSiteId(siteId)) queryDomains = COOKIE_SITES[siteId].cookieDomains; else if (domain) { const d = domain.trim().toLowerCase(); queryDomains = [d, `.${d}`]; }
+        const allCookies: chrome.cookies.Cookie[] = [];
+        for (const d of queryDomains) { const list = await chrome.cookies.getAll({ domain: d, storeId }); if (list && list.length) allCookies.push(...list); }
+        console.log(`[CookieFetch] ${siteKey} -> ${allCookies.length} cookies`, allCookies);
+        sendResponse({ ok: true, siteKey, cookies: allCookies });
+      } catch (e) {
+        console.error('[CookieFetch] failed:', e);
+        sendResponse({ ok: false, siteKey: message.payload?.siteId ?? message.payload?.domain, error: String(e) });
+      }
+    })();
+    return true; // async
+  };
+
+  const handleDownloadCookiesJson = (message: any, _sender: any, sendResponse: (res: any) => void) => {
+    (async () => {
+      try {
+        const { sites = [], others = [], storeId } = message.payload || {};
+        const targets: Array<{ key: string; domains: string[] }> = [];
+        const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
+        for (const s of sites) { if (isCookieSiteId(s)) targets.push({ key: s, domains: COOKIE_SITES[s].cookieDomains }); }
+        for (const dRaw of others) { const d = String(dRaw).trim().toLowerCase(); if (!d) continue; targets.push({ key: `other:${d}`, domains: [d, `.${d}`] }); }
+        const collected: chrome.cookies.Cookie[] = [];
+        for (const t of targets) { for (const dom of t.domains) { const list = await chrome.cookies.getAll({ domain: dom, storeId }); if (list?.length) collected.push(...list); } }
+        const sameSiteMap: Record<string, 'None' | 'Lax' | 'Strict'> = { no_restriction: 'None', lax: 'Lax', strict: 'Strict' } as const;
+        const keyOf = (c: chrome.cookies.Cookie) => `${c.domain}|${c.path}|${c.name}`;
+        const dedup = new Map<string, chrome.cookies.Cookie>();
+        for (const c of collected) { const k = keyOf(c); const prev = dedup.get(k); if (!prev || (c.expirationDate ?? 0) > (prev.expirationDate ?? 0)) dedup.set(k, c); }
+        const cookiesOut = Array.from(dedup.values()).map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, expires: Math.trunc(c.expirationDate ?? 0), httpOnly: !!c.httpOnly, secure: !!c.secure, sameSite: sameSiteMap[String(c.sameSite) as keyof typeof sameSiteMap] ?? 'Lax' }));
+
+        // Validate presence of required cookies before writing the file; if any selected site is missing its required cookies,
+        // embed a warning in filename to make debugging easier (does not block download).
+        try {
+          const siteReqs: Record<string, string[]> = {
+            x: ['auth_token'],
+            linkedin: ['li_at'],
+            instagram: ['sessionid'],
+            facebook: ['c_user', 'xs'],
+          };
+          const namesSet = new Set(cookiesOut.map((c) => c.name));
+          const missingPerSite: string[] = [];
+          for (const [site, reqs] of Object.entries(siteReqs)) {
+            const miss = reqs.filter((r) => !namesSet.has(r));
+            if (miss.length) missingPerSite.push(`${site}:${miss.join('+')}`);
+          }
+          if (missingPerSite.length) {
+            console.warn('[DownloadCookies] Missing required before download:', missingPerSite.join(', '));
+          }
+        } catch {}
+        const payload = { cookies: cookiesOut, origins: [] as any[] };
+        const json = JSON.stringify(payload, null, 2);
+        const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+        const filename = `storage_state_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        await chrome.downloads.download({ url, filename, saveAs: true });
+        sendResponse({ ok: true, count: cookiesOut.length });
+      } catch (e) {
+        console.error('[DownloadCookies] failed:', e);
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
+    return true; // async
+  };
+
+  const handleRequestRecordingStatus = (_message: any, sender: chrome.runtime.MessageSender, sendResponse: (res: any) => void) => {
+    if (!sender.tab?.id) return false;
+    console.log(`Sending initial status (${isRecordingEnabled}) to tab ${sender.tab.id}`);
+    setTimeout(() => { sendResponse({ isRecordingEnabled }); }, 50);
+    return true; // async response
+  };
+
+  const messageHandlers: Record<string, (message: any, sender: chrome.runtime.MessageSender, sendResponse: (res: any) => void) => boolean | void | Promise<void>> = {
+    // Content events
+    RRWEB_EVENT: (m, s) => handleContentEvent('RRWEB_EVENT', m, s),
+    CUSTOM_CLICK_EVENT: (m, s) => handleContentEvent('CUSTOM_CLICK_EVENT', m, s),
+    CUSTOM_INPUT_EVENT: (m, s) => handleContentEvent('CUSTOM_INPUT_EVENT', m, s),
+    CUSTOM_SELECT_EVENT: (m, s) => handleContentEvent('CUSTOM_SELECT_EVENT', m, s),
+    CUSTOM_KEY_EVENT: (m, s) => handleContentEvent('CUSTOM_KEY_EVENT', m, s),
+
+    // Control
+    GET_RECORDING_DATA: handleGetRecordingData,
+    START_RECORDING: handleStartRecording,
+    STOP_RECORDING: handleStopRecording,
+
+    // Cookie sync & cookies
+    START_COOKIE_SYNC: handleStartCookieSync,
+    GET_SITE_COOKIES: handleGetSiteCookies,
+    DOWNLOAD_COOKIES_JSON: handleDownloadCookiesJson,
+
+    // Status
+    REQUEST_RECORDING_STATUS: handleRequestRecordingStatus,
+  };
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const handler = messageHandlers[message?.type];
+    if (!handler) return false;
+    try {
+      const result = handler(message, sender, sendResponse);
+      if (result === true) return true; // keep port open for async
+      if (result && typeof (result as any).then === 'function') {
+        (result as Promise<void>).catch((e) => console.error('Async handler failed:', e));
+        return true; // assume async handler will call sendResponse later
+      }
+      return false;
+    } catch (e) {
+      console.error('Handler threw:', e);
+      return false;
+    }
   });
+
+  // Initialize cookie status map from storage on service worker start
+  (async () => {
+    try {
+      const key = 'cookieSyncStatusMap';
+      const res = await chrome.storage.local.get([key]);
+      cookieStatusMap = (res?.[key] ?? {}) as Record<string, { status: string; lastUpdated: number; message?: string }>;
+    } catch {}
+  })();
 
   // Optional: Save data periodically or on browser close (less reliable)
   // chrome.storage.local.set({ sessionLogs, tabInfo });

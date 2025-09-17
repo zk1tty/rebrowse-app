@@ -14,7 +14,7 @@ import { AuthProvider, useAuth } from "./context/auth-provider";
 
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useAuth();
-  const { recordingStatus, isLoading, error } = useWorkflow();
+  const { recordingStatus, isLoading, error, activeView, routeOverride } = useWorkflow();
 
   /* wait until both async flags have resolved */
   if (isAuthenticated === null || isLoading) return <LoadingView />;
@@ -23,7 +23,31 @@ const AppContent: React.FC = () => {
   /* not signed-in → always show the initial view */
   if (!isAuthenticated) return <InitialView />;
 
-  /* signed-in → fall through to recorder states */
+  /* temporary route override (e.g., back button from stopped view) */
+  if (routeOverride === 'initial') {
+    return <InitialView />;
+  }
+
+  /* signed-in → route by activeView first, then recorder states */
+  if (activeView === "sync") {
+    const SyncBrowserView = React.lazy(() => import("./components/sync-browser-view.tsx"));
+    return (
+      <React.Suspense fallback={<LoadingView />}>
+        <SyncBrowserView />
+      </React.Suspense>
+    );
+  }
+
+  if (activeView === "session") {
+    // Reuse the session token panel from StoppedView, but as a standalone lightweight view
+    const SessionTokenPanel = React.lazy(() => import("./components/session-token-view.tsx"));
+    return (
+      <React.Suspense fallback={<LoadingView />}>
+        <SessionTokenPanel />
+      </React.Suspense>
+    );
+  }
+
   switch (recordingStatus) {
     case "recording":
       return <RecordingView />;
