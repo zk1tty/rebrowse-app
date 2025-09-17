@@ -3,11 +3,11 @@ import { useAuth } from '../context/auth-provider';
 import { useWorkflow } from '../context/workflow-provider';
 import { Button } from '@/components/ui/button';
 import { authClient } from '@/lib/auth';
-import { Globe } from 'lucide-react';
+import { Globe, RefreshCcw, LogIn } from 'lucide-react';
 
 export const InitialView: React.FC = () => {
   const { signIn, isAuthenticated } = useAuth();
-  const { startRecording } = useWorkflow();
+  const { startRecording, openSyncView, openSessionView } = useWorkflow();
   
   const [userName, setUserName] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -161,6 +161,18 @@ export const InitialView: React.FC = () => {
           <div className="text-lg text-black-600">
             Welcome back, {userName}! 👋
           </div>
+          <div className="pt-2">
+            <Button
+              onClick={openSessionView}
+              className="bg-white hover:bg-gray-100 text-black px-6 py-2 rounded-lg font-medium border"
+              size="lg"
+            >
+              <span className="flex items-center gap-2">
+                <LogIn className="w-4 h-4" />
+                Login app
+              </span>
+            </Button>
+          </div>
           <Button 
             onClick={startRecording}
             className="bg-red-500 hover:bg-red-800 text-white px-6 py-2 rounded-lg font-medium"
@@ -171,6 +183,18 @@ export const InitialView: React.FC = () => {
               Start Recording
             </span>
           </Button>
+          <div className="pt-2">
+            <Button
+              onClick={openSyncView}
+              className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-lg font-medium"
+              size="lg"
+            >
+              <span className="flex items-center gap-2">
+                <RefreshCcw className="w-4 h-4" />
+                Sync browser
+              </span>
+            </Button>
+          </div>
         </div>
       ) : (
         // Not authenticated - show sign in button

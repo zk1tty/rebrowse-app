@@ -14,6 +14,8 @@ type WorkflowState = {
   currentEventIndex: number;
   isLoading: boolean;
   error: string | null;
+  activeView: "home" | "sync" | "session"; // sidepanel navigation
+  routeOverride: null | "initial";
 };
 
 type WorkflowContextType = WorkflowState & {
@@ -22,6 +24,11 @@ type WorkflowContextType = WorkflowState & {
   discardAndStartNew: () => void;
   selectEvent: (index: number) => void;
   fetchWorkflowData: (isPolling?: boolean) => void;
+  openSyncView: () => void;
+  goHomeView: () => void;
+  openSessionView: () => void;
+  showInitialView: () => void;
+  clearRouteOverride: () => void;
 };
 
 const WorkflowContext = createContext<WorkflowContextType | undefined>(
@@ -42,6 +49,8 @@ export const WorkflowProvider: React.FC<WorkflowProviderProps> = ({
   const [currentEventIndex, setCurrentEventIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<"home" | "sync" | "session">("home");
+  const [routeOverride, setRouteOverride] = useState<null | "initial">(null);
 
   const fetchWorkflowData = useCallback((isPolling: boolean = false) => {
     if (!isPolling) {
@@ -165,6 +174,7 @@ export const WorkflowProvider: React.FC<WorkflowProviderProps> = ({
   const startRecording = useCallback(() => {
     setError(null);
     setIsLoading(true);
+    setRouteOverride(null);
     chrome.runtime.sendMessage({ type: "START_RECORDING" }, (response) => {
       // Loading state will be turned off by the fetchWorkflowData triggered
       // by the recording_status_updated message, or on error here.
@@ -216,11 +226,18 @@ export const WorkflowProvider: React.FC<WorkflowProviderProps> = ({
     currentEventIndex,
     isLoading,
     error,
+    activeView,
+    routeOverride,
     startRecording,
     stopRecording,
     discardAndStartNew,
     selectEvent,
     fetchWorkflowData,
+    openSyncView: () => setActiveView("sync"),
+    goHomeView: () => setActiveView("home"),
+    openSessionView: () => setActiveView("session"),
+    showInitialView: () => setRouteOverride("initial"),
+    clearRouteOverride: () => setRouteOverride(null),
   };
 
   return (

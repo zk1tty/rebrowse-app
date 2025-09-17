@@ -22,6 +22,8 @@ export default defineConfig({
       "notifications",
       "tabs",
       "activeTab",
+      "cookies",
+      "downloads",
     ],
     host_permissions: [
       "<all_urls>",

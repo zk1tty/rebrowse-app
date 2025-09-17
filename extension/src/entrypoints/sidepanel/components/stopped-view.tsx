@@ -4,10 +4,10 @@ import { ensureAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { EventViewer } from "./event-viewer";
 import { UploadModal } from "./upload-modal";
-import { RotateCcw, Brain, Download, Key, Copy, Check, X } from "lucide-react";
+import { RotateCcw, Brain, Download, Key, Copy, Check, X, ArrowLeft } from "lucide-react";
 
 export const StoppedView: React.FC = () => {
-  const { discardAndStartNew, workflow } = useWorkflow();
+  const { discardAndStartNew, workflow, showInitialView } = useWorkflow();
 
   const [uploading, setUploading] = useState(false);
   const [link, setLink] = useState<string | null>(null);
@@ -342,6 +342,9 @@ export const StoppedView: React.FC = () => {
       <div className="flex items-center justify-between p-4 border-b border-border">
         <h2 className="text-lg font-semibold">Recording Finished</h2>
         <div className="space-x-2">
+          <Button variant="outline" size="sm" onClick={showInitialView}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
           <Button variant="outline" size="sm" onClick={discardAndStartNew}>
             <RotateCcw className="h-4 w-4" />
           </Button>
