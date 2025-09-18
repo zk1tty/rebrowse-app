@@ -29,6 +29,9 @@ import {
 import { COOKIE_SITES } from "../lib/cookie-sites";
 import type { CookieSiteId } from "../lib/cookie-sites";
 import { getSiteHostPermissions, checkOrigins, buildHostPermissionPatternsForDomain } from "../lib/host-permissions";
+import { normalizeDomain } from "../lib/domain-normalizer";
+import { mapChromeCookiesToPlaywright, validateRequiredCookies } from "../lib/cookie-normalizer";
+import { fetchPublicKey, encryptEnvelope } from "../lib/crypto-helper";
 import { ensureAuth } from '@/lib/auth';
 
 export default defineBackground(() => {
@@ -592,43 +595,12 @@ export default defineBackground(() => {
         } catch (e) {
           console.warn('[CookieSync] collection failed for', siteId, e);
         }
-        let ok = true; const missing: string[] = []; let reason: string | undefined;
+        let ok = true; let msgText: string | undefined;
         const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
         if (isCookieSiteId(siteId)) {
-          const req = COOKIE_SITES[siteId].requiredCookies || [];
-          const cookiesByName = cookies.reduce<Record<string, chrome.cookies.Cookie[]>>((acc, c) => {
-            (acc[c.name] ||= []).push(c);
-            return acc;
-          }, {});
-          for (const r of req) if (!cookiesByName[r]?.length) missing.push(r);
-
-          if (missing.length === 0) {
-            // Site-specific validation hardening
-            if (siteId === 'facebook') {
-              const xsList = cookiesByName['xs'] || [];
-              const xsGood = xsList.some((c) => c.httpOnly === true && c.secure === true);
-              if (!xsGood) { ok = false; reason = 'xs must be httpOnly & secure'; }
-              const cUserList = cookiesByName['c_user'] || [];
-              const cUserGood = cUserList.some((c) => (c.value ?? '').length > 0);
-              if (!cUserGood) { ok = false; reason = 'c_user missing or empty'; }
-            } else if (siteId === 'linkedin') {
-              const liAtList = cookiesByName['li_at'] || [];
-              const liAtGood = liAtList.some((c) => c.httpOnly === true);
-              if (!liAtGood) { ok = false; reason = 'li_at must be httpOnly'; }
-            } else if (siteId === 'instagram') {
-              const sidList = cookiesByName['sessionid'] || [];
-              const sidGood = sidList.some((c) => c.httpOnly === true);
-              if (!sidGood) { ok = false; reason = 'sessionid must be httpOnly'; }
-            } else if (siteId === 'x') {
-              const atList = cookiesByName['auth_token'] || [];
-              const atGood = atList.some((c) => c.httpOnly === true);
-              if (!atGood) { ok = false; reason = 'auth_token must be httpOnly'; }
-            }
-          } else {
-            ok = false;
-          }
+          const res = validateRequiredCookies(siteId, cookies);
+          ok = res.ok; msgText = res.message;
         }
-        const msgText = ok ? undefined : (missing.length ? `Missing: ${missing.join(', ')}` : (reason || 'Validation failed'));
         const progressEnd: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: ok ? 'success' : 'failed', lastUpdated: Date.now(), message: msgText } } };
         chrome.runtime.sendMessage(progressEnd).catch(() => {});
         await persistStatus(siteId, ok ? 'success' : 'failed', msgText);
@@ -676,11 +648,7 @@ export default defineBackground(() => {
         for (const dRaw of others) { const d = String(dRaw).trim().toLowerCase(); if (!d) continue; targets.push({ key: `other:${d}`, domains: [d, `.${d}`] }); }
         const collected: chrome.cookies.Cookie[] = [];
         for (const t of targets) { for (const dom of t.domains) { const list = await chrome.cookies.getAll({ domain: dom, storeId }); if (list?.length) collected.push(...list); } }
-        const sameSiteMap: Record<string, 'None' | 'Lax' | 'Strict'> = { no_restriction: 'None', lax: 'Lax', strict: 'Strict' } as const;
-        const keyOf = (c: chrome.cookies.Cookie) => `${c.domain}|${c.path}|${c.name}`;
-        const dedup = new Map<string, chrome.cookies.Cookie>();
-        for (const c of collected) { const k = keyOf(c); const prev = dedup.get(k); if (!prev || (c.expirationDate ?? 0) > (prev.expirationDate ?? 0)) dedup.set(k, c); }
-        const cookiesOut = Array.from(dedup.values()).map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path, expires: Math.trunc(c.expirationDate ?? 0), httpOnly: !!c.httpOnly, secure: !!c.secure, sameSite: sameSiteMap[String(c.sameSite) as keyof typeof sameSiteMap] ?? 'Lax' }));
+        const { cookies: cookiesOut } = mapChromeCookiesToPlaywright(collected);
 
         // Validate presence of required cookies before writing the file; if any selected site is missing its required cookies,
         // embed a warning in filename to make debugging easier (does not block download).
@@ -715,6 +683,56 @@ export default defineBackground(() => {
     return true; // async
   };
 
+  const handleBuildCookiesJson = (message: any, _sender: any, sendResponse: (res: any) => void) => {
+    (async () => {
+      try {
+        const { sites = [], others = [], storeId } = message.payload || {};
+        const targets: Array<{ key: string; domains: string[] }> = [];
+        const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
+        for (const s of sites) { if (isCookieSiteId(s)) targets.push({ key: s, domains: COOKIE_SITES[s].cookieDomains }); }
+        for (const dRaw of others) { const norm = normalizeDomain(String(dRaw)); targets.push({ key: `other:${norm.apex}`, domains: norm.cookieDomains }); }
+        const collected: chrome.cookies.Cookie[] = [];
+        for (const t of targets) { for (const dom of t.domains) { const list = await chrome.cookies.getAll({ domain: dom, storeId }); if (list?.length) collected.push(...list); } }
+        const payload = mapChromeCookiesToPlaywright(collected);
+        sendResponse({ ok: true, json: JSON.stringify(payload), count: payload.cookies.length });
+      } catch (e) {
+        console.error('[BuildCookiesJson] failed:', e);
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
+    return true;
+  };
+
+  // Optional: handle encrypted upload request from sidepanel (after building cookies JSON and getting OTT)
+  const handleUploadCookiesEncrypted = (message: any, _sender: any, sendResponse: (res: any) => void) => {
+    (async () => {
+      try {
+        const { payloadJson, ott, sites } = message.payload || {};
+        if (!payloadJson || !ott) throw new Error('missing payloadJson or ott');
+        const { kid, key } = await fetchPublicKey();
+        const { nonceB64, ciphertextB64, wrappedKeyB64 } = await encryptEnvelope(payloadJson, key);
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/storage-state`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ott}` },
+          body: JSON.stringify({
+            ciphertext: ciphertextB64,
+            nonce: nonceB64,
+            wrappedKey: wrappedKeyB64,
+            kid,
+            metadata: { sites, createdAt: new Date().toISOString(), version: 'cookies-v1' },
+          }),
+        });
+        if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+        const json = await res.json();
+        sendResponse({ ok: true, result: json });
+      } catch (e) {
+        console.error('[UploadCookiesEncrypted] failed:', e);
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
+    return true;
+  };
+
   const handleRequestRecordingStatus = (_message: any, sender: chrome.runtime.MessageSender, sendResponse: (res: any) => void) => {
     if (!sender.tab?.id) return false;
     console.log(`Sending initial status (${isRecordingEnabled}) to tab ${sender.tab.id}`);
@@ -739,6 +757,8 @@ export default defineBackground(() => {
     START_COOKIE_SYNC: handleStartCookieSync,
     GET_SITE_COOKIES: handleGetSiteCookies,
     DOWNLOAD_COOKIES_JSON: handleDownloadCookiesJson,
+    BUILD_COOKIES_JSON: handleBuildCookiesJson,
+    UPLOAD_COOKIES_ENCRYPTED: handleUploadCookiesEncrypted,
 
     // Status
     REQUEST_RECORDING_STATUS: handleRequestRecordingStatus,

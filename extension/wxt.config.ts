@@ -26,10 +26,20 @@ export default defineConfig({
       "downloads",
     ],
     host_permissions: [
-      "<all_urls>",
+      // "<all_urls>", Over-prriviraged
       "http://127.0.0.1:8000/*", // VITE_API_URL (backend)
       "http://localhost:5173/*", // VITE_APP_ORIGIN (example)
       "https://*.supabase.co/*",   // VITE_SUPABASE_URL
+    ],
+    // TODO: Request per-site access at runtime (user approved). We include the SNS origins
+    // and allow dynamic domains via https wildcard for the "Others" field.
+    optional_host_permissions: [
+      "https://x.com/*",
+      "https://*.linkedin.com/*",
+      "https://*.instagram.com/*",
+      "https://*.facebook.com/*",
+      "https://*.tiktok.com/*",
+      "https://*/*"
     ],
     // Extension icons - shown in chrome://extensions
     icons: {

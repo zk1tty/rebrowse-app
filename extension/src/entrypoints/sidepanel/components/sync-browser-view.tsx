@@ -2,14 +2,17 @@ import React from 'react';
 import { useWorkflow } from '../context/workflow-provider';
 import { Button } from '@/components/ui/button';
 import { COOKIE_SITES, CookieSiteId, SITE_ICON_LABELS } from '@/lib/cookie-sites';
-import { ensureSitePermissions, ensureOrigins, buildHostPermissionPatternsForDomain } from '@/lib/host-permissions';
+import { ensureSitePermissions, ensureOrigins } from '@/lib/host-permissions';
+import { normalizeDomain } from '@/lib/domain-normalizer';
+import { ensureAuth } from '@/lib/auth';
 import type { CookieSyncStatus } from '@/lib/message-bus-types';
-import { CheckCircle2, XCircle, Clock, CircleDot } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, CircleDot, Cookie, Cloud } from 'lucide-react';
 
 type SiteProgress = {
   status: CookieSyncStatus;
   lastUpdated: number;
   message?: string;
+  verified?: boolean; // server-side verification result
 };
 
 const defaultSelected: CookieSiteId[] = (Object.keys(COOKIE_SITES) as CookieSiteId[])
@@ -22,6 +25,8 @@ const SyncBrowserView: React.FC = () => {
   const [othersInput, setOthersInput] = React.useState<string>('');
   const [requestId, setRequestId] = React.useState<string | null>(null);
   const [statuses, setStatuses] = React.useState<Record<string, SiteProgress>>({});
+  const [toast, setToast] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [uploading, setUploading] = React.useState<boolean>(false);
 
   const formatTime = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString() : '-');
 
@@ -36,6 +41,14 @@ const SyncBrowserView: React.FC = () => {
       default:
         return <CircleDot className="w-4 h-4 text-gray-400" />; // ready
     }
+  };
+  const VerifyIcon: React.FC<{ verified?: boolean }> = ({ verified }) => {
+    if (verified === undefined) return null;
+    return verified ? (
+      <CheckCircle2 className="w-4 h-4 text-green-600" />
+    ) : (
+      <CheckCircle2 className="w-4 h-4 text-red-600" />
+    );
   };
 
   React.useEffect(() => {
@@ -115,13 +128,14 @@ const SyncBrowserView: React.FC = () => {
     for (const d of others) {
       const key = `other:${d}`;
       try {
-        const origins = buildHostPermissionPatternsForDomain(d);
+        const norm = normalizeDomain(d);
+        const origins = norm.permissionPatterns;
         const perm = await ensureOrigins(origins, { interactive: true });
         const denied = 'denied' in perm ? perm.denied : perm.missing;
         if (denied && denied.length) {
           setStatuses((prev) => ({ ...prev, [key]: { status: 'failed', lastUpdated: Date.now(), message: 'Permission denied' } }));
         } else {
-          grantedOthers.push(d);
+          grantedOthers.push(norm.apex);
         }
       } catch (e) {
         setStatuses((prev) => ({ ...prev, [key]: { status: 'failed', lastUpdated: Date.now(), message: 'Permission error' } }));
@@ -144,8 +158,99 @@ const SyncBrowserView: React.FC = () => {
     });
   };
 
+  const uploadToCloud = async () => {
+    try {
+      setUploading(true);
+      const rid = (crypto?.randomUUID && crypto.randomUUID()) || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // 1) Build JSON for selected sites/others
+      const others = parseOthers();
+      const resp = await new Promise<any>((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'BUILD_COOKIES_JSON',
+          payload: { sites: selectedSites, others }
+        }, (r: any) => resolve(r));
+      });
+      if (!resp?.ok) { console.error('[SyncBrowserView] BUILD_COOKIES_JSON failed:', resp?.error); return; }
+      const payloadJson = resp.json as string;
+
+      // 2) Get one-time token from backend using Supabase access token
+      const accessToken = await ensureAuth();
+      let ott = '';
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/ott`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+        });
+        if (!res.ok) throw new Error(`OTT mint failed: ${res.status}`);
+        const data = await res.json();
+        ott = data?.ott;
+        if (!ott) throw new Error('OTT not returned');
+      } catch (e) {
+        console.error('[SyncBrowserView] mint OTT failed:', e);
+        return;
+      }
+
+      // 3) Upload encrypted
+      chrome.runtime.sendMessage({
+        type: 'UPLOAD_COOKIES_ENCRYPTED',
+        payload: { payloadJson, ott, sites: selectedSites }
+      }, (uploadResp: any) => {
+        if (chrome.runtime.lastError) {
+          console.error('[SyncBrowserView] UPLOAD_COOKIES_ENCRYPTED lastError:', chrome.runtime.lastError.message);
+          setToast({ type: 'error', message: 'Upload failed' });
+          setTimeout(() => setToast(null), 2500);
+          setUploading(false);
+          return;
+        }
+        console.log('[SyncBrowserView] UPLOAD_COOKIES_ENCRYPTED:', uploadResp);
+        if (uploadResp?.ok) {
+          setToast({ type: 'success', message: 'Succesfully uploaded to cloud' });
+          // If backend returned verification results, reflect them in the UI statuses
+          const verified: Record<string, boolean> | undefined = uploadResp?.result?.verified;
+          if (verified) {
+            setStatuses((prev) => {
+              const copy = { ...prev } as Record<string, SiteProgress>;
+              const now = Date.now();
+              Object.entries(verified).forEach(([siteId, ok]) => {
+                copy[siteId] = {
+                  status: ok ? 'success' as const : 'failed' as const,
+                  lastUpdated: now,
+                  message: ok ? undefined : 'Server verification failed',
+                  verified: ok,
+                };
+              });
+              return copy;
+            });
+          }
+        } else {
+          setToast({ type: 'error', message: 'Upload failed' });
+        }
+        setTimeout(() => setToast(null), 2500);
+        setUploading(false);
+      });
+    } catch (e) {
+      console.error('[SyncBrowserView] uploadToCloud failed:', e);
+      setToast({ type: 'error', message: 'Upload failed' });
+      setTimeout(() => setToast(null), 2500);
+      setUploading(false);
+    }
+  };
+
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 relative">
+      {toast && (
+        <div className={`fixed right-4 top-4 z-50 rounded shadow px-4 py-2 text-sm ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+          {toast.message}
+        </div>
+      )}
+      {uploading && (
+        <div className="absolute inset-0 bg-black/30 backdrop-blur-sm z-40 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow p-4 flex items-center gap-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-2 border-black border-t-transparent"></div>
+            <div className="text-sm text-black">Uploading and verifying…</div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Website list to sync with cloud browser</h2>
         <button
@@ -156,6 +261,10 @@ const SyncBrowserView: React.FC = () => {
         </button>
       </div>
 
+      <div className="flex justify-end pr-1 text-xs text-gray-500 gap-6">
+        <span className="flex items-center gap-1"><Cookie className="w-3 h-3" /> Local</span>
+        <span className="flex items-center gap-1"><Cloud className="w-3 h-3" /> Cloud</span>
+      </div>
       <div className="space-y-2">
         {(Object.keys(COOKIE_SITES) as CookieSiteId[]).map((id) => {
           const label = SITE_ICON_LABELS[id];
@@ -194,15 +303,24 @@ const SyncBrowserView: React.FC = () => {
           return (
             <div key={id} className="w-full flex items-center justify-between border rounded px-3 py-2 text-left">
               <div className="font-medium">{label}</div>
-              <div className="text-sm text-gray-600 flex items-center gap-3">
+              <div className="text-sm text-gray-600 flex items-center gap-6">
                 {showLogin ? (
                   <button onClick={onLogin} className="underline text-black hover:text-gray-800">Login</button>
                 ) : null}
-                <StatusIcon status={s?.status} />
+                <span className="flex items-center gap-2">
+                  <Cookie className="w-4 h-4 text-gray-600" />
+                  <StatusIcon status={s?.status} />
+                </span>
+                <span className="flex items-center gap-2">
+                  <Cloud className="w-4 h-4 text-gray-600" />
+                  <VerifyIcon verified={s?.verified} />
+                </span>
                 {s?.message && s.message.toLowerCase().includes('missing') ? (
                   <span className="text-orange-600">Login required</span>
                 ) : null}
-                {s?.message ? <span className="text-red-500">{s.message}</span> : null}
+                {s?.message && !s.message.toLowerCase().includes('server verified') ? (
+                  <span className="text-red-500">{s.message}</span>
+                ) : null}
                 <span className="text-gray-400">{formatTime(s?.lastUpdated)}</span>
               </div>
             </div>
@@ -223,8 +341,9 @@ const SyncBrowserView: React.FC = () => {
             const key = `other:${d}`;
             const s = statuses[key];
             const onClick = async () => {
-              try {
-                const origins = buildHostPermissionPatternsForDomain(d);
+            try {
+              const norm = normalizeDomain(d);
+              const origins = norm.permissionPatterns;
                 const perm = await ensureOrigins(origins, { interactive: true });
                 const denied = 'denied' in perm ? perm.denied : perm.missing;
                 if (denied && denied.length) {
@@ -240,7 +359,7 @@ const SyncBrowserView: React.FC = () => {
 
               chrome.runtime.sendMessage({
                 type: 'GET_SITE_COOKIES',
-                payload: { domain: d },
+                payload: { domain: normalizeDomain(d).apex },
               }, (resp: any) => {
                 if (chrome.runtime.lastError) {
                   console.error('[SyncBrowserView] GET_SITE_COOKIES(others) failed:', chrome.runtime.lastError.message);
@@ -272,6 +391,9 @@ const SyncBrowserView: React.FC = () => {
       <div className="pt-2 flex items-center gap-3">
         <Button onClick={startSync} className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-lg font-medium">
           Start sync
+        </Button>
+        <Button onClick={uploadToCloud} className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-lg font-medium">
+          Upload to cloud
         </Button>
         <Button
           onClick={() => {
