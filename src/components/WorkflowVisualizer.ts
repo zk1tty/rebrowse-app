@@ -55,6 +55,15 @@ export class WorkflowVisualizer {
   private playerContainer: HTMLElement | null = null;
   private rrwebCode: string | null = null; // Cached rrweb source code
   private rrwebCSS: string | null = null; // Cached rrweb CSS
+  // Cache last FullSnapshot for reconnect/after-completion fallback
+  private lastFullSnapshotEvent: any | null = null;
+  // Reconnect management: sequence reset + snapshot wait
+  private hasReceivedFullSnapshot: boolean = false;
+  private snapshotWaitTimer: NodeJS.Timeout | null = null;
+  private sequenceResetAttempts: number = 0;
+  private readonly maxSequenceResetAttempts: number = 3;
+  // Static snapshot mode (when rendering cached snapshot, drop live events until FS arrives)
+  private staticSnapshotMode: boolean = false;
 
   // Step 4: Simplified constructor - official rrweb stream pattern
   constructor(options: Partial<WorkflowVisualizerCallbacks> = {}) {
@@ -128,10 +137,26 @@ export class WorkflowVisualizer {
     
     this.state.websocket = new WebSocket(wsUrl);
     this.state.isConnected = false;
+    this.state.sessionId = sessionId;
 
     this.state.websocket.onopen = () => {
       this.state.isConnected = true;
       this.callbacks.onConnect(sessionId);
+      // Reset and request fresh snapshot
+      this.hasReceivedFullSnapshot = false;
+      this.staticSnapshotMode = false;
+      this.sequenceResetAttempts = 0;
+      this.expectedSequenceId = 0;
+      this.requestSequenceReset();
+      // Retry up to max attempts if no snapshot
+      const scheduleRetry = () => {
+        if (this.hasReceivedFullSnapshot) return;
+        if (this.sequenceResetAttempts >= this.maxSequenceResetAttempts) return;
+        this.sequenceResetAttempts++;
+        this.requestSequenceReset();
+        this.snapshotWaitTimer = setTimeout(scheduleRetry, 2000);
+      };
+      this.snapshotWaitTimer = setTimeout(scheduleRetry, 1500);
     };
 
     this.state.websocket.onmessage = (event) => {
@@ -145,6 +170,12 @@ export class WorkflowVisualizer {
         console.warn('⚠️ [WorkflowVisualizer] WebSocket closed unexpectedly:', event.code);
       }
       this.callbacks.onDisconnect(event);
+      if (this.snapshotWaitTimer) {
+        clearTimeout(this.snapshotWaitTimer);
+        this.snapshotWaitTimer = null;
+      }
+      this.hasReceivedFullSnapshot = false;
+      this.sequenceResetAttempts = 0;
     };
 
     this.state.websocket.onerror = (error) => {
@@ -213,15 +244,46 @@ export class WorkflowVisualizer {
       
       // ✅ Backend EVENT VALIDATION: Validate exact rrweb structure, or ws message structure
       if (this.isRRWebEventMessage(data)) {
-        // Validate event sequence
+        // Process the rrweb event with gating until FullSnapshot
+        const rrwebEvent = data.event;
+        const isFullSnapshot = rrwebEvent && typeof rrwebEvent.type === 'number' && rrwebEvent.type === 2;
+
+        // Gate: drop all events until the first FullSnapshot arrives after (re)connect/reset
+        if (!this.hasReceivedFullSnapshot && !isFullSnapshot) {
+          return; // Ignore pre-FS events entirely
+        }
+
+        // Cache FullSnapshot for late viewers/reopen after completion
+        // Cache FullSnapshot for late viewers/reopen after completion
+        if (isFullSnapshot) {
+          try {
+            this.lastFullSnapshotEvent = rrwebEvent;
+            const key = `visual_last_fullsnapshot_${this.state.sessionId || data.session_id}`;
+            // Persist snapshot for new instances
+            sessionStorage.setItem(key, JSON.stringify(rrwebEvent));
+          } catch {}
+          // Stop retrying once we have a snapshot
+          this.hasReceivedFullSnapshot = true;
+          if (this.snapshotWaitTimer) {
+            clearTimeout(this.snapshotWaitTimer);
+            this.snapshotWaitTimer = null;
+          }
+          // If we were in static snapshot mode, allow switching back to live upon FS
+          if (this.staticSnapshotMode) {
+            this.staticSnapshotMode = false;
+          }
+        }
+        // If static snapshot mode is active, drop all live events except a FullSnapshot
+        if (this.staticSnapshotMode && !isFullSnapshot) {
+          return;
+        }
+
+        // Validate sequence only AFTER we are in post-FS state
         this.validateEventSequence(data.sequence_id);
-        
-        // Update statistics
+        // Update statistics after accepting event
         this.stats.eventsReceived++;
         this.stats.bytesReceived += JSON.stringify(data).length;
-        
-        // Process the validated rrweb event
-        const rrwebEvent = data.event;
+
         if (rrwebEvent && typeof rrwebEvent.type === 'number') {
           try {
             this.addEventDirectly(rrwebEvent);
@@ -238,6 +300,9 @@ export class WorkflowVisualizer {
         this.handleBackendError(data);
       } else if (data.type === 'status') {
         this.handleBackendStatus(data);
+      } else if (data.type === 'sequence_reset_ack') {
+        // Acknowledgement from backend; keep waiting for FullSnapshot
+        console.log('✅ [Sequence Reset] Acknowledged by backend:', data);
       } else {
         // Log unknown message structure for debugging
         this.logStructureValidation(data);
@@ -329,7 +394,8 @@ export class WorkflowVisualizer {
       const resetRequest = {
         type: 'sequence_reset_request',
         session_id: this.state.sessionId,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        history_window_seconds: 3.0
       };
       
       console.log('🔄 [Sequence Reset] Requesting sequence reset from backend');
@@ -375,6 +441,43 @@ export class WorkflowVisualizer {
     this.lastEventTimestamp = 0;
     this.duplicateEventCount = 0;
     console.log('🔄 [WorkflowVisualizer] Reset event tracking on disconnect');
+    if (this.snapshotWaitTimer) {
+      clearTimeout(this.snapshotWaitTimer);
+      this.snapshotWaitTimer = null;
+    }
+    this.hasReceivedFullSnapshot = false;
+    this.sequenceResetAttempts = 0;
+  }
+
+  // Render cached FullSnapshot when backend doesn't send one (e.g., completed sessions)
+  renderCachedSnapshot(sessionIdOverride?: string): boolean {
+    try {
+      if (!this.state.replayer) {
+        console.warn('⚠️ [WorkflowVisualizer] Cannot render cached snapshot - replayer not ready');
+        return false;
+      }
+      const sessionKey = sessionIdOverride || this.state.sessionId || '';
+      let snapshot = this.lastFullSnapshotEvent;
+      if (!snapshot && sessionKey) {
+        try {
+          const cached = sessionStorage.getItem(`visual_last_fullsnapshot_${sessionKey}`);
+          if (cached) snapshot = JSON.parse(cached);
+        } catch {}
+      }
+      if (!snapshot) {
+        console.warn('⚠️ [WorkflowVisualizer] No cached FullSnapshot available to render');
+        return false;
+      }
+      // Use existing addEvent path to ensure proper startLive handling when needed
+      this.addEventDirectly(snapshot);
+      console.log('✅ [WorkflowVisualizer] Rendered cached FullSnapshot for session', sessionKey);
+      // Enter static snapshot mode: drop live events until a fresh FullSnapshot arrives
+      this.staticSnapshotMode = true;
+      return true;
+    } catch (e) {
+      console.warn('⚠️ [WorkflowVisualizer] Failed to render cached snapshot:', e);
+      return false;
+    }
   }
 
 
@@ -423,11 +526,12 @@ export class WorkflowVisualizer {
       this.animationEventCount++;
     }
 
-    // Skip duplicate events
+    // Skip duplicate events (more tolerant threshold)
     if (protectedEvent.timestamp && protectedEvent.timestamp === this.lastEventTimestamp) {
       this.duplicateEventCount++;
-      if (this.duplicateEventCount > 5) {
-        console.warn('⚠️ [WorkflowVisualizer] Multiple duplicate events detected');
+      if (this.duplicateEventCount > 20) {
+        console.warn('⚠️ [WorkflowVisualizer] Duplicate rrweb events frequently detected (throttled)');
+        this.duplicateEventCount = 0; // reset to avoid spamming
       }
       return;
     }
@@ -499,13 +603,33 @@ export class WorkflowVisualizer {
   private sequenceErrors: number = 0;
   
   private validateEventSequence(sequenceId: number): void {
+    // Ignore validation until we have a FullSnapshot or when in static snapshot mode
+    if (!this.hasReceivedFullSnapshot || this.staticSnapshotMode) {
+      this.expectedSequenceId = sequenceId + 1;
+      return;
+    }
+    // Be tolerant to out-of-order bursts by allowing small negative deltas
     if (sequenceId !== this.expectedSequenceId) {
       this.sequenceErrors++;
-      if (this.sequenceErrors > 5) {
-        console.error('❌ [Sequence] Too many sequence errors - event ordering may be corrupted');
-        this.callbacks.onError(new Error('Event sequence corruption detected'));
+      if (this.sequenceErrors % 10 === 0) {
+        console.warn('❌ [Sequence] Repeated sequence mismatches; continuing (tolerant mode)');
       }
+      // Adjust expected to the next id after received to avoid cascading warnings
+      this.expectedSequenceId = Math.max(this.expectedSequenceId, sequenceId) + 1;
+      // If too many mismatches, request fresh sequence and wait for a new FullSnapshot
+      if (this.sequenceErrors > 50) {
+        try {
+          console.warn('🔄 [Sequence] Excessive mismatches - requesting sequence reset and waiting for FullSnapshot');
+          this.requestSequenceReset();
+          this.hasReceivedFullSnapshot = false;
+          this.staticSnapshotMode = true;
+          this.sequenceErrors = 0;
+        } catch {}
+      }
+      return;
     }
+    // Correct order: advance and reset error streak
+    this.sequenceErrors = 0;
     this.expectedSequenceId = sequenceId + 1;
   }
 
@@ -1228,7 +1352,7 @@ export class WorkflowVisualizer {
       (this.state.replayer as any).__startLiveCalled = false;
 
       // 🚨 CRITICAL: Patch rrweb's internal CSS processing to prevent regex overflow
-      patchRRWebCssProcessing(this.state.replayer, iframeWindow);
+      patchRRWebCssProcessing(this.state.replayer);
       console.log('✅ [CSS Protection] rrweb internal CSS processing patched');
       
       // Detect actual loaded version

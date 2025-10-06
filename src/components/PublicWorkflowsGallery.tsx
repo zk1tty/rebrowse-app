@@ -2,7 +2,7 @@ import React from 'react';
 import { usePublicWorkflows } from '@/hooks/usePublicWorkflows';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Globe, Clock, User, Loader2, Palette, Footprints, Brain, BarChart3 } from 'lucide-react';
+import { Globe, Clock, User, Loader2, Footprints, Brain, BarChart3, Heart, Eye, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -17,6 +17,56 @@ export const PublicWorkflowsGallery = () => {
   const [ownershipStatus, setOwnershipStatus] = React.useState<{[key: string]: boolean}>({});
 
   const hasSessionToken = hasValidSessionToken(currentUserSessionToken);
+
+  // Helper function to get thumbnail image
+  const getThumbnailImage = (workflow: any) => {
+    // You can customize this logic based on your workflow data structure
+    // For now, using a placeholder or workflow-specific image
+    if (workflow.thumbnail_url) {
+      return workflow.thumbnail_url;
+    }
+    
+    // Return null to use CSS placeholder instead of external service
+    return null;
+  };
+
+  // Helper function to get placeholder color, text, and emoji
+  const getPlaceholderStyle = (workflow: any) => {
+    const workflowName = workflow.name || 'workflow';
+    const colors = [
+      { bg: 'bg-blue-500', text: 'text-white' },
+      { bg: 'bg-purple-500', text: 'text-white' },
+      { bg: 'bg-green-500', text: 'text-white' },
+      { bg: 'bg-red-500', text: 'text-white' },
+      { bg: 'bg-yellow-500', text: 'text-black' },
+      { bg: 'bg-indigo-500', text: 'text-white' }
+    ];
+    
+    // Random emojis for different workflow types
+    const emojis = [
+      '🤖', '⚡', '🔧', '🚀', '💡', '🎯', '📊', '🎨', '📝',
+      '🔍', '⚙️', '🌟', '💻', '📱', '🌐', '🔗', '📈', '🎪', '🎭',
+      '🧠', '💎', '🔥', '❄️', '🌈', '🎵', '🎮', '📚', '🏆', '🎉'
+    ];
+    
+    const colorIndex = workflowName.length % colors.length;
+    const emojiIndex = (workflowName.length + workflowName.charCodeAt(0)) % emojis.length;
+    
+    return {
+      ...colors[colorIndex] || colors[0],
+      emoji: emojis[emojiIndex] || '🤖'
+    };
+  };
+
+  // Helper function to get workflow stats
+  const getWorkflowStats = (workflow: any) => {
+    return {
+      likes: workflow.likes_count || Math.floor(Math.random() * 50) + 1, // Placeholder data
+      views: workflow.views_count || Math.floor(Math.random() * 200) + 10,
+      runs: workflow.runs_count || Math.floor(Math.random() * 30) + 1,
+      steps: workflow.steps?.length || 0
+    };
+  };
 
   // Check ownership for each workflow if user is logged in
   React.useEffect(() => {
@@ -190,42 +240,89 @@ export const PublicWorkflowsGallery = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {workflows.map((workflow) => {
             const isOwner = workflow.id ? ownershipStatus[workflow.id] : false;
+            const stats = getWorkflowStats(workflow);
+            const thumbnailUrl = getThumbnailImage(workflow);
+            const placeholderStyle = getPlaceholderStyle(workflow);
             
             return (
-              <Card key={workflow.id} className={`hover:shadow-lg transition-shadow cursor-pointer ${
+              <Card key={workflow.id} className={`hover:shadow-lg transition-shadow cursor-pointer overflow-hidden ${
                 theme === 'dark' ? 'bg-gray-900 border-gray-700' : ''
               }`}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className={`text-lg font-semibold mb-2 ${
-                        theme === 'dark' ? 'text-white' : 'text-gray-800'
-                      }`}>
-                        {workflow.name || 'Untitled Workflow'}
-                      </CardTitle>
-                      <CardDescription className={`text-sm line-clamp-2 ${
-                        theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
-                      }`}>
-                        {workflow.description || 'No description available'}
-                      </CardDescription>
+                {/* Card Thumbnail Image or Placeholder */}
+                <div className="relative h-48 w-full overflow-hidden group cursor-pointer" onClick={() => {
+                  // Navigate to workflow detail page
+                  window.location.href = `/wf/${workflow.id}`;
+                }}>
+                  {thumbnailUrl ? (
+                    <img 
+                      src={thumbnailUrl}
+                      alt={workflow.name || 'Workflow thumbnail'}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                    />
+                  ) : (
+                    <div className={`w-full h-full flex items-center justify-center transition-transform group-hover:scale-105 ${placeholderStyle?.bg || 'bg-blue-500'}`}>
+                      <div className="text-center px-4">
+                        <div className={`text-6xl mb-4 ${placeholderStyle?.text || 'text-white'}`}>
+                          {placeholderStyle?.emoji || '🌱'}
+                        </div>
+                      </div>
                     </div>
-                    <Badge variant="secondary" className="ml-2">
+                  )}
+                  
+                  {/* Hover Overlay */}
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                    <div className="flex items-center space-x-2 text-white">
+                      <Eye className="w-6 h-6" />
+                      <span className="text-lg font-semibold">View</span>
+                    </div>
+                  </div>
+                  
+                  {/* Overlay with Public badge */}
+                  <div className="absolute top-3 right-3">
+                    <Badge variant="secondary" className="bg-black/70 text-white border-0">
                       <Globe className="w-3 h-3 mr-1" />
                       Public
                     </Badge>
                   </div>
+                  
+                  {/* Steps count skeleton button - bottom right */}
+                  <div className="absolute bottom-3 right-3">
+                    <div className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold ${
+                      theme === 'dark' 
+                        ? 'bg-gray-800/80 text-gray-300 border border-gray-600' 
+                        : 'bg-gray-100/80 text-gray-600 border border-gray-300'
+                    }`}>
+                      <Footprints className="w-6 h-6" />
+                      <span>{stats.steps}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <CardHeader className="pb-3">
+                  <div className="space-y-2">
+                    <CardTitle className={`text-lg font-semibold line-clamp-1 ${
+                      theme === 'dark' ? 'text-white' : 'text-gray-800'
+                    }`}>
+                      {workflow.name || 'Untitled Workflow'}
+                    </CardTitle>
+                    <CardDescription className={`text-sm line-clamp-2 ${
+                      theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                    }`}>
+                      {workflow.description || 'No description available'}
+                    </CardDescription>
+                  </div>
                 </CardHeader>
                 
-                <CardContent>
-                  <div className="space-y-3">
-                    {/* Workflow Stats */}
+                <CardContent className="pt-0">
+                  <div className="space-y-4">
+                    {/* Author and Date */}
                     <div className={`flex items-center justify-between text-sm ${
                       theme === 'dark' ? 'text-gray-300' : 'text-gray-500'
                     }`}>
                       <div className="flex items-center">
                         <User className="w-4 h-4 mr-1" />
                         <span>
-                          {isOwner ? 'You' : 'Anonymous'}
+                          {isOwner ? 'You' : 'Community'}
                         </span>
                       </div>
                       <div className="flex items-center">
@@ -239,29 +336,33 @@ export const PublicWorkflowsGallery = () => {
                       </div>
                     </div>
 
-                    {/* Steps Count */}
-                    {workflow.steps && (
-                      <div className={`text-sm flex items-center space-x-1 ${
+                    {/* Stats Grid */}
+                    <div className="flex items-center space-x-6">
+                      {/* Views */}
+                      <div className={`flex items-center space-x-2 text-base ${
                         theme === 'dark' ? 'text-white' : 'text-gray-600'
                       }`}>
-                        <span className="font-medium">{workflow.steps.length}</span>
-                        <Footprints className="w-3 h-3" />
+                        <Eye className="w-6 h-6" />
+                        <span className="font-semibold">{stats.views}</span>
                       </div>
-                    )}
+                      
+                      {/* Likes */}
+                      <div className={`flex items-center space-x-2 text-base ${
+                        theme === 'dark' ? 'text-white' : 'text-gray-600'
+                      }`}>
+                        <Heart className="w-6 h-6" />
+                        <span className="font-semibold">{stats.likes}</span>
+                      </div>
 
-                    {/* Action Button */}
-                    <Button 
-                      className={`w-full mt-4 ${
-                        theme === 'dark' ? 'text-white border-gray-600 hover:bg-gray-800' : ''
-                      }`}
-                      variant="outline"
-                      onClick={() => {
-                        // TODO: Navigate to workflow detail page
-                        window.location.href = `/wf/${workflow.id}`;
-                      }}
-                    >
-                      View
-                    </Button>
+                      {/* Runs */}
+                      <div className={`flex items-center space-x-2 text-base ${
+                        theme === 'dark' ? 'text-white' : 'text-gray-600'
+                      }`}>
+                        <Play className="w-6 h-6" />
+                        <span className="font-semibold">{stats.runs}</span>
+                      </div>
+                    </div>
+
                   </div>
                 </CardContent>
               </Card>

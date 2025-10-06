@@ -17,6 +17,8 @@ import '@xyflow/react/dist/style.css';
 import { WorkflowStepNode } from './WorkflowStepNode';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAppContext as useAppContextRaw } from '@/contexts/AppContext';
+import { getOrderedSteps } from '@/services/workflowSelectors';
 
 const nodeTypes = {
   workflowStep: WorkflowStepNode,
@@ -24,6 +26,7 @@ const nodeTypes = {
 
 export function WorkflowCanvas() {
   const { currentWorkflowData } = useAppContext();
+  const { currentRunId } = useAppContextRaw();
   const { theme } = useTheme();
   const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
 
@@ -86,6 +89,60 @@ export function WorkflowCanvas() {
       reactFlowInstanceRef.current?.fitView({ padding: 0.2 });
     });
   }, [currentWorkflowData, initialNodes, initialEdges, setNodes, setEdges]);
+
+  // Live status mapping: overlay reducer state onto nodes by stepNumber
+  React.useEffect(() => {
+    if (!currentRunId) return;
+    const uiSteps = getOrderedSteps(currentRunId);
+    try {
+      console.log('[RunEvents][Canvas] currentRunId=', currentRunId, 'uiSteps count=', uiSteps.length, 'sample=', uiSteps[0]);
+    } catch {}
+    // Do an initial overlay if steps already exist
+    if (uiSteps.length) {
+      setNodes((prev) =>
+        prev.map((n) => {
+          const match = uiSteps.find((s) => `step-${s.stepIndex}` === n.id);
+          if (!match) return n;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              status: match.status,
+              fallbackLabel: match.fallbackLabel,
+            },
+          } as Node;
+        })
+      );
+    }
+    const handler = (e: Event) => {
+      const refreshed = getOrderedSteps(currentRunId);
+      try {
+        const detail = (e as CustomEvent).detail;
+        console.log('[RunEvents][Canvas][update]', { runId: currentRunId, count: refreshed.length, sample: refreshed[0], detail });
+        console.log('[RunEvents][Canvas][nodes-before]', prevNodeIds());
+      } catch {}
+      setNodes((prev) =>
+        prev.map((n) => {
+          const m = refreshed.find((s) => `step-${s.stepIndex}` === n.id);
+          if (!m) return n;
+          return { ...n, data: { ...n.data, status: m.status, fallbackLabel: m.fallbackLabel } } as Node;
+        })
+      );
+      try {
+        console.log('[RunEvents][Canvas][nodes-after]', prevNodeIds());
+      } catch {}
+    };
+    window.addEventListener('wfui-run-events-update', handler as any);
+    return () => window.removeEventListener('wfui-run-events-update', handler as any);
+  }, [currentRunId, setNodes]);
+
+  function prevNodeIds() {
+    try {
+      return nodes.map((n) => n.id);
+    } catch {
+      return [] as string[];
+    }
+  }
 
   // Theme-based styling
   const canvasStyle = {

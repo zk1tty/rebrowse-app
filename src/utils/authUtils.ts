@@ -120,6 +120,18 @@ export const storeSessionToken = (sessionToken: string): void => {
 };
 
 /**
+ * Store anonymous session token and mark auth type
+ */
+export const storeAnonymousSessionToken = (sessionToken: string): void => {
+  try {
+    sessionStorage.setItem('workflow_session_token', sessionToken);
+    sessionStorage.setItem('workflow_auth_type', 'anonymous');
+  } catch (error) {
+    console.error('❌ [Auth] Error storing anonymous session token:', error);
+  }
+};
+
+/**
  * Get auth type from storage
  */
 export const getAuthType = (): string | null => {
@@ -193,9 +205,12 @@ export const validateSessionToken = async (sessionToken: string): Promise<boolea
     
     const isValid = response.ok;
     
-    // If invalid, clear the stored token
+    // If invalid, clear the stored token unless it's an anonymous session
     if (!isValid) {
-      clearStoredAuth();
+      const authType = getAuthType();
+      if (authType !== 'anonymous') {
+        clearStoredAuth();
+      }
     }
     
     return isValid;
@@ -218,4 +233,31 @@ export const hasValidAndAuthenticatedSession = async (sessionToken: string | nul
   
   // Then validate with backend
   return await validateSessionToken(sessionToken!);
+}; 
+
+/**
+ * Check if current user is an anonymous user
+ */
+export const isAnonymousUser = async (): Promise<boolean> => {
+  try {
+    // Use the existing supabase client from api/index.ts
+    const { supabase } = await import('@/lib/api');
+    
+    if (!supabase) {
+      console.warn('Supabase not configured, cannot check anonymous status');
+      return false;
+    }
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.user) {
+      return false;
+    }
+    
+    // Check if user is anonymous based on JWT claims or user metadata
+    return session.user.is_anonymous === true;
+  } catch (error) {
+    console.error('Error checking anonymous user status:', error);
+    return false;
+  }
 }; 

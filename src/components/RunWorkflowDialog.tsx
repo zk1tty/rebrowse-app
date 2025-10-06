@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -12,8 +12,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useAppContext } from '@/contexts/AppContext';
-import { Play, Loader2, ShieldCheck, AlertTriangle, Cloud, Monitor, Copy, Check, Eye } from 'lucide-react';
-import { hasValidSessionToken } from '@/utils/authUtils';
+import { Loader2, Cloud, Monitor, Copy, Check, Eye } from 'lucide-react';
+// Removed: hasValidSessionToken, isAnonymousUser (anonymous ensured on-demand)
 import SessionStatus from '@/components/SessionStatus';
 
 interface WorkflowInput {
@@ -31,18 +31,19 @@ export function RunWorkflowDialog() {
     setActiveDialog,
     currentWorkflowData,
     workflowStatus,
-    currentUserSessionToken,
-    isCurrentWorkflowPublic
+    // currentUserSessionToken,
+    // isCurrentWorkflowPublic
   } = useAppContext();
   const [inputs, setInputs] = useState<WorkflowInput[]>([]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [executionMode, setExecutionMode] = useState<'cloud-run' | 'local-run'>('cloud-run');
   const [copied, setCopied] = useState(false);
-  const [visualMode, setVisualMode] = useState(false);
+  const [visualMode, setVisualMode] = useState(true);
   
-  const hasSessionToken = hasValidSessionToken(currentUserSessionToken);
-  const canExecute = hasSessionToken || isCurrentWorkflowPublic; // Can execute if authenticated OR if it's a public workflow
+  // Authentication is ensured on-demand before execution
+
+  // Removed anonymous status check; session ensured on-demand
 
   useEffect(() => {
     if (currentWorkflowData && activeDialog === 'run') {
@@ -96,11 +97,8 @@ export function RunWorkflowDialog() {
   const execute = async () => {
     if (!validateInputs()) return;
     
-    if (!canExecute) {
-      setValidationError('Authentication required to execute workflows. Please login through the Chrome extension.');
-      return;
-    }
-
+    // Removed authentication check - always allow execution
+    
     setIsExecuting(true);
     setValidationError(null);
 
@@ -119,7 +117,7 @@ export function RunWorkflowDialog() {
         throw new Error('Workflow ID or name not available');
       }
       
-          // Execute workflow with parameters
+      // Execute workflow with parameters
       
       await executeWorkflow(workflowId, inputFields, executionMode, visualMode);
       setActiveDialog(null);
@@ -173,17 +171,7 @@ export function RunWorkflowDialog() {
           {/* Session Status for Execution */}
           <SessionStatus compact={true} className="mb-4" />
           
-          {!canExecute && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-              <div className="flex items-center space-x-2">
-                <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                <span className="text-yellow-800 font-medium">Authentication Required</span>
-              </div>
-              <p className="text-yellow-700 text-sm mt-1">
-                Please login through the Chrome extension to execute workflows.
-              </p>
-            </div>
-          )}
+          {/* Removed authentication warning banner */}
           
           {/* Execution Mode Selection */}
           <div className="space-y-3">
@@ -197,50 +185,47 @@ export function RunWorkflowDialog() {
                   <div className="flex items-center space-x-2">
                     <Cloud className="h-4 w-4 text-blue-500" />
                     <span>Cloud Run</span>
-                    <span className="text-xs text-gray-500 ml-2">(Server - Fast & Headless)</span>
+                    <span className="text-xs text-gray-500 ml-2">(on Rebrowse Cloud)</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="local-run">
                   <div className="flex items-center space-x-2">
                     <Monitor className="h-4 w-4 text-green-500" />
                     <span>Local Run</span>
-                    <span className="text-xs text-gray-500 ml-2">(Your Browser - Visual)</span>
+                    <span className="text-xs text-gray-500 ml-2">(on Your Local Machine)</span>
                   </div>
                 </SelectItem>
               </SelectContent>
             </Select>
             <div className="text-xs text-gray-500">
-              {executionMode === 'cloud-run' ? (
-                <p>🌐 Runs on server with headless browser - fast execution, no local resources used.</p>
-              ) : (
+              {executionMode === 'local-run' && (
                 <div className="space-y-2">
-                  <p>🖥️ Runs on your local machine with visual browser - see what's happening.</p>
+                  <p>🖥️ Runs on your local machine - requires set-up.</p>
                   <div className="bg-gray-200 border border-gray-200 rounded-lg p-3 mt-2">
-                      <p className="text-gray-800 font-medium text-sm mb-2">📋 Local Setup</p>
-                      <p className="text-gray-700 text-xs mb-2">Copy and paste this command in your terminal:</p>
-                      <div className="relative">
-                        <div className="bg-gray-900 text-green-400 p-2 pr-12 rounded font-mono text-xs overflow-x-auto">
-                          <code>curl -LsSf https://script.rebrowse.me/install.sh | sh</code>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={copyInstallCommand}
-                          className="absolute right-1 top-1 h-8 w-8 p-0 hover:bg-gray-700"
-                          title="Copy command"
-                        >
-                          {copied ? (
-                            <Check className="h-3 w-3 text-green-400" />
-                          ) : (
-                            <Copy className="h-3 w-3 text-gray-400 hover:text-white" />
-                          )}
-                        </Button>
+                    <p className="text-gray-800 font-medium text-sm mb-2">📋 Local Setup</p>
+                    <p className="text-gray-700 text-xs mb-2">Open terminal and run this command:</p>
+                    <div className="relative">
+                      <div className="bg-gray-900 text-green-400 p-2 pr-12 rounded font-mono text-xs overflow-x-auto">
+                        <code>curl -LsSf https://script.rebrowse.me/install.sh | sh</code>
                       </div>
-                      <p className="text-gray-600 text-xs mt-2">This installs a chromium browser on your machine.</p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={copyInstallCommand}
+                        className="absolute right-1 top-1 h-8 w-8 p-0 hover:bg-gray-700"
+                        title="Copy command"
+                      >
+                        {copied ? (
+                          <Check className="h-3 w-3 text-green-400" />
+                        ) : (
+                          <Copy className="h-3 w-3 text-gray-400 hover:text-white" />
+                        )}
+                      </Button>
                     </div>
+                  </div>
                 </div>
               )}
-                         </div>
+            </div>
            </div>
 
            {/* Visual Mode Toggle */}
@@ -248,8 +233,8 @@ export function RunWorkflowDialog() {
              <div className="flex items-center space-x-2">
                <Eye className="h-4 w-4 text-gray-700" />
                <div>
-                 <Label className="text-sm text-gray-900 font-medium">Visual Mode</Label>
-                 <p className="text-xs text-gray-600">Watch browser execution with streaming</p>
+                 <Label className="text-sm text-gray-900 font-medium">View Mode</Label>
+                 <p className="text-xs text-gray-600">Watch AI browsing in realtime</p>
                </div>
              </div>
              <Switch
@@ -260,7 +245,7 @@ export function RunWorkflowDialog() {
            </div>
            
            <p className="text-gray-600">
-             Configure the input values for this workflow execution:
+             Configure the input variables:
            </p>
 
           <div className="space-y-4">
@@ -311,7 +296,7 @@ export function RunWorkflowDialog() {
           </Button>
           <Button
             onClick={execute}
-            disabled={isExecuting || workflowStatus === 'running' || !canExecute}
+            disabled={isExecuting || workflowStatus === 'running'}
             className={`${
               visualMode
                 ? 'bg-purple-600 hover:bg-purple-700'
@@ -325,11 +310,6 @@ export function RunWorkflowDialog() {
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Executing...
               </>
-            ) : !canExecute ? (
-              <>
-                <AlertTriangle className="w-4 h-4" />
-                Login Required
-              </>
             ) : (
               <>
                 {visualMode ? (
@@ -339,10 +319,7 @@ export function RunWorkflowDialog() {
                 ) : (
                   <Monitor className="w-4 h-4" />
                 )}
-                {visualMode 
-                  ? `Visual ${executionMode === 'cloud-run' ? 'Cloud' : 'Local'} Run`
-                  : executionMode === 'cloud-run' ? 'Cloud Run' : 'Local Run'
-                }
+                {executionMode === 'cloud-run' ? 'Cloud Run' : 'Local Run'}
               </>
             )}
           </Button>

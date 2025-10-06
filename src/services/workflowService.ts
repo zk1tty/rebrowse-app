@@ -1,4 +1,4 @@
-import { fetchClient, apiFetch, sessionApiFetch } from '../lib/api';
+import { fetchClient, apiFetch } from '../lib/api';
 import {
   Workflow,
   WorkflowMetadata,
@@ -32,6 +32,9 @@ export interface WorkflowService {
     mode: string;
     devtools_url?: string;
     visual_enabled?: boolean;
+    visual_streaming_enabled?: boolean;
+    session_id?: string;
+    execution_id?: string;
   }>;
   getWorkflowCategory(timestamp: number): string;
   addWorkflow(name: string, content: string): Promise<void>;
@@ -74,6 +77,8 @@ class WorkflowServiceImpl implements WorkflowService {
         ...(step.selectedText !== undefined && { selectedText: step.selectedText }),
         ...(step.value !== undefined && { value: step.value }),
         ...(step.task !== undefined && { task: step.task }),
+        ...(step.content !== undefined && { content: step.content }),
+        ...(step.timeoutMs !== undefined && { timeoutMs: step.timeoutMs }),
       })) || [],
       // Normalize input_schema to ensure required field is always boolean
       input_schema: workflow.input_schema?.map((input: any) => ({
@@ -313,6 +318,7 @@ class WorkflowServiceImpl implements WorkflowService {
     visual_enabled?: boolean;
     visual_streaming_enabled?: boolean;
     session_id?: string;
+    execution_id?: string;
   }> {
     const inputs: any = {};
     inputFields.forEach((field) => {
@@ -358,6 +364,7 @@ class WorkflowServiceImpl implements WorkflowService {
           visual_enabled?: boolean;
           visual_streaming_enabled?: boolean;
           session_id?: string;
+          execution_id?: string;
         }>(endpoint, {
           method: 'POST',
           body: JSON.stringify(requestBody),
@@ -372,6 +379,7 @@ class WorkflowServiceImpl implements WorkflowService {
           visual_enabled: data.visual_enabled,
           visual_streaming_enabled: data.visual_streaming_enabled,
           session_id: data.session_id,
+          execution_id: (data as any).execution_id,
           message: data.message
         });
         return data;
