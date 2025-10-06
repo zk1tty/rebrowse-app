@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BrowserFactory: Single responsibility browser lifecycle management
+BrowserFactory: Browser lifecycle management
 
 This class provides clean browser creation and management, replacing the scattered
 browser creation patterns throughout the codebase.
@@ -19,6 +19,9 @@ What it DOESN'T do:
 
 import asyncio
 import logging
+import os
+import shutil
+import tempfile
 from typing import Optional, Tuple, Callable, Dict, Any, List
 from browser_use import Browser
 from browser_use.browser import BrowserProfile
@@ -50,7 +53,8 @@ class BrowserFactory:
         session_id: str, 
         event_callback: Optional[Callable] = None,
         user_id: Optional[str] = None,
-        headless: bool = True
+        headless: bool = True,
+        storage_state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Browser, RRWebRecorder]:
         """
         Create a browser with rrweb recording capability.
@@ -74,8 +78,25 @@ class BrowserFactory:
         logger.info(f"Creating browser with rrweb for session {session_id} (mode: {mode})")
         
         try:
-            # Step 1: Create browser instance
-            browser = await self._create_browser_instance(
+            # Critical: Pre-launch Clean-up
+            # Extra hardening: proactively remove any lingering Chromium singleton locks for this session
+            try:
+                from .profile_manager import profile_manager as _pm
+                session_dir = _pm.get_session_dir(session_id)
+                # Kill any lingering Chromium processes referencing this session dir (pre-launch hardening)
+                try:
+                    killed = _pm.kill_chromium_processes_for_dir(session_dir)
+                    if killed:
+                        logger.info(f"Killed {killed} Chromium processes for session {session_id} pre-launch")
+                except Exception:
+                    pass
+                # Remove lock artifacts
+                _pm._remove_chromium_singleton_locks(session_dir)
+            except Exception:
+                pass
+
+            # Step 1: Create browser instance (with fallback if profile is locked/EAGAIN)
+            browser, temp_profile_dir = await self._create_browser_instance(
                 session_id=session_id,
                 user_id=user_id,
                 headless=headless
@@ -83,6 +104,14 @@ class BrowserFactory:
             
             # Step 2: Get the browser page
             page = await self._get_browser_page(browser, session_id)
+
+            # Step 2.5: Apply storage state (cookies + localStorage init) if provided
+            if storage_state:
+                try:
+                    await self._apply_storage_state(page, storage_state)
+                    logger.info(f"Applied storage state for session {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to apply storage state for session {session_id}: {e}")
             
             # Step 3: Show screensaver (for visual modes)
             if mode == 'visual':
@@ -104,7 +133,9 @@ class BrowserFactory:
                 'browser': browser,
                 'recorder': recorder,
                 'mode': mode,
-                'created_at': asyncio.get_event_loop().time()
+                'created_at': asyncio.get_event_loop().time(),
+                # Track any temporary fallback profile for cleanup
+                'temp_profile_dir': temp_profile_dir,
             }
             
             logger.info(f"✅ Browser+Recorder created successfully for session {session_id}")
@@ -115,6 +146,64 @@ class BrowserFactory:
             # Clean up any partial state
             await self._cleanup_failed_creation(session_id)
             raise RuntimeError(f"Browser creation failed for session {session_id}: {e}")
+
+    async def _apply_storage_state(self, page: Page, storage_state: Dict[str, Any]) -> None:
+        """Apply cookies and localStorage-like values to the current context/page.
+
+        Notes:
+        - Use storage_state.json
+        - Cookies are applied directly to the context.
+        - localStorage values are applied via an init script that sets items when the
+          page origin matches.
+        """
+        # Apply cookies
+        cookies: List[Dict[str, Any]] = []
+        for c in storage_state.get('cookies', []):
+            try:
+                cookie: Dict[str, Any] = {
+                    'name': c['name'],
+                    'value': c['value'],
+                    'domain': c.get('domain', ''),
+                    'path': c.get('path', '/'),
+                    'expires': c.get('expires', 0),
+                    'httpOnly': c.get('httpOnly', False),
+                    'secure': c.get('secure', True),
+                }
+                # sameSite is optional; include only if present and valid
+                if 'sameSite' in c and c['sameSite'] in ['Lax', 'Strict', 'None']:
+                    cookie['sameSite'] = c['sameSite']
+                cookies.append(cookie)
+            except KeyError:
+                continue
+
+        if cookies:
+            await page.context.add_cookies(cookies)
+
+        # Prepare localStorage init mapping
+        origin_to_kv: Dict[str, Dict[str, str]] = {}
+        for origin_entry in storage_state.get('origins', []):
+            origin = origin_entry.get('origin')
+            kv_list = origin_entry.get('localStorage', []) or []
+            if origin and isinstance(kv_list, list) and kv_list:
+                origin_to_kv[origin] = {item.get('name'): item.get('value') for item in kv_list if 'name' in item and 'value' in item}
+
+        if origin_to_kv:
+            # Inject an init script that sets localStorage for matching origin as early as possible
+            import json as _json
+            mapping_json = _json.dumps(origin_to_kv)
+            script = f"""
+                (() => {{
+                    try {{
+                        const mapping = {mapping_json};
+                        const ls = mapping[location.origin];
+                        if (!ls) return;
+                        for (const [k, v] of Object.entries(ls)) {{
+                            try {{ localStorage.setItem(k, String(v)); }} catch {{}}
+                        }}
+                    }} catch {{}}
+                }})();
+            """
+            await page.context.add_init_script(script=script)
     
     async def create_browser_only(
         self,
@@ -140,7 +229,7 @@ class BrowserFactory:
         
         try:
             # Create browser instance
-            browser = await self._create_browser_instance(
+            browser, temp_profile_dir = await self._create_browser_instance(
                 session_id=session_id,
                 user_id=user_id,
                 headless=headless
@@ -151,7 +240,8 @@ class BrowserFactory:
                 'browser': browser,
                 'recorder': None,
                 'mode': 'browser_only',
-                'created_at': asyncio.get_event_loop().time()
+                'created_at': asyncio.get_event_loop().time(),
+                'temp_profile_dir': temp_profile_dir,
             }
             
             logger.info(f"✅ Browser-only created successfully for session {session_id}")
@@ -193,7 +283,16 @@ class BrowserFactory:
                 await browser.close()
                 logger.debug(f"Browser closed for session {session_id}")
             
-            # Clean up profile
+            # Clean up any temporary fallback profile created by retry logic
+            temp_profile_dir = session_info.get('temp_profile_dir')
+            if temp_profile_dir and isinstance(temp_profile_dir, str):
+                try:
+                    shutil.rmtree(temp_profile_dir, ignore_errors=True)
+                    logger.debug(f"Removed temporary profile directory: {temp_profile_dir}")
+                except Exception:
+                    pass
+
+            # Clean up profile and remove any Chromium singleton locks
             profile_manager.cleanup_session(session_id)
             logger.debug(f"Profile cleaned up for session {session_id}")
             
@@ -246,7 +345,7 @@ class BrowserFactory:
         session_id: str,
         user_id: Optional[str] = None,
         headless: bool = True
-    ) -> Browser:
+    ) -> Tuple[Browser, Optional[str]]:
         """
         Create the actual browser instance with profile.
         
@@ -274,12 +373,83 @@ class BrowserFactory:
             # Start the browser
             await browser.start()
             logger.debug(f"Browser instance created and started for session {session_id}")
-            
-            return browser
+            # No temp profile was needed
+            return browser, None
             
         except Exception as e:
-            logger.error(f"Failed to create browser instance for session {session_id}: {e}")
-            raise RuntimeError(f"Browser instance creation failed: {e}")
+            # First attempt failed; check if it's a lock/resource error and retry with a fresh temp profile
+            err_text = str(e)
+            logger.warning(f"Primary browser start failed for session {session_id}: {err_text}")
+
+            # Post-failure cleanup: kill lingering processes and remove locks for the session dir
+            try:
+                session_dir = profile_manager.get_session_dir(session_id)
+                try:
+                    killed = profile_manager.kill_chromium_processes_for_dir(session_dir)
+                    if killed:
+                        logger.info(f"Killed {killed} Chromium processes for session {session_id} after failed start")
+                except Exception:
+                    pass
+                profile_manager._remove_chromium_singleton_locks(session_dir)
+            except Exception:
+                pass
+
+            should_retry = False
+            try:
+                import errno as _errno
+                # EAGAIN (11) indicates resource temporarily unavailable
+                if getattr(e, 'errno', None) in (_errno.EAGAIN, 11):
+                    should_retry = True
+            except Exception:
+                pass
+
+            lock_indicators = [
+                'Resource temporarily unavailable',
+                'Profile at',
+                'is locked',
+                'Chrome subprocess failed to start',
+                'timeout',
+            ]
+            if any(s in err_text for s in lock_indicators):
+                should_retry = True
+
+            if not should_retry:
+                logger.error(f"Failed to create browser instance for session {session_id}: {e}")
+                raise RuntimeError(f"Browser instance creation failed: {e}")
+
+            # Retry path: create a fresh temporary user_data_dir to bypass lock
+            temp_profile_dir = tempfile.mkdtemp(prefix="browseruse-tmp-singleton-")
+            logger.warning(
+                f"Retrying browser start for session {session_id} with temporary profile: {temp_profile_dir}"
+            )
+
+            try:
+                # Refresh config and override user_data_dir
+                retry_config = dict(config)
+                retry_config['user_data_dir'] = temp_profile_dir
+                # Preserve key stability flags; ensure headless parameter stays as requested
+                retry_config['headless'] = headless
+
+                retry_profile = BrowserProfile(**retry_config)
+                retry_browser = Browser(browser_profile=retry_profile)
+                await retry_browser.start()
+                logger.info(
+                    f"Browser started successfully on retry with temporary profile for session {session_id}"
+                )
+                return retry_browser, temp_profile_dir
+            except Exception as retry_err:
+                # Cleanup temp dir if retry also failed
+                try:
+                    shutil.rmtree(temp_profile_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                logger.error(
+                    f"Retry with temporary profile failed for session {session_id}: {retry_err}"
+                )
+                raise RuntimeError(
+                    f"Browser instance creation failed (including retry with fresh temp profile). "
+                    f"Original error: {err_text}. Retry error: {retry_err}"
+                )
     
     async def _get_browser_page(self, browser: Browser, session_id: str) -> Page:
         """

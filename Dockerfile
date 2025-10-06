@@ -3,21 +3,27 @@ FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:99
 ENV RAILWAY_ENVIRONMENT=production
 ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV CHROME_DEVEL_SANDBOX=/usr/bin/chromium-browser
 ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 # Install system dependencies including build tools
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
-    xvfb \
     fonts-liberation \
     fonts-dejavu-core \
     fontconfig \
+    fonts-unifont \
+    libgbm1 \
+    libglib2.0-0 \
+    libnspr4 \
+    libxfixes3 \
+    libxext6 \
+    libxkbcommon0 \
+    libxshmfence1 \
+    libu2f-udev \
+    libdrm2 \
+    xdg-utils \
     ca-certificates \
     build-essential \
     gcc \
@@ -63,7 +69,7 @@ RUN pip install typer==0.16.0
 RUN pip install gotrue==2.12.0
 RUN pip install PyJWT==2.10.1
 RUN pip install python-dotenv==1.1.0
-RUN pip install browser-use==0.2.7
+RUN pip install browser-use==0.5.11
 RUN pip install langchain-openai==0.3.21
 RUN pip install langchain-core==0.3.64
 RUN pip install langchain==0.3.25
@@ -76,14 +82,18 @@ RUN pip install psutil==7.0.0
 RUN pip install asyncio-mqtt==0.16.2
 RUN pip install python-json-logger==3.3.0
 RUN pip install "pydantic[email]==2.11.7"
+RUN pip install redis==5.0.8
 
 # Install Playwright and browsers (CRITICAL for browser-use)
 RUN pip install playwright==1.52.0
 RUN playwright install chromium
-RUN playwright install-deps chromium
 
 # Copy application code
 COPY . .
+
+# Ensure rrweb vendor bundle is available in the container and set path
+# The repo includes workflow_use/rrweb/vendor/rrweb.min.js
+ENV RRWEB_BUNDLE_PATH=/app/workflow_use/rrweb/vendor/rrweb.min.js
 
 # Create tmp directory for workflows
 RUN mkdir -p tmp/logs
@@ -94,6 +104,6 @@ RUN chmod +x verify_playwright.py
 # Expose port (Railway will set PORT env var)
 EXPOSE $PORT
 
-# Start command with virtual display and dynamic port
+# Start command without Xvfb (Chromium runs headless)
 # Run verification before starting the server (continues even with warnings)
-CMD python verify_playwright.py && xvfb-run -a -s '-screen 0 1920x1080x24' python -m uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-8000} 
+CMD python verify_playwright.py && python -m uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}

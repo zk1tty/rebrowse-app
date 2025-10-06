@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  wf-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - RAILWAY_ENVIRONMENT=production
+      - DISPLAY=:99
+    volumes:
+      - ./tmp:/app/tmp
+    restart: unless-stopped 

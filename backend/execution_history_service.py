@@ -73,6 +73,18 @@ class WorkflowExecutionHistoryService:
         except Exception as e:
             logger.error(f"Failed to create execution record: {e}")
             raise Exception(f"Failed to create execution record: {str(e)}")
+
+    def link_execution_task(self, execution_id: str, task_id: str) -> None:
+        """Link an active execution to its running task_id for termination controls."""
+        try:
+            if execution_id in self.active_executions:
+                self.active_executions[execution_id]["task_id"] = task_id
+        except Exception:
+            pass
+
+    def get_active_execution(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single active execution by id, if running."""
+        return self.active_executions.get(execution_id)
     
     async def update_execution_status(
         self,
