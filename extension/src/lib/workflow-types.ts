@@ -15,7 +15,8 @@ export type Step =
   | KeyPressStep
   | ScrollStep
   | ClipboardCopyStep
-  | ClipboardPasteStep;
+  | ClipboardPasteStep
+  | ClickToCopyStep;
 // Add other step types here as needed, e.g., SelectStep, TabCreatedStep etc.
 
 export interface BaseStep {
@@ -93,6 +94,17 @@ export interface ClipboardPasteStep extends BaseStep {
   elementTag?: string;
   elementText?: string;
   content?: string; // The content that was pasted (optional)
+  screenshot?: string;
+}
+
+export interface ClickToCopyStep extends BaseStep {
+  type: "click_to_copy";
+  url: string;
+  frameUrl?: string;
+  cssSelector: string;
+  output: string; // clipboard text captured after click
+  timeoutMs?: number;
+  description?: string;
   screenshot?: string;
 }
 

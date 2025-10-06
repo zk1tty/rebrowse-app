@@ -26,12 +26,13 @@ export default defineConfig({
       "downloads",
     ],
     host_permissions: [
-      // "<all_urls>", Over-prriviraged
+      // "<all_urls>", TODO: Consider removing this
       "http://127.0.0.1:8000/*", // VITE_API_URL (backend)
       "http://localhost:5173/*", // VITE_APP_ORIGIN (example)
       "https://*.supabase.co/*",   // VITE_SUPABASE_URL
     ],
-    // TODO: Request per-site access at runtime (user approved). We include the SNS origins
+    // TODO: Request per-site access at runtime (user approved). 
+    // We include the SNS origins
     // and allow dynamic domains via https wildcard for the "Others" field.
     optional_host_permissions: [
       "https://x.com/*",

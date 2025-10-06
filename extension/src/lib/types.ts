@@ -51,6 +51,16 @@ export interface StoredCustomKeyEvent {
   screenshot?: string;
 }
 
+export interface StoredCustomClickToCopyEvent {
+  timestamp: number;
+  url: string;
+  frameUrl: string;
+  cssSelector: string;
+  output: string;
+  tabId: number;
+  messageType: "CUSTOM_CLICK_TO_COPY";
+}
+
 export interface StoredTabEvent {
   timestamp: number;
   tabId: number;
@@ -81,6 +91,7 @@ export type StoredEvent =
   | StoredCustomInputEvent
   | StoredCustomSelectEvent
   | StoredCustomKeyEvent
+  | StoredCustomClickToCopyEvent
   | StoredTabEvent
   | StoredRrwebEvent;
 

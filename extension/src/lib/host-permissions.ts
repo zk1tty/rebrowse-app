@@ -24,8 +24,9 @@ export const checkOrigins = async (origins: string[]): Promise<PermissionCheckRe
   const required = toUniqueSorted(origins);
   const grantedOrigins = await getAllGrantedOrigins();
   const grantedSet = new Set(grantedOrigins);
-  const hasAllUrls = grantedSet.has('<all_urls>') || (grantedSet.has('https://*/*') && grantedSet.has('http://*/*'));
-  const isGranted = (origin: string) => hasAllUrls || grantedSet.has(origin);
+  // IMPORTANT: Do NOT treat '<all_urls>' or protocol wildcards as sufficient for privileged APIs
+  // like chrome.cookies. We require explicit host grants for each origin we plan to access.
+  const isGranted = (origin: string) => grantedSet.has(origin);
   const granted = required.filter((o) => isGranted(o));
   const missing = required.filter((o) => !isGranted(o));
   return { required, granted, missing };

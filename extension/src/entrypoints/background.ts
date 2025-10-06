@@ -428,6 +428,25 @@ export default defineBackground(() => {
         // RRWEB_EVENT type 4 (Meta) or 3 (FullSnapshot) could potentially map to NavigationStep if needed.
 
         default:
+          if ((event as any).messageType === 'CUSTOM_CLICK_TO_COPY') {
+            const ev: any = event as any;
+            if (ev.url && ev.cssSelector) {
+              const step: any = {
+                type: "click_to_copy",
+                timestamp: ev.timestamp,
+                tabId: (ev as any).tabId || 0,
+                url: ev.url,
+                frameUrl: ev.frameUrl,
+                cssSelector: ev.cssSelector,
+                output: ev.output || '',
+              };
+              steps.push(step);
+              break;
+            } else {
+              console.warn("Skipping incomplete CUSTOM_CLICK_TO_COPY:", ev);
+              break;
+            }
+          }
           // Ignore other event types for now
           // console.log("Ignoring event type:", event.messageType);
           break;
@@ -439,11 +458,17 @@ export default defineBackground(() => {
 
   // --- Message Handlers & Dispatcher ---
 
-    const customEventTypes = [
+    const customEventTypes: ReadonlyArray<string> = [
       "CUSTOM_CLICK_EVENT",
       "CUSTOM_INPUT_EVENT",
       "CUSTOM_SELECT_EVENT",
       "CUSTOM_KEY_EVENT",
+      "CUSTOM_CLICK_TO_COPY",
+      "RRWEB_EVENT",
+      "CUSTOM_TAB_CREATED",
+      "CUSTOM_TAB_UPDATED",
+      "CUSTOM_TAB_ACTIVATED",
+      "CUSTOM_TAB_REMOVED",
     ];
 
   const handleContentEvent = (type: string, message: any, sender: chrome.runtime.MessageSender) => {
@@ -465,8 +490,8 @@ export default defineBackground(() => {
       broadcastWorkflowDataUpdate();
       };
 
-    const isCustom = customEventTypes.includes(type);
-    if (isCustom && sender.tab?.windowId) {
+    const isCustom = type === 'RRWEB_EVENT' || type.startsWith('CUSTOM_');
+    if (isCustom && sender.tab?.windowId && type !== 'CUSTOM_CLICK_TO_COPY') {
         chrome.tabs.captureVisibleTab(
           sender.tab.windowId,
           { format: "jpeg", quality: 75 },
@@ -479,6 +504,11 @@ export default defineBackground(() => {
             }
           }
         );
+      return false;
+    }
+    if (type === 'CUSTOM_CLICK_TO_COPY') {
+      // For click_to_copy, do not attempt screenshot; just store
+      storeEvent(message.payload);
       return false;
     }
     if (type === "RRWEB_EVENT") {
@@ -530,6 +560,15 @@ export default defineBackground(() => {
     try {
       const { requestId, sites = [], others = [] } = message.payload || {};
       console.log("[CookieSync] START received:", { requestId, sites, others });
+      try {
+        const granted = await (async () => {
+          try {
+            const all = await chrome.permissions.getAll();
+            return all?.origins || [];
+          } catch { return []; }
+        })();
+        console.log('[CookieSync] currently granted origins:', granted);
+      } catch {}
       sendResponse({ ok: true });
       const allTargets: string[] = [...sites, ...others.map((d: string) => `other:${d}`)];
 
@@ -553,24 +592,26 @@ export default defineBackground(() => {
             const domain = siteId.split(':', 2)[1];
             const origins = buildHostPermissionPatternsForDomain(domain);
             const perm = await checkOrigins(origins);
+            console.log('[CookieSync] permission check (other):', { siteId, origins, missing: perm.missing, granted: perm.granted });
             if (perm.missing?.length) {
               const msg = 'Permission not granted';
               const deniedMsg: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: 'failed', lastUpdated: Date.now(), message: msg } } };
               chrome.runtime.sendMessage(deniedMsg).catch(() => {});
               await persistStatus(siteId, 'failed', msg);
-              return { siteId, ok: false };
+              return { siteId, ok: false, message: msg };
             }
           } else {
             const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
             if (isCookieSiteId(siteId)) {
               const origins = getSiteHostPermissions(siteId);
               const perm = await checkOrigins(origins);
+              console.log('[CookieSync] permission check (site):', { siteId, origins, missing: perm.missing, granted: perm.granted });
               if (perm.missing?.length) {
                 const msg = 'Permission not granted';
                 const deniedMsg: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: 'failed', lastUpdated: Date.now(), message: msg } } };
                 chrome.runtime.sendMessage(deniedMsg).catch(() => {});
                 await persistStatus(siteId, 'failed', msg);
-                return { siteId, ok: false };
+                return { siteId, ok: false, message: msg };
               }
             }
           }
@@ -579,16 +620,44 @@ export default defineBackground(() => {
         try {
           if (siteId.startsWith('other:')) {
             const domain = siteId.split(':', 2)[1];
-            const list1 = await chrome.cookies.getAll({ domain });
-            const list2 = await chrome.cookies.getAll({ domain: `.${domain}` });
-            cookies = [...(list1 || []), ...(list2 || [])];
+            // Prefer URL-based queries (more reliable permission checks) and fall back to domain
+            const hostsToTry = Array.from(new Set([
+              domain.replace(/^\./, ''),
+              `www.${domain.replace(/^\./, '')}`,
+            ]));
+            const byUrl: chrome.cookies.Cookie[] = [];
+            for (const h of hostsToTry) {
+              try { const list = await chrome.cookies.getAll({ url: `https://${h}/` }); if (list?.length) byUrl.push(...list); } catch {}
+            }
+            if (byUrl.length) {
+              cookies = byUrl;
+              console.log('[CookieSync] collected cookies (other/url):', siteId, { count: cookies.length, urlsTried: hostsToTry.map((h) => `https://${h}/`) });
+            } else {
+              const list1 = await chrome.cookies.getAll({ domain });
+              const list2 = await chrome.cookies.getAll({ domain: `.${domain}` });
+              cookies = [...(list1 || []), ...(list2 || [])];
+              console.log('[CookieSync] collected cookies (other/domain):', siteId, { count: cookies.length, domainsTried: [domain, `.${domain}`] });
+            }
           } else {
             const isCookieSiteId = (v: any): v is import('../lib/cookie-sites').CookieSiteId => (Object.keys(COOKIE_SITES) as string[]).includes(String(v));
             if (isCookieSiteId(siteId)) {
               const domains = COOKIE_SITES[siteId].cookieDomains;
-              for (const d of domains) {
-                const list = await chrome.cookies.getAll({ domain: d });
-                if (list?.length) cookies.push(...list);
+              // Try URL-based lookups first
+              const hosts = Array.from(new Set(domains.map((d) => String(d).replace(/^\./, ''))));
+              const urls = Array.from(new Set([...hosts, ...hosts.map((h) => (h.startsWith('www.') ? h : `www.${h}`))]));
+              const byUrl: chrome.cookies.Cookie[] = [];
+              for (const h of urls) {
+                try { const list = await chrome.cookies.getAll({ url: `https://${h}/` }); if (list?.length) byUrl.push(...list); } catch {}
+              }
+              if (byUrl.length) {
+                cookies = byUrl;
+                console.log('[CookieSync] collected cookies (site/url):', siteId, { count: cookies.length, urlsTried: urls.map((h) => `https://${h}/`) });
+              } else {
+                for (const d of domains) {
+                  const list = await chrome.cookies.getAll({ domain: d });
+                  if (list?.length) cookies.push(...list);
+                }
+                console.log('[CookieSync] collected cookies (site/domain):', siteId, { count: cookies.length, domainsTried: domains });
               }
             }
           }
@@ -604,11 +673,11 @@ export default defineBackground(() => {
         const progressEnd: CookieSyncProgressMessage = { type: 'COOKIE_SYNC_PROGRESS', payload: { requestId, site: { siteId, status: ok ? 'success' : 'failed', lastUpdated: Date.now(), message: msgText } } };
         chrome.runtime.sendMessage(progressEnd).catch(() => {});
         await persistStatus(siteId, ok ? 'success' : 'failed', msgText);
-        return { siteId, ok };
+        return { siteId, ok, message: msgText };
       };
 
       const results = await Promise.all(allTargets.map(runForTarget));
-      const done: CookieSyncDoneMessage = { type: 'COOKIE_SYNC_DONE', payload: { requestId, results: results.map((r) => ({ siteId: r.siteId, status: r.ok ? 'success' : 'failed', lastUpdated: Date.now() })) } };
+      const done: CookieSyncDoneMessage = { type: 'COOKIE_SYNC_DONE', payload: { requestId, results: results.map((r) => ({ siteId: r.siteId, status: r.ok ? 'success' : 'failed', lastUpdated: Date.now(), message: (r as any).message })) } };
       chrome.runtime.sendMessage(done).catch(() => {});
     } catch (err) {
       console.error('[CookieSync] START handler failed:', err);
@@ -618,6 +687,7 @@ export default defineBackground(() => {
     }
   };
 
+  // --- Cookie sync & cookies ---
   const handleGetSiteCookies = (message: any, _sender: any, sendResponse: (res: any) => void) => {
     (async () => {
       try {
@@ -628,7 +698,11 @@ export default defineBackground(() => {
         if (isCookieSiteId(siteId)) queryDomains = COOKIE_SITES[siteId].cookieDomains; else if (domain) { const d = domain.trim().toLowerCase(); queryDomains = [d, `.${d}`]; }
         const allCookies: chrome.cookies.Cookie[] = [];
         for (const d of queryDomains) { const list = await chrome.cookies.getAll({ domain: d, storeId }); if (list && list.length) allCookies.push(...list); }
-        console.log(`[CookieFetch] ${siteKey} -> ${allCookies.length} cookies`, allCookies);
+        console.log(`[CookieFetch] ${siteKey} -> ${allCookies.length} cookies`);
+        try {
+          const namesPreview = Array.from(new Set(allCookies.map((c) => c.name))).slice(0, 50);
+          console.log(`[CookieFetch] ${siteKey} cookie names:`, namesPreview);
+        } catch {}
         sendResponse({ ok: true, siteKey, cookies: allCookies });
       } catch (e) {
         console.error('[CookieFetch] failed:', e);
@@ -647,7 +721,18 @@ export default defineBackground(() => {
         for (const s of sites) { if (isCookieSiteId(s)) targets.push({ key: s, domains: COOKIE_SITES[s].cookieDomains }); }
         for (const dRaw of others) { const d = String(dRaw).trim().toLowerCase(); if (!d) continue; targets.push({ key: `other:${d}`, domains: [d, `.${d}`] }); }
         const collected: chrome.cookies.Cookie[] = [];
-        for (const t of targets) { for (const dom of t.domains) { const list = await chrome.cookies.getAll({ domain: dom, storeId }); if (list?.length) collected.push(...list); } }
+        for (const t of targets) {
+          // Try URL-based first for each target's domains
+          const hosts = Array.from(new Set(t.domains.map((d) => String(d).replace(/^\./, ''))));
+          const urls = Array.from(new Set([...hosts, ...hosts.map((h) => (h.startsWith('www.') ? h : `www.${h}`))]));
+          let any = false;
+          for (const h of urls) {
+            try { const list = await chrome.cookies.getAll({ url: `https://${h}/`, storeId }); if (list?.length) { collected.push(...list); any = true; } } catch {}
+          }
+          if (!any) {
+            for (const dom of t.domains) { const list = await chrome.cookies.getAll({ domain: dom, storeId }); if (list?.length) collected.push(...list); }
+          }
+        }
         const { cookies: cookiesOut } = mapChromeCookiesToPlaywright(collected);
 
         // Validate presence of required cookies before writing the file; if any selected site is missing its required cookies,

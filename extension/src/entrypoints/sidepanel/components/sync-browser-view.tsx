@@ -2,11 +2,11 @@ import React from 'react';
 import { useWorkflow } from '../context/workflow-provider';
 import { Button } from '@/components/ui/button';
 import { COOKIE_SITES, CookieSiteId, SITE_ICON_LABELS } from '@/lib/cookie-sites';
-import { ensureSitePermissions, ensureOrigins } from '@/lib/host-permissions';
+import { ensureSitePermissions, ensureOrigins, getSiteHostPermissions } from '@/lib/host-permissions';
 import { normalizeDomain } from '@/lib/domain-normalizer';
 import { ensureAuth } from '@/lib/auth';
 import type { CookieSyncStatus } from '@/lib/message-bus-types';
-import { CheckCircle2, XCircle, Clock, CircleDot, Cookie, Cloud } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, CircleDot, Cookie, Cloud, CloudUpload, Download, FileKey, RefreshCcw } from 'lucide-react';
 
 type SiteProgress = {
   status: CookieSyncStatus;
@@ -27,6 +27,7 @@ const SyncBrowserView: React.FC = () => {
   const [statuses, setStatuses] = React.useState<Record<string, SiteProgress>>({});
   const [toast, setToast] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uploading, setUploading] = React.useState<boolean>(false);
+  // removed granting state; we now grant at the start of startSync
 
   const formatTime = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString() : '-');
 
@@ -62,7 +63,15 @@ const SyncBrowserView: React.FC = () => {
         const results = message.payload.results as Array<{ siteId: string; status: CookieSyncStatus; lastUpdated: number; message?: string }>;
         setStatuses((prev) => {
           const merged = { ...prev } as Record<string, SiteProgress>;
-          results.forEach((r) => { merged[r.siteId] = { status: r.status, lastUpdated: r.lastUpdated, message: r.message } as SiteProgress; });
+          results.forEach((r) => {
+            const prior = merged[r.siteId];
+            merged[r.siteId] = {
+              status: r.status,
+              lastUpdated: r.lastUpdated,
+              // prefer DONE message if present; otherwise keep prior message (from PROGRESS/persist)
+              message: r.message !== undefined ? r.message : prior?.message,
+            } as SiteProgress;
+          });
           return merged;
         });
       }
@@ -98,6 +107,16 @@ const SyncBrowserView: React.FC = () => {
   }, [othersInput]);
 
   const startSync = async () => {
+    // 0) Grant all site access upfront (previously separate button)
+    try {
+      const allOrigins = Array.from(new Set(selectedSites.flatMap((id) => getSiteHostPermissions(id))));
+      const res = await ensureOrigins(allOrigins, { interactive: true });
+      const denied = 'denied' in res ? res.denied : res.missing;
+      if (denied && denied.length) {
+        setToast({ type: 'error', message: `Permission denied for: ${denied.slice(0, 3).join(', ')}${denied.length > 3 ? '…' : ''}` });
+        setTimeout(() => setToast(null), 2500);
+      }
+    } catch {}
     const rid = (crypto?.randomUUID && crypto.randomUUID()) || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setRequestId(rid);
 
@@ -111,7 +130,7 @@ const SyncBrowserView: React.FC = () => {
     const grantedSites: CookieSiteId[] = [];
     for (const id of selectedSites) {
       try {
-        const perm = await ensureSitePermissions(id, { interactive: true });
+        const perm = await ensureSitePermissions(id, { interactive: false });
         const denied = 'denied' in perm ? perm.denied : perm.missing;
         if (denied && denied.length) {
           setStatuses((prev) => ({ ...prev, [id]: { status: 'failed', lastUpdated: Date.now(), message: 'Permission denied' } }));
@@ -158,6 +177,8 @@ const SyncBrowserView: React.FC = () => {
     });
   };
 
+  // removed separate grantAllSiteAccess function; logic now runs at start of startSync
+
   const uploadToCloud = async () => {
     try {
       setUploading(true);
@@ -170,31 +191,55 @@ const SyncBrowserView: React.FC = () => {
           payload: { sites: selectedSites, others }
         }, (r: any) => resolve(r));
       });
-      if (!resp?.ok) { console.error('[SyncBrowserView] BUILD_COOKIES_JSON failed:', resp?.error); return; }
+      if (!resp?.ok) {
+        console.error('[SyncBrowserView] BUILD_COOKIES_JSON failed:', resp?.error);
+        setToast({ type: 'error', message: 'Build cookies JSON failed' });
+        setTimeout(() => setToast(null), 2500);
+        setUploading(false);
+        return;
+      }
       const payloadJson = resp.json as string;
 
       // 2) Get one-time token from backend using Supabase access token
       const accessToken = await ensureAuth();
       let ott = '';
       try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
         const res = await fetch(`${import.meta.env.VITE_API_URL}/auth/ott`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${accessToken}` },
+          signal: controller.signal as any,
         });
+        clearTimeout(timer);
         if (!res.ok) throw new Error(`OTT mint failed: ${res.status}`);
         const data = await res.json();
         ott = data?.ott;
         if (!ott) throw new Error('OTT not returned');
       } catch (e) {
         console.error('[SyncBrowserView] mint OTT failed:', e);
+        setToast({ type: 'error', message: 'OTT request failed' });
+        setTimeout(() => setToast(null), 2500);
+        setUploading(false);
         return;
       }
 
       // 3) Upload encrypted
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        console.error('[SyncBrowserView] UPLOAD_COOKIES_ENCRYPTED timed out');
+        setToast({ type: 'error', message: 'Upload timed out' });
+        setTimeout(() => setToast(null), 2500);
+        setUploading(false);
+      }, 25000);
+
       chrome.runtime.sendMessage({
         type: 'UPLOAD_COOKIES_ENCRYPTED',
         payload: { payloadJson, ott, sites: selectedSites }
       }, (uploadResp: any) => {
+        if (timedOut) return;
+        clearTimeout(timeoutId);
         if (chrome.runtime.lastError) {
           console.error('[SyncBrowserView] UPLOAD_COOKIES_ENCRYPTED lastError:', chrome.runtime.lastError.message);
           setToast({ type: 'error', message: 'Upload failed' });
@@ -252,7 +297,7 @@ const SyncBrowserView: React.FC = () => {
         </div>
       )}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Website list to sync with cloud browser</h2>
+        <h2 className="text-lg font-semibold">Sync Cookies with Cloud Browsers</h2>
         <button
           className="text-sm text-gray-600 hover:text-black"
           onClick={goHomeView}
@@ -390,10 +435,19 @@ const SyncBrowserView: React.FC = () => {
 
       <div className="pt-2 flex items-center gap-3">
         <Button onClick={startSync} className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-lg font-medium">
-          Start sync
+          <span className="inline-flex items-center gap-2">
+            <RefreshCcw className="w-4 h-4" />
+            <span>Start sync</span>
+          </span>
         </Button>
+      </div>
+
+      <div className="pt-2 flex items-center gap-3">
         <Button onClick={uploadToCloud} className="bg-black hover:bg-gray-800 text-white px-6 py-2 rounded-lg font-medium">
-          Upload to cloud
+          <span className="inline-flex items-center gap-2">
+            <CloudUpload className="w-4 h-4" />
+            <span>Upload to cloud</span>
+          </span>
         </Button>
         <Button
           onClick={() => {
@@ -410,7 +464,10 @@ const SyncBrowserView: React.FC = () => {
           }}
           className="bg-white text-black border border-gray-300 hover:bg-gray-50 px-6 py-2 rounded-lg font-medium"
         >
-          Download JSON
+          <span className="inline-flex items-center gap-2">
+            <Download className="w-4 h-4" />
+            <span>Download JSON</span>
+          </span>
         </Button>
       </div>
     </div>

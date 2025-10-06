@@ -173,16 +173,6 @@ export const InitialView: React.FC = () => {
               </span>
             </Button>
           </div>
-          <Button 
-            onClick={startRecording}
-            className="bg-red-500 hover:bg-red-800 text-white px-6 py-2 rounded-lg font-medium"
-            size="lg"
-          >
-            <span className="flex items-center gap-2">
-              <span className="w-3 h-3 bg-white rounded-full"></span>
-              Start Recording
-            </span>
-          </Button>
           <div className="pt-2">
             <Button
               onClick={openSyncView}
@@ -191,7 +181,19 @@ export const InitialView: React.FC = () => {
             >
               <span className="flex items-center gap-2">
                 <RefreshCcw className="w-4 h-4" />
-                Sync browser
+                Sync Browser
+              </span>
+            </Button>
+          </div>
+          <div className="pt-2">
+            <Button 
+              onClick={startRecording}
+              className="bg-red-500 hover:bg-red-800 text-white px-6 py-2 rounded-lg font-medium"
+              size="lg"
+            >
+            <span className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-white rounded-full"></span>
+              Start Recording
               </span>
             </Button>
           </div>
@@ -199,7 +201,7 @@ export const InitialView: React.FC = () => {
       ) : (
         // Not authenticated - show sign in button
         <button
-          className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800 transition-colors"
+          className="bg-black text-white px-5 py-2.5 text-lg rounded hover:bg-gray-600 transition-colors"
           onClick={handleSignIn}
           disabled={signingIn}
         >

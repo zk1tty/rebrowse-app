@@ -256,6 +256,8 @@ function startRecorder() {
     },
     checkoutEveryNms: 10000,
     checkoutEveryNth: 200,
+    // Disable canvas recording to avoid worker usage and base64 blobs
+    recordCanvas: false,
   });
 
   // Add the stop function to window for potential manual cleanup
@@ -264,6 +266,7 @@ function startRecorder() {
   // --- Attach Event Listeners ---
   // Existing custom event listeners
   document.addEventListener("click", handleCustomClick, true);
+  document.addEventListener("click", handleClickToCopy, true);
   document.addEventListener("input", handleInput, true);
   document.addEventListener("change", handleSelectChange, true);
   document.addEventListener("keydown", handleKeydown, true);
@@ -291,6 +294,7 @@ function stopRecorder() {
     
     // Remove all event listeners
     document.removeEventListener("click", handleCustomClick, true);
+  document.removeEventListener("click", handleClickToCopy, true);
     document.removeEventListener("input", handleInput, true);
     document.removeEventListener("change", handleSelectChange, true);
     document.removeEventListener("keydown", handleKeydown, true);
@@ -340,6 +344,47 @@ function handleCustomClick(event: MouseEvent) {
   }
 }
 // --- End Custom Click Handler ---
+
+// --- Click-to-Copy Handler ---
+function handleClickToCopy(event: MouseEvent) {
+  if (!isRecordingActive) return;
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+
+  // Detect copy buttons by common ARIA/labels; adjust as needed
+  const button = target.closest('button[aria-label="Copy"], button[aria-label="Copy text"], [data-testid="copy"], [data-action="copy"]') as HTMLElement | null;
+  if (!button) return;
+
+  try {
+    const xpath = getXPath(button);
+    const cssSelector = getEnhancedCSSSelector(button, xpath);
+
+    // Read clipboard after a microtask to allow the site handler to run
+    setTimeout(async () => {
+      let output = '';
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+          output = await navigator.clipboard.readText();
+        }
+      } catch {}
+      chrome.runtime.sendMessage({
+        type: 'CUSTOM_CLICK_TO_COPY',
+        payload: {
+          timestamp: Date.now(),
+          url: document.location.href,
+          frameUrl: window.location.href,
+          cssSelector,
+          output,
+          timeoutMs: 4000,
+          description: 'Click Copy and capture clipboard'
+        }
+      });
+    }, 10);
+  } catch (e) {
+    console.error('click_to_copy handler failed:', e);
+  }
+}
+// --- End Click-to-Copy Handler ---
 
 // --- Custom Input Handler ---
 function handleInput(event: Event) {

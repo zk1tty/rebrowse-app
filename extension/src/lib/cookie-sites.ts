@@ -21,8 +21,13 @@ export const COOKIE_SITES: Record<CookieSiteId, CookieSite> = {
   x: {
     id: 'x',
     label: 'X',
-    hostPermissions: ['https://x.com/*'],
-    cookieDomains: ['x.com', '.x.com'],
+    hostPermissions: [
+      'https://x.com/*',
+      'https://*.x.com/*',
+      'https://twitter.com/*',
+      'https://*.twitter.com/*',
+    ],
+    cookieDomains: ['x.com', '.x.com', 'twitter.com', '.twitter.com'],
     enabledByDefault: true,
     requiredCookies: ['auth_token'],
     loginUrl: 'https://x.com/login',
