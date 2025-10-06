@@ -273,18 +273,39 @@ class VisualWebSocketManager:
                 'type': 'status',
                 'data': self.get_connection_status(client_id)
             })
-        
-        elif message_type == 'request_buffer':
-            # Request buffered events
+
+        elif message_type == 'sequence_reset_request':
+            # Per-client sequence reset with optional small history replay
+            try:
+                history_window_seconds = float(message.get('history_window_seconds', 3.0))
+            except Exception:
+                history_window_seconds = 3.0
+
             if client_id in self.connections:
-                session_id = self.connections[client_id].session_id
+                connection = self.connections[client_id]
+                session_id = connection.session_id
                 streamer = streaming_manager.get_streamer(session_id)
-                if streamer:
-                    events = streamer.get_buffered_events()
-                    await self.send_to_client(client_id, {
-                        'type': 'buffered_events',
-                        'data': events
-                    })
+                if streamer and hasattr(streamer, 'mark_sequence_reset_for_client'):
+                    try:
+                        streamer.mark_sequence_reset_for_client(connection.websocket, history_window_seconds=history_window_seconds)
+                    except Exception as e:
+                        logger.debug(f"Failed to mark sequence reset state: {e}")
+
+                # Attempt to force a fresh FullSnapshot from recorder (best-effort)
+                try:
+                    from workflow_use.browser.browser_factory import browser_factory
+                    recorder = await browser_factory.get_recorder_for_session(session_id)
+                    if recorder and hasattr(recorder, 'force_full_snapshot'):
+                        _ = await recorder.force_full_snapshot()
+                except Exception as e:
+                    logger.debug(f"force_full_snapshot attempt failed or unavailable: {e}")
+
+                # Acknowledge to client
+                await self.send_to_client(client_id, {
+                    'type': 'sequence_reset_ack',
+                    'session_id': session_id,
+                    'history_window_seconds': history_window_seconds
+                })
         
         else:
             logger.warning(f"Unknown message type from client {client_id}: {message_type}")

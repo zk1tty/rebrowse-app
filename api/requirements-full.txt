@@ -4,7 +4,7 @@ uvicorn[standard]>=0.34.0
 supabase>=2.15.0
 aiofiles>=24.1.0
 aiohttp>=3.12.0
-browser-use>=0.2.4
+browser-use==0.5.11
 fastmcp>=2.3.4
 typer>=0.15.0
 gotrue>=1.0.0

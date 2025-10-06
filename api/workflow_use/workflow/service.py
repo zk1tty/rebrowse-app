@@ -9,11 +9,7 @@ from typing import Any, Dict, List, TypeVar, Optional, Callable
 
 from browser_use import Agent, Browser
 from browser_use.agent.views import ActionResult, AgentHistoryList
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import StructuredTool
+from typing import Any
 from pydantic import BaseModel, create_model
 
 from workflow_use.controller.service import WorkflowController
@@ -33,6 +29,7 @@ from workflow_use.schema.views import (
 )
 from workflow_use.workflow.prompts import STRUCTURED_OUTPUT_PROMPT, WORKFLOW_FALLBACK_PROMPT_TEMPLATE
 from workflow_use.workflow.views import WorkflowRunOutput
+from backend.run_events import run_events_hub
 
 # Import new architecture components
 try:
@@ -59,13 +56,14 @@ class Workflow:
 		*,
 		controller: WorkflowController | None = None,
 		browser: Browser | None = None,
-		llm: BaseChatModel | None = None,
-		page_extraction_llm: BaseChatModel | None = None,
+		llm: Any | None = None,
+		page_extraction_llm: Any | None = None,
 		fallback_to_agent: bool = True,
 		# NEW: Visual streaming parameters
 		visual_streaming: bool = False,
 		session_id: Optional[str] = None,
 		event_callback: Optional[Callable] = None,
+		run_id: Optional[str] = None,
 	) -> None:
 		"""Initialize a new Workflow instance from a schema object.
 
@@ -121,6 +119,7 @@ class Workflow:
 		self.page_extraction_llm = page_extraction_llm
 		self.fallback_to_agent = fallback_to_agent
 		self.context: dict[str, Any] = {}
+		self.run_id: Optional[str] = run_id
 
 		self.inputs_def: List[WorkflowInputSchemaDefinition] = self.schema.input_schema
 		self._input_model: type[BaseModel] = self._build_input_model()
@@ -302,6 +301,7 @@ class Workflow:
 		visual_streaming: bool = False,
 		session_id: Optional[str] = None,
 		event_callback: Optional[Callable] = None,
+		run_id: Optional[str] = None,
 	) -> Workflow:
 		"""Load a workflow from a file with optional visual streaming support."""
 		with open(file_path, 'r', encoding='utf-8') as f:
@@ -316,6 +316,7 @@ class Workflow:
 			visual_streaming=visual_streaming,
 			session_id=session_id,
 			event_callback=event_callback,
+			run_id=run_id,
 		)
 
 	# --- Runners ---
@@ -469,6 +470,7 @@ class Workflow:
 		except Exception as e:
 			raise ValueError(f'Invalid workflow inputs: {e}') from e
 
+	# Replace {key} with the value of the key in the context
 	def _resolve_placeholders(self, data: Any) -> Any:
 		"""Recursively replace placeholders in *data* using current context variables.
 
@@ -479,6 +481,12 @@ class Workflow:
 				# Only attempt to format if placeholder syntax is likely present
 				if '{' in data and '}' in data:
 					formatted_data = data.format(**self.context)
+					# Aggressive logging of formatting process for debugging
+					try:
+						keys = list(self.context.keys())
+						logger.info(f"[ctx-format] keys={keys} src={data!r} -> out={formatted_data!r}")
+					except Exception:
+						pass
 					return formatted_data
 				return data  # No placeholders, return as is
 			except KeyError:
@@ -566,6 +574,15 @@ class Workflow:
 			value = str(result)
 
 		self.context[output_key] = value
+		# Aggressive logging of stored context value
+		try:
+			if isinstance(value, str) and len(value) > 200:
+				display_value = value[:200] + '...'
+			else:
+				display_value = value
+			logger.info(f"[ctx-store] context[{output_key!r}] = {display_value!r}")
+		except Exception:
+			pass
 
 	async def _execute_step(self, step_index: int, step_resolved: WorkflowStep) -> ActionResult | AgentHistoryList:
 		"""Execute the resolved step dictionary, handling type branching and fallback."""
@@ -588,11 +605,29 @@ class Workflow:
 				logger.warning(
 					f'Deterministic step {step_index + 1} ({action_name}) failed: {e}. Attempting fallback with agent.'
 				)
+				# Emit FallbackStarted
+				if self.run_id:
+					await run_events_hub.fallback_started(
+						self.run_id,
+						step_id=str(step_index + 1),
+						attempt=0,
+						max_attempts=3,
+						session_id=getattr(self, 'session_id', None),
+					)
 				if self.llm is None:
 					raise ValueError('Cannot fall back to agent: LLM instance required.')
 				if self.fallback_to_agent:
 					result = await self._fallback_to_agent(step_resolved, step_index, e)
 					if not result.is_successful():
+						# Emit single terminal event (prefer fallback terminal)
+						if self.run_id:
+							await run_events_hub.fallback_finished_fail(
+								self.run_id,
+								step_id=str(step_index + 1),
+								attempt=3,
+								max_attempts=3,
+								session_id=getattr(self, 'session_id', None),
+							)
 						raise ValueError(f'Deterministic step {step_index + 1} ({action_name}) failed even after fallback')
 				else:
 					raise ValueError(f'Deterministic step {step_index + 1} ({action_name}) failed: {e}')
@@ -624,33 +659,16 @@ class Workflow:
 		results: List[ActionResult | AgentHistoryList],
 		output_model: type[T],
 	) -> T:
-		"""Convert workflow results to a specified output model.
-
-		Filters ActionResults with extracted_content, then uses LangChain to parse
-		all extracted texts into the structured output model.
-
-		Args:
-			results: List of workflow step results
-			output_model: Target Pydantic model class to convert to
-
-		Returns:
-			An instance of the specified output model
-		"""
+		"""Minimal conversion: join extracted contents and construct output_model if possible."""
 		if not results:
 			raise ValueError('No results to convert')
 
-		if self.llm is None:
-			raise ValueError('LLM is required for structured output conversion')
-
-		# Extract all content from ActionResults
-		extracted_contents = []
-
+		# Extract contents
+		extracted_contents: list[str] = []
 		for result in results:
 			if isinstance(result, ActionResult) and result.extracted_content:
 				extracted_contents.append(result.extracted_content)
-			# TODO: this might be incorrect; but it helps A LOT if extract fucks up and only the agent is able to solve it
 			elif isinstance(result, AgentHistoryList):
-				# Check the agent history for any extracted content
 				for item in result.history:
 					for action_result in item.result:
 						if action_result.extracted_content:
@@ -659,18 +677,15 @@ class Workflow:
 		if not extracted_contents:
 			raise ValueError('No extracted content found in workflow results')
 
-		# Combine all extracted contents
 		combined_text = '\n\n'.join(extracted_contents)
-
-		messages: list[BaseMessage] = [
-			AIMessage(content=STRUCTURED_OUTPUT_PROMPT),
-			HumanMessage(content=combined_text),
-		]
-
-		chain = self.llm.with_structured_output(output_model)
-		chain_result: T = await chain.ainvoke(messages)  # type: ignore
-
-		return chain_result
+		# Try to instantiate output_model with a best-effort field
+		try:
+			return output_model.model_validate({'content': combined_text})  # type: ignore
+		except Exception:
+			# Fallback: return a dict-like wrapper if model doesn't have 'content'
+			class _Wrapper(output_model):  # type: ignore
+				pass
+			return _Wrapper.model_validate({'content': combined_text})  # type: ignore
 
 	async def run_step(self, step_index: int, inputs: dict[str, Any] | None = None):
 		"""Run a *single* workflow step asynchronously and return its result.
@@ -741,6 +756,7 @@ class Workflow:
 		self.context = runtime_inputs.copy()  # Start with a fresh context
 
 		results: List[ActionResult | AgentHistoryList] = []
+		run_failed: bool = False
 
 		# Ensure browser is initialized
 		if not self.browser:
@@ -770,6 +786,9 @@ class Workflow:
 		# Store browser reference to prevent it from being garbage collected
 		self._browser_ref = self.browser
 		try:
+			# Announce run start once
+			if self.run_id:
+				await run_events_hub.run_started(self.run_id)
 			for step_index, step_dict in enumerate(self.steps):  # self.steps now holds dictionaries
 				await asyncio.sleep(0.1)
 				await self.browser._wait_for_stable_network()
@@ -782,16 +801,40 @@ class Workflow:
 				# Use description from the step dictionary
 				step_description = step_dict.description or 'No description provided'
 				logger.info(f'--- Running Step {step_index + 1}/{len(self.steps)} -- {step_description} ---')
+				# Emit StepStarted
+				if self.run_id:
+					step_id = str(step_index + 1)
+					static_key = f"{self.schema.name}:{self.version}:{step_index + 1}:{getattr(step_dict, 'type', 'step')}"
+					await run_events_hub.step_started(
+						self.run_id,
+						step_id=step_id,
+						step_index=step_index + 1,
+						total_steps=len(self.steps),
+						title=step_description,
+						static_step_key=static_key,
+						source_workflow_use=True,
+					)
 				# Resolve placeholders using the current context (works on the dictionary)
 				step_resolved = self._resolve_placeholders(step_dict)
 
 				# Execute step using the unified _execute_step method
-				result = await self._execute_step(step_index, step_resolved)
+				try:
+					result = await self._execute_step(step_index, step_resolved)
+				except Exception:
+					# Ensure a terminal fail is emitted only if fallback terminal was not sent
+					# In practice, deterministic failure without fallback reaches here.
+					if self.run_id and not isinstance(step_resolved, DeterministicWorkflowStep):
+						await run_events_hub.step_finished_fail(self.run_id, step_id=str(step_index + 1))
+					run_failed = True
+					raise
 
 				results.append(result)
 				# Persist outputs using the resolved step dictionary
 				self._store_output(step_resolved, result)
 				logger.info(f'--- Finished Step {step_index + 1} ---\n')
+				# Emit StepFinishedSuccess
+				if self.run_id:
+					await run_events_hub.step_finished_success(self.run_id, step_id=str(step_index + 1))
 
 			# Convert results to output model if requested
 			output_model_result: T | None = None
@@ -799,6 +842,9 @@ class Workflow:
 				output_model_result = await self._convert_results_to_output_model(results, output_model)
 
 		finally:
+			# Announce run end (best-effort)
+			if self.run_id:
+				await c.run_ended(self.run_id, status=("fail" if run_failed else "success"))
 			# Clean-up browser after finishing workflow
 			if close_browser_at_end and self.browser:
 				self.browser.browser_profile.keep_alive = False
@@ -845,64 +891,9 @@ class Workflow:
 		)
 
 	def as_tool(self, *, name: str | None = None, description: str | None = None):  # noqa: D401
-		"""Expose the entire workflow as a LangChain *StructuredTool* instance.
-
-		The generated tool validates its arguments against the workflow's input
-		schema (if present) and then returns the JSON-serialised output of
-		:py:meth:`run`.
-		"""
-
-		InputModel = self._build_input_model()
-		# Use schema name as default, sanitize for tool name requirements
-		default_name = ''.join(c if c.isalnum() else '_' for c in self.name)
-		tool_name = name or default_name[:50]
-		doc = description or self.description  # Use schema description
-
-		# `self` is closed over via the inner function so we can keep state.
-		async def _invoke(**kwargs):  # type: ignore[override]
-			logger.info(f'Running workflow as tool with inputs: {kwargs}')
-			augmented_inputs = kwargs.copy() if kwargs else {}
-			for input_def in self.inputs_def:
-				if not input_def.required and input_def.name not in augmented_inputs:
-					augmented_inputs[input_def.name] = ''
-			result = await self.run(inputs=augmented_inputs)
-			# Serialise non-string output so models that expect a string tool
-			# response still work.
-			try:
-				return _json.dumps(result, default=str)
-			except Exception:
-				return str(result)
-
-		return StructuredTool.from_function(
-			coroutine=_invoke,
-			name=tool_name,
-			description=doc,
-			args_schema=InputModel,
-		)
+		"""Stub: LangChain tool wrapper removed."""
+		raise NotImplementedError('LangChain tool wrapper removed in this build')
 
 	async def run_as_tool(self, prompt: str) -> str:
-		"""
-		Run the workflow with a prompt and automatically parse the required variables.
-
-		@dev Uses AgentExecutor to properly handle the tool invocation loop.
-		"""
-
-		# For now I kept it simple but one could think of using a react agent here.
-		if self.llm is None:
-			raise ValueError("Cannot run as tool: An 'llm' instance must be supplied for tool-based steps")
-
-		prompt_template = ChatPromptTemplate.from_messages(
-			[
-				('system', 'You are a helpful assistant'),
-				('human', '{input}'),
-				# Placeholders fill up a **list** of messages
-				('placeholder', '{agent_scratchpad}'),
-			]
-		)
-
-		# Create the workflow tool
-		workflow_tool = self.as_tool()
-		agent = create_tool_calling_agent(self.llm, [workflow_tool], prompt_template)
-		agent_executor = AgentExecutor(agent=agent, tools=[workflow_tool])
-		result = await agent_executor.ainvoke({'input': prompt})
-		return result['output']
+		"""Stub: LangChain tool runner removed."""
+		raise NotImplementedError('LangChain tool runner removed in this build')

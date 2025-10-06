@@ -51,6 +51,12 @@ This is the python package for Workflow Use. It is used to create and execute wo
 
 Currently only used to reserve the pypi package name.
 
+## Test command
+
+```bash
+uv run pytest -q test/test_cookies_api.py #single test file
+```
+
 ## Public API endopint
 
 📊 API | Endpoints | Available

@@ -10,7 +10,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 from .dependencies import supabase, get_user, get_user_optional, get_current_user, validate_session_token
-from .service import WorkflowService, list_all_workflows, get_workflow_by_id, build_workflow_from_recording_data, start_workflow_upload_job, get_workflow_job_status
+from .service import list_all_workflows, get_workflow_by_id, build_workflow_from_recording_data, start_workflow_upload_job, get_workflow_job_status
+from .service_factory import get_service
 from .execution_history_service import get_execution_history_service
 from .views import (
 	TaskInfo, WorkflowUpdateRequest, WorkflowMetadataUpdateRequest, WorkflowExecuteRequest,
@@ -28,14 +29,14 @@ from .views import (
 	# NEW: Execution history models
 	WorkflowExecutionHistory, WorkflowExecutionHistoryResponse, WorkflowExecutionStatsResponse,
 	CreateWorkflowExecutionRequest, UpdateWorkflowExecutionRequest, GetWorkflowExecutionHistoryRequest,
-	EnhancedVisualStreamingSessionInfo, EnhancedVisualStreamingSessionsResponse
+	EnhancedVisualStreamingSessionInfo, EnhancedVisualStreamingSessionsResponse,
+	TerminateExecutionRequest
 )
 
 # TODO: seperate the folder for local router and db router
 
-# This router is for the original, file-based workflow operations
-# It handles local execution, recording, etc.
-local_wf_router = APIRouter(prefix='/api/workflows')
+# Local (dev/legacy) router moved to backend/routers_local.py
+from .routers_local import local_wf_router
 
 # This router is for the new, Supabase-backed workflow operations
 # It handles creating, reading, and updating workflows in the database.
@@ -45,13 +46,7 @@ db_wf_router = APIRouter(prefix='/workflows')
 _service = None
 
 
-def get_service(app=None) -> WorkflowService:
-	global _service
-	if _service is None:
-		if supabase is None:
-			raise RuntimeError("Supabase client not initialized. Please check your environment variables.")
-		_service = WorkflowService(supabase_client=supabase, app=app)
-	return _service
+# get_service moved to service_factory; keep back-compat import
 
 
 @local_wf_router.get('', response_model=WorkflowListResponse)
@@ -791,10 +786,10 @@ async def execute_workflow_session(id: uuid.UUID, request: SessionVisualWorkflow
 		if not workflow:
 			raise HTTPException(status_code=404, detail="Workflow not found")
 		
-		# Check ownership (allow execution of public workflows)
-		workflow_owner_id = workflow.get("owner_id")
-		if workflow_owner_id and workflow_owner_id != user_id:
-			raise HTTPException(status_code=403, detail="You don't have permission to execute this workflow")
+		# # Check ownership (allow execution of public workflows)
+		# workflow_owner_id = workflow.get("owner_id")
+		# if workflow_owner_id and workflow_owner_id != user_id:
+		# 	raise HTTPException(status_code=403, detail="You don't own this workflow")
 		
 		# Get workflow service instance
 		service = get_service()
@@ -807,12 +802,26 @@ async def execute_workflow_session(id: uuid.UUID, request: SessionVisualWorkflow
 		
 		# Get log position for tracking
 		log_pos = await service._log_file_position()
+
+		# Eager-create execution record to return execution_id immediately
+		from .execution_history_service import get_execution_history_service
+		execution_service = get_execution_history_service(supabase)
+		execution_id = await execution_service.create_execution_record(
+			workflow_id=str(id),
+			user_id=user_id,
+			inputs=request.inputs or {},
+			mode=request.mode,
+			visual_enabled=request.visual,
+			visual_streaming_enabled=request.visual_streaming,
+			visual_quality=request.visual_quality,
+			session_id=f"visual-{task_id}" if request.visual_streaming else None,
+		)
 		
 		# Validate execution mode
 		if request.mode not in ["cloud-run", "local-run"]:
 			raise HTTPException(status_code=400, detail="Invalid mode. Must be 'cloud-run' or 'local-run'")
 		
-		# Start workflow execution in background with visual streaming support
+		# Enforce visual streaming only
 		if request.visual_streaming:
 			# Use enhanced visual streaming execution
 			task = asyncio.create_task(
@@ -826,20 +835,8 @@ async def execute_workflow_session(id: uuid.UUID, request: SessionVisualWorkflow
 					visual=request.visual,
 					visual_streaming=request.visual_streaming,
 					visual_quality=request.visual_quality,
-					visual_events_buffer=request.visual_events_buffer
-				)
-			)
-		else:
-			# Use legacy execution
-			task = asyncio.create_task(
-				service.run_workflow_session_in_background(
-					task_id=task_id,
-					workflow_id=str(id),
-					inputs=request.inputs or {},
-					cancel_event=cancel_event,
-					owner_id=user_id,
-					mode=request.mode,
-					visual=request.visual
+					visual_events_buffer=request.visual_events_buffer,
+					forced_execution_id=execution_id
 				)
 			)
 		
@@ -852,7 +849,7 @@ async def execute_workflow_session(id: uuid.UUID, request: SessionVisualWorkflow
 			)
 		)
 		
-		# Build response with visual streaming information
+		# Build response with visual streaming information (only path)
 		if request.visual_streaming:
 			# Create session_id variable in proper scope
 			visual_session_id = f"visual-{task_id}"
@@ -865,21 +862,12 @@ async def execute_workflow_session(id: uuid.UUID, request: SessionVisualWorkflow
 				message=f"Workflow '{workflow.get('name', 'Unknown')}' execution started with visual streaming (mode: {request.mode})",
 				mode=request.mode,
 				session_id=visual_session_id,
+				execution_id=execution_id,
 				visual_enabled=request.visual,
 				visual_streaming_enabled=request.visual_streaming,
 				visual_quality=request.visual_quality,
 				visual_stream_url=f"/workflows/visual/{visual_session_id}/stream",
 				viewer_url=f"/workflows/visual/{visual_session_id}/viewer"
-			)
-		else:
-			response = WorkflowExecuteResponse(
-				success=True,
-				task_id=task_id,
-				workflow=workflow.get("name", "Unknown"),
-				log_position=log_pos,
-				message=f"Workflow '{workflow.get('name', 'Unknown')}' execution started with task ID: {task_id} (mode: {request.mode})",
-				mode=request.mode,
-				visual_enabled=request.visual
 			)
 		
 				
@@ -890,491 +878,7 @@ async def execute_workflow_session(id: uuid.UUID, request: SessionVisualWorkflow
 	except Exception as e:
 		raise HTTPException(status_code=500, detail=f"Failed to execute workflow: {str(e)}")
 
-# NEW: Visual streaming WebSocket endpoint
-@db_wf_router.websocket("/visual/{session_id}/stream")
-async def visual_streaming_websocket(websocket: WebSocket, session_id: str):
-	"""WebSocket endpoint for rrweb visual streaming"""
-	try:
-		# SESSION ID NORMALIZATION (same logic as status endpoint)
-		original_session_id = session_id
-		if not session_id.startswith("visual-"):
-			try:
-				import uuid
-				uuid.UUID(session_id)  # Validate UUID format
-				session_id = f"visual-{session_id}"
-				logger.info(f"WebSocket: Normalized session ID from '{original_session_id}' to '{session_id}'")
-			except ValueError:
-				await websocket.accept()
-				await websocket.send_json({
-					"error": f"Invalid session ID format: {original_session_id}",
-					"type": "error"
-				})
-				await websocket.close()
-				return
-		
-		# Import visual streaming components
-		try:
-			from backend.visual_streaming import streaming_manager
-			from backend.websocket_manager import websocket_manager
-		except ImportError:
-			await websocket.accept()
-			await websocket.send_json({
-				"error": "Visual streaming components not available",
-				"type": "error"
-			})
-			await websocket.close()
-			return
-		
-		try:
-			# Get or create streamer for session (using normalized session_id)
-			streamer = streaming_manager.get_or_create_streamer(session_id)
-			
-			# Connect client to WebSocket manager (this will handle websocket.accept())
-			client_id = await websocket_manager.handle_client_connection(websocket, session_id)
-			
-			# Send buffered events to new client
-			buffered_events = streamer.get_buffered_events()
-			if buffered_events:
-				for event in buffered_events:
-					await websocket.send_json(event)
-			
-			# Keep connection alive and handle messages
-			while True:
-				try:
-					# Wait for messages from client
-					message = await websocket.receive_json()
-					
-					# Handle different message types
-					message_type = message.get("type", "unknown")
-					
-					if message_type == "ping":
-						await websocket.send_json({"type": "pong", "timestamp": time.time()})
-					elif message_type == "client_ready":
-						await websocket.send_json({
-							"type": "status", 
-							"message": "Client connected to visual stream",
-							"session_id": session_id
-						})
-					else:
-						# Log unknown message types
-						logger.warning(f"Unknown message type from client {client_id}: {message_type}")
-						
-				except WebSocketDisconnect:
-					break
-				except Exception as e:
-					logger.error(f"Error in visual streaming WebSocket: {e}")
-					break
-					
-		finally:
-			# Cleanup client connection
-			await websocket_manager.handle_client_disconnection(client_id)
-			
-	except Exception as e:
-		logger.error(f"Error in visual streaming WebSocket setup: {e}")
-		try:
-			await websocket.send_json({"error": str(e), "type": "error"})
-			await websocket.close()
-		except:
-			pass
-
-# NEW: Visual streaming status endpoint
-@db_wf_router.get("/visual/{session_id}/status", response_model=VisualStreamingStatusResponse)
-async def get_visual_streaming_status(session_id: str):
-	"""Get status of visual streaming session with readiness check"""
-	try:
-		# ═══════════════════════════════════════════════════════════════
-		# SESSION ID VALIDATION AND NORMALIZATION
-		# ═══════════════════════════════════════════════════════════════
-		
-		# Normalize session ID format - handle both "visual-uuid" and "uuid" formats
-		original_session_id = session_id
-		
-		# If session_id doesn't start with "visual-", add it
-		if not session_id.startswith("visual-"):
-			# Validate that it's a valid UUID format
-			try:
-				import uuid
-				uuid.UUID(session_id)  # This will raise ValueError if invalid
-				session_id = f"visual-{session_id}"
-				logger.info(f"Normalized session ID from '{original_session_id}' to '{session_id}'")
-			except ValueError:
-				# Not a valid UUID, return error
-				logger.error(f"Invalid session ID format: '{original_session_id}' - must be UUID or visual-UUID format")
-				raise HTTPException(
-					status_code=400, 
-					detail=f"Invalid session ID format: '{original_session_id}'. Must be a valid UUID or 'visual-<UUID>' format."
-				)
-		else:
-			# Validate that the UUID part after "visual-" is valid
-			uuid_part = session_id[7:]  # Remove "visual-" prefix
-			try:
-				import uuid
-				uuid.UUID(uuid_part)  # This will raise ValueError if invalid
-				logger.debug(f"Valid session ID format: '{session_id}'")
-			except ValueError:
-				# Invalid UUID part, return error
-				logger.error(f"Invalid UUID in session ID: '{session_id}' - UUID part '{uuid_part}' is invalid")
-				raise HTTPException(
-					status_code=400, 
-					detail=f"Invalid session ID format: '{session_id}'. The UUID part '{uuid_part}' is not valid."
-				)
-		
-		# ═══════════════════════════════════════════════════════════════
-		# VISUAL STREAMING STATUS LOGIC
-		# ═══════════════════════════════════════════════════════════════
-		
-		# Import visual streaming components
-		try:
-			from backend.visual_streaming import streaming_manager
-			from backend.websocket_manager import websocket_manager
-		except ImportError:
-			raise HTTPException(
-				status_code=503, 
-				detail="Visual streaming components not available"
-			)
-		
-		# Get streamer for session (using normalized session_id)
-		streamer = streaming_manager.get_streamer(session_id)
-		
-		if not streamer:
-			logger.warning(f"Session not found: '{session_id}' (original: '{original_session_id}')")
-			return VisualStreamingStatusResponse(
-				success=False,
-				session_id=session_id,  # Return normalized ID
-				streaming_active=False,
-				streaming_ready=False,
-				browser_ready=False,
-				events_processed=0,
-				events_buffered=0,
-				connected_clients=0,
-				error=f"Session not found: '{session_id}'"
-			)
-		
-		logger.info(f"Found session: '{session_id}' (original: '{original_session_id}')")
-		
-		# Get statistics from streamer
-		stats = streamer.get_stats()
-		
-		# Get connected clients count from session status
-		session_status = websocket_manager.get_session_status(session_id)
-		connected_clients = session_status.get('client_count', 0) if 'error' not in session_status else 0
-		
-		# Check if streaming is truly ready (FIXED LOGIC)
-		streaming_active = stats.get('streaming_active', False)
-		events_processed = stats.get('total_events', 0)
-		# FIX: Access browser_ready directly from stats, not as attribute
-		browser_ready = stats.get('browser_ready', False)
-		
-		# Streaming is ready when:
-		# 1. Streaming is active
-		# 2. Browser automation has started (if browser_ready is available)
-		# 3. At least 1 event has been processed
-		streaming_ready = (streaming_active and 
-		                  events_processed > 0 and
-		                  (browser_ready or events_processed >= 3))  # Fallback: 3+ events indicates browser activity
-		
-		# Convert last_event_time to string if it exists
-		last_event_time = stats.get('last_event_time')
-		if last_event_time is not None and last_event_time > 0:
-			last_event_time = str(last_event_time)
-		else:
-			last_event_time = None
-
-		return VisualStreamingStatusResponse(
-			success=True,
-			session_id=session_id,  # Return normalized ID
-			streaming_active=streaming_active,
-			streaming_ready=streaming_ready,  # NEW: Key readiness indicator
-			browser_ready=browser_ready,      # NEW: Browser automation status
-			events_processed=events_processed,
-			events_buffered=stats.get('buffer_size', 0),
-			last_event_time=last_event_time,
-			connected_clients=connected_clients,
-			stream_url=f"/workflows/visual/{session_id}/stream",
-			viewer_url=f"/workflows/visual/{session_id}/viewer",
-			quality=stats.get('quality', 'standard')
-		)
-		
-	except HTTPException:
-		# Re-raise HTTP exceptions (like 400, 404)
-		raise
-	except Exception as e:
-		logger.error(f"Error getting visual streaming status for '{original_session_id}': {e}")
-		raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-# NEW: Visual streaming viewer endpoint
-@db_wf_router.get("/visual/{session_id}/viewer")
-async def get_visual_streaming_viewer(session_id: str):
-	"""Get HTML viewer for visual streaming session"""
-	try:
-		# Import visual streaming components
-		try:
-			from backend.visual_streaming import streaming_manager
-		except ImportError:
-			raise HTTPException(
-				status_code=503, 
-				detail="Visual streaming components not available"
-			)
-		
-		# Check if session exists
-		streamer = streaming_manager.get_streamer(session_id)
-		if not streamer:
-			raise HTTPException(status_code=404, detail="Visual streaming session not found")
-		
-		# Return HTML viewer (we'll create this in the rrweb_demo folder)
-		from fastapi.responses import HTMLResponse
-		
-		viewer_html = f"""
-		<!DOCTYPE html>
-		<html>
-		<head>
-			<title>Visual Workflow Viewer - {session_id}</title>
-			<script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
-			<style>
-				body {{ margin: 0; padding: 20px; font-family: Arial, sans-serif; }}
-				#viewer {{ width: 100%; height: 80vh; border: 1px solid #ccc; }}
-				#status {{ padding: 10px; background: #f5f5f5; margin-bottom: 10px; }}
-				.connected {{ color: green; }}
-				.disconnected {{ color: red; }}
-			</style>
-		</head>
-		<body>
-			<div id="status">
-				<strong>Session:</strong> {session_id} | 
-				<strong>Status:</strong> <span id="connection-status" class="disconnected">Connecting...</span> |
-				<strong>Events:</strong> <span id="event-count">0</span>
-			</div>
-			<div id="viewer"></div>
-			
-			<script>
-				const sessionId = '{session_id}';
-				const wsUrl = `ws://localhost:8000/workflows/visual/${{sessionId}}/stream`;
-				let replayer = null;
-				let eventCount = 0;
-				
-				// 🔧 FIX: Enhanced replayer with iframe sandbox handling
-				function initReplayer() {{
-					replayer = new rrweb.Replayer([], {{
-						target: document.getElementById('viewer'),
-						mouseTail: false,
-						useVirtualDom: false,  // Disable virtual DOM to prevent sandbox issues
-						liveMode: true,        // Enable live mode for real-time updates
-						skipInactive: false,   // Don't skip any events
-						speed: 1,              // Normal playback speed
-						blockClass: 'rr-block',
-						ignoreClass: 'rr-ignore',
-						
-						// 🔧 IFRAME SANDBOX FIXES
-						UNSAFE_replayCanvas: true,    // Allow canvas replay despite security
-						unpackFn: rrweb.unpack,      // Ensure proper unpacking
-						
-						// Enhanced CSS handling for Amazon's complex styles
-						insertStyleRules: [
-							'.rr-block {{ visibility: hidden !important; }}',
-							'.rr-ignore {{ pointer-events: none !important; }}',
-							'iframe {{ pointer-events: auto !important; }}',  // Fix iframe interactions
-							'[data-rrweb-id] {{ position: relative !important; }}'  // Ensure element positioning
-						],
-						
-						// 🔧 ERROR HANDLING for sandbox issues
-						onError: function(error) {{
-							console.warn('rrweb replayer warning (continuing):', error);
-							// Don't throw - continue replay despite sandbox errors
-						}},
-						
-						// Custom event processing for better Amazon compatibility
-						plugins: [
-							// Handle Amazon's dynamic content loading
-							{{
-								onBuild: (node, options) => {{
-									if (node.tagName === 'IFRAME') {{
-										// Remove sandbox restrictions for replay
-										node.removeAttribute('sandbox');
-									}}
-									return node;
-								}}
-							}}
-						]
-					}});
-					
-					// Start live mode immediately
-					replayer.startLive();
-					console.log('🎬 Enhanced rrweb replayer initialized with sandbox fixes');
-				}}
-				
-				// Connect to WebSocket
-				function connect() {{
-					const ws = new WebSocket(wsUrl);
-					
-					ws.onopen = function() {{
-						document.getElementById('connection-status').textContent = 'Connected';
-						document.getElementById('connection-status').className = 'connected';
-						ws.send(JSON.stringify({{type: 'client_ready'}}));
-					}};
-					
-					ws.onmessage = function(event) {{
-						let data;
-						try {{
-							data = JSON.parse(event.data);
-						}} catch (e) {{
-							console.error('❌ Failed to parse WebSocket message:', e);
-							return;
-						}}
-						
-						// 🔧 FIX: Enhanced event processing with fallback handling
-						let rrwebEvent = null;
-						
-						// Primary format: New backend format (should work after our fixes)
-						if (data.event) {{
-							rrwebEvent = data.event;
-							console.log('✅ Received new format event:', rrwebEvent.type);
-						}}
-						// Fallback format: Legacy event_data format (for backward compatibility)
-						else if (data.event_data) {{
-							rrwebEvent = data.event_data;
-							console.warn('⚠️ Received legacy event_data format, using fallback');
-						}}
-						// Alternative format: Direct rrweb event
-						else if (data.type !== undefined) {{
-							rrwebEvent = data;
-							console.warn('⚠️ Received direct rrweb event format');
-						}}
-						// Unknown format
-						else {{
-							console.error('❌ Unknown event format:', Object.keys(data));
-							return;
-						}}
-						
-						// Validate rrweb event structure
-						if (!rrwebEvent || typeof rrwebEvent.type !== 'number') {{
-							console.error('❌ Invalid rrweb event structure:', rrwebEvent);
-							return;
-						}}
-						
-						// Initialize replayer on first FullSnapshot (type 2)
-						if (rrwebEvent.type === 2 && !replayer) {{
-							console.log('🎬 Initializing replayer with FullSnapshot');
-							initReplayer();
-						}}
-						
-						// Add event to replayer if it exists
-						if (replayer && typeof replayer.addEvent === 'function') {{
-							try {{
-								replayer.addEvent(rrwebEvent);
-								eventCount++;
-								document.getElementById('event-count').textContent = eventCount;
-								
-								// Enhanced logging for debugging
-								if (rrwebEvent.type === 2) {{
-									console.log('📸 FullSnapshot added to replayer');
-								}} else if (rrwebEvent.type === 3) {{
-									console.log('📝 IncrementalSnapshot added to replayer');
-								}}
-								
-							}} catch (replayError) {{
-								console.warn('⚠️ Replayer error (continuing anyway):', replayError);
-								// Continue processing other events even if one fails
-							}}
-						}} else if (rrwebEvent.type === 2) {{
-							console.error('❌ FullSnapshot received but replayer not available');
-						}}
-					}};
-					
-					ws.onclose = function() {{
-						document.getElementById('connection-status').textContent = 'Disconnected';
-						document.getElementById('connection-status').className = 'disconnected';
-						// Attempt to reconnect after 3 seconds
-						setTimeout(connect, 3000);
-					}};
-					
-					ws.onerror = function(error) {{
-						console.error('WebSocket error:', error);
-					}};
-				}}
-				
-				// Start connection
-				connect();
-			</script>
-		</body>
-		</html>
-		"""
-		
-		return HTMLResponse(content=viewer_html)
-		
-	except HTTPException:
-		raise
-	except Exception as e:
-		logger.error(f"Error serving visual streaming viewer: {e}")
-		raise HTTPException(status_code=500, detail=str(e))
-
-
-# NEW: List all visual streaming sessions
-@db_wf_router.get("/visual/sessions", response_model=VisualStreamingSessionsResponse)
-async def list_visual_streaming_sessions():
-	"""List all active visual streaming sessions"""
-	try:
-		# Import visual streaming components
-		try:
-			from backend.visual_streaming import streaming_manager
-			from backend.websocket_manager import websocket_manager
-		except ImportError:
-			raise HTTPException(
-				status_code=503, 
-				detail="Visual streaming components not available"
-			)
-		
-		# Get all streamers
-		all_stats = streaming_manager.get_all_stats()
-		
-		sessions = {}
-		total_events = 0
-		active_count = 0
-		
-		for session_id, stats in all_stats.get('sessions', {}).items():
-			# Get connected clients count from session status
-			session_status = websocket_manager.get_session_status(session_id)
-			connected_clients = session_status.get('client_count', 0) if 'error' not in session_status else 0
-			is_active = stats.get('streaming_active', False)
-			
-			if is_active:
-				active_count += 1
-			
-			events_processed = stats.get('total_events', 0)
-			total_events += events_processed
-			
-			# Convert last_event_time to float if it exists
-			last_event_time = stats.get('last_event_time')
-			if last_event_time is not None and last_event_time > 0:
-				last_event_time = float(last_event_time)
-			else:
-				last_event_time = None
-			
-			sessions[session_id] = VisualStreamingSessionInfo(
-				session_id=session_id,
-				streaming_active=is_active,
-				events_processed=events_processed,
-				events_buffered=stats.get('buffer_size', 0),
-				connected_clients=connected_clients,
-				created_at=stats.get('created_at', time.time()),
-				last_event_time=last_event_time,
-				quality=stats.get('quality', 'standard'),
-				stream_url=f"/workflows/visual/{session_id}/stream",
-				viewer_url=f"/workflows/visual/{session_id}/viewer"
-			)
-		
-		return VisualStreamingSessionsResponse(
-			success=True,
-			sessions=sessions,
-			total_sessions=len(sessions),
-			active_sessions=active_count,
-			total_events_processed=total_events,
-			message=f"Found {len(sessions)} visual streaming sessions ({active_count} active)"
-		)
-		
-	except Exception as e:
-		logger.error(f"Error listing visual streaming sessions: {e}")
-		raise HTTPException(status_code=500, detail=str(e))
+### Visual streaming endpoints have been moved to backend/routers_visual.py
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1614,115 +1118,92 @@ async def get_active_workflow_executions(session_token: str):
 		logger.error(f"Error getting active workflow executions: {e}")
 		raise HTTPException(status_code=500, detail=f"Failed to retrieve active executions: {str(e)}")
 
-# ENHANCED: Visual streaming sessions with execution history context
-@db_wf_router.get("/visual/sessions/enhanced", response_model=EnhancedVisualStreamingSessionsResponse)
-async def get_enhanced_visual_streaming_sessions(session_token: str):
-	"""Get all visual streaming sessions with execution history context"""
+### Visual streaming enhanced sessions endpoint moved to backend/routers_visual.py
+
+@db_wf_router.post("/executions/{execution_id}/terminate", response_model=dict, summary="Terminate a running workflow execution")
+async def terminate_workflow_execution(execution_id: str, request: TerminateExecutionRequest):
 	try:
 		if not supabase:
 			raise HTTPException(status_code=503, detail="Database not configured")
-		
+
 		# Validate session token
-		user_id = await validate_session_token(session_token)
+		user_id = await validate_session_token(request.session_token)
 		if not user_id:
 			raise HTTPException(status_code=401, detail="Invalid or expired session token")
-		
-		# Import visual streaming components
+
+		# Resolve execution
+		execution_service = get_execution_history_service(supabase)
+		active = execution_service.get_active_executions().get(execution_id)
+		if not active:
+			row = supabase.table("workflow_executions").select("workflow_id,user_id,status,session_id").eq("execution_id", execution_id).single().execute().data
+			if not row:
+				raise HTTPException(status_code=404, detail="Execution not found")
+			if row.get("user_id") != user_id:
+				raise HTTPException(status_code=403, detail="You don't own this execution")
+			return {"success": True, "execution_id": execution_id, "status": row.get("status"), "message": "Execution already finished"}
+
+		# Ownership check
+		if active.get("user_id") and active.get("user_id") != user_id:
+			raise HTTPException(status_code=403, detail="You don't own this execution")
+
+		# Identifiers
+		session_id = active.get("session_id")
+		svc = get_service()
+		# Try to pick any active task (best-effort)
+		task_id = next(iter(svc.workflow_tasks.keys()), None)
+
+		mode = (request.mode or "stop_then_kill").lower()
+		timeout_ms = max(0, int(request.timeout_ms or 5000))
+
+		# Close rrweb streaming immediately
 		try:
 			from backend.visual_streaming import streaming_manager
-			from backend.websocket_manager import websocket_manager
-		except ImportError:
-			raise HTTPException(
-				status_code=503, 
-				detail="Visual streaming components not available"
-			)
-		
-		# Get execution history service
-		execution_service = get_execution_history_service(supabase)
-		
-		# Get all streaming sessions
-		all_sessions = streaming_manager.get_all_stats()
-		
-		# Get active executions for context
-		active_executions = execution_service.get_active_executions()
-		
-		# Build enhanced session info
-		enhanced_sessions = {}
-		total_events_processed = 0
-		active_sessions = 0
-		total_executions_with_streaming = 0
-		active_executions_count = 0
-		
-		for session_id, session_stats in all_sessions.get('sessions', {}).items():
-			# Get WebSocket connection info
-			session_status = websocket_manager.get_session_status(session_id)
-			connected_clients = session_status.get('client_count', 0) if 'error' not in session_status else 0
-			
-			# Find corresponding execution
-			execution_info = None
-			execution_id = None
-			for exec_id, exec_data in active_executions.items():
-				if exec_data.get("session_id") == session_id:
-					execution_info = exec_data
-					execution_id = exec_id
-					break
-			
-			# Build enhanced session info
-			enhanced_session = EnhancedVisualStreamingSessionInfo(
-				session_id=session_id,
-				streaming_active=session_stats.get('streaming_active', False),
-				events_processed=session_stats.get('total_events', 0),
-				events_buffered=session_stats.get('buffer_size', 0),
-				connected_clients=connected_clients,
-				created_at=session_stats.get('created_at', time.time()),
-				last_event_time=session_stats.get('last_event_time'),
-				workflow_name=execution_info.get('workflow_name') if execution_info else None,
-				workflow_id=execution_info.get('workflow_id') if execution_info else None,
-				execution_id=execution_id,
-				quality=session_stats.get('quality', 'standard'),
-				stream_url=f"/workflows/visual/{session_id}/stream",
-				viewer_url=f"/workflows/visual/{session_id}/viewer",
-				execution_status=execution_info.get('status') if execution_info else None,
-				execution_progress=None,  # Could be calculated based on execution state
-				user_id=execution_info.get('user_id') if execution_info else None
-			)
-			
-			# Only include sessions for this user
-			if not execution_info or execution_info.get('user_id') == user_id:
-				enhanced_sessions[session_id] = enhanced_session
-				total_events_processed += session_stats.get('total_events', 0)
-				
-				if session_stats.get('streaming_active', False):
-					active_sessions += 1
-				
-				if execution_info and execution_info.get('visual_streaming_enabled'):
-					total_executions_with_streaming += 1
-				
-				if execution_info and execution_info.get('status') == 'running':
-					active_executions_count += 1
-		
-		# Get completed executions today (for summary)
-		from datetime import datetime, timedelta
-		today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-		
-		# This would require a database query to get today's completed executions
-		# For now, we'll use a placeholder value
-		completed_executions_today = 0  # TODO: Implement this query
-		
-		return EnhancedVisualStreamingSessionsResponse(
-			success=True,
-			sessions=enhanced_sessions,
-			total_sessions=len(enhanced_sessions),
-			active_sessions=active_sessions,
-			total_events_processed=total_events_processed,
-			total_executions_with_streaming=total_executions_with_streaming,
-			active_executions=active_executions_count,
-			completed_executions_today=completed_executions_today,
-			message=f"Retrieved {len(enhanced_sessions)} enhanced visual streaming sessions"
+			streamer = streaming_manager.get_streamer(session_id) if session_id else None
+			if streamer:
+				await streamer.transition_to_cleanup()
+				await streamer.final_cleanup()
+				await streamer.stop_streaming()
+		except Exception:
+			pass
+
+		# Graceful cancel
+		if task_id and task_id in svc.cancel_events:
+			svc.cancel_events[task_id].set()
+
+		if mode == "stop_then_kill" and timeout_ms > 0:
+			import asyncio as _asyncio
+			try:
+				await _asyncio.sleep(timeout_ms / 1000.0)
+			except Exception:
+				pass
+
+		# Force cleanup of browser session
+		try:
+			from workflow_use.browser.browser_factory import browser_factory
+			if session_id:
+				await browser_factory.cleanup_session(session_id)
+		except Exception:
+			pass
+
+		# Update execution status
+		await execution_service.update_execution_status(
+			execution_id=execution_id,
+			status="cancelled",
+			error=request.reason or None
 		)
-		
+
+		return {
+			"success": True,
+			"execution_id": execution_id,
+			"task_id": task_id,
+			"session_id": session_id,
+			"mode": mode,
+			"timeout_ms": timeout_ms,
+			"status": "terminating" if mode == "stop_then_kill" else "killed",
+			"message": "Termination initiated"
+		}
+
 	except HTTPException:
 		raise
 	except Exception as e:
-		logger.error(f"Error getting enhanced visual streaming sessions: {e}")
-		raise HTTPException(status_code=500, detail=str(e))
+		raise HTTPException(status_code=500, detail=f"Failed to terminate execution: {str(e)}")

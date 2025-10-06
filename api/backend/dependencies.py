@@ -109,7 +109,14 @@ def get_current_user(req: Request) -> str:
     token = auth_header.split(" ", 1)[1]
     
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        # Supabase access tokens include an 'aud' claim (typically 'authenticated').
+        # Critical: We don't enforce audience matching here; disable audience verification.
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False} # Critical: turned off audience verification
+        )
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(
@@ -143,7 +150,12 @@ def get_current_user_optional(req: Request) -> Optional[str]:
             return None
         
         token = auth_header.split(" ", 1)[1]
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False}
+        )
         return payload.get("sub")
     except (jwt.PyJWTError, IndexError):
         return None

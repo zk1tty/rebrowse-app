@@ -83,11 +83,19 @@ class PageExtractionAction(_BaseExtra):
 
 # === SIMPLIFIED CLIPBOARD ACTIONS ===
 
+class ClickToCopyAction(RecorderBase):
+	"""Composite: click the element then capture page clipboard text."""
+
+	type: Literal['click_to_copy']
+	cssSelector: str
+	timeoutMs: Optional[int] = Field(4000, description='Max time to wait for clipboard after click')
+
+
 class ClipboardCopyAction(RecorderBase):
 	"""Parameters for copying content to clipboard using pyperclip."""
 
 	type: Literal['clipboard_copy']
-	content: str = Field(..., description='Content to copy to clipboard')
+	content: Optional[str] = Field(None, description='Content to copy to clipboard')
 	cssSelector: Optional[str] = Field(None, description='Element selector to copy from (if applicable)')
 
 
@@ -97,3 +105,11 @@ class ClipboardPasteAction(RecorderBase):
 	type: Literal['clipboard_paste']
 	content: Optional[str] = Field(None, description='Content to paste (if None, uses current clipboard)')
 	cssSelector: str = Field(..., description='Target element selector to paste into')
+
+
+# TODO Temporary: Capture page clipboard text (navigator.clipboard.readText)
+class ClipboardCaptureAction(_BaseExtra):
+	"""Parameters for capturing current page clipboard text."""
+
+	type: Literal['clipboard_capture']
+	timeoutMs: Optional[int] = Field(5000, description='Max time to wait for non-empty clipboard text')

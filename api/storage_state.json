@@ -1,0 +1,20 @@
+{
+    "cookies": [
+        {
+            "name": "auth_token",
+            "value": "3b51fa5adc8590249555280f940cf488d0f3969c",
+            "domain": ".x.com",
+            "path": "/",
+            "expires": 1792189745,
+            "httpOnly": true,
+            "secure": true,
+            "sameSite": "None"
+        }
+    ],
+    "origins": [
+        {
+            "origin": "https://x.com",
+            "localStorage": []
+        }
+    ]
+}

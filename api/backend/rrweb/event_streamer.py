@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass
 from enum import Enum
 import orjson  # Fast JSON serialization
+from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,14 @@ class RRWebEventStreamer:
         # Performance monitoring
         self._events_in_last_second = 0
         self._last_stats_update = time.time()
+        
+        # Per-client sequence reset state (websocket -> state)
+        self._client_reset_state: Dict[Any, Dict[str, Any]] = {}
+        
+        # FullSnapshot tracking for diagnostics
+        self.stats['fullsnapshots'] = 0
+        self.stats['last_fullsnapshot_sequence_id'] = None
+        self.stats['last_fullsnapshot_time'] = None
     
     async def process_rrweb_event(self, event_data: Dict[str, Any]) -> bool:
         """Process incoming rrweb event and prepare for streaming - ROBUST VALIDATION"""
@@ -158,6 +167,10 @@ class RRWebEventStreamer:
                         logger.warning(f"FullSnapshot seems small ({len(node_str)} chars), DOM capture may be incomplete")
                     else:
                         logger.info(f"✅ FullSnapshot captured with {len(node_str)} chars of DOM data")
+                # Update FullSnapshot stats
+                self.stats['fullsnapshots'] = int(self.stats.get('fullsnapshots', 0)) + 1
+                self.stats['last_fullsnapshot_sequence_id'] = self.sequence_counter
+                self.stats['last_fullsnapshot_time'] = time.time()
             
             elif event_type == 3:  # IncrementalSnapshot
                 if 'data' not in event_data or not isinstance(event_data['data'], dict):
@@ -226,27 +239,15 @@ class RRWebEventStreamer:
             return 0
         
         try:
-            # Format event for frontend consumption with consistent event field
-            frontend_event = {
-                'type': 'rrweb_event',
-                'session_id': event.session_id,
-                'timestamp': event.timestamp,
-                'event': event.event,  # FIXED: Use consistent field name
-                'sequence_id': event.sequence_id
-            }
-            
-            # Serialize event
-            event_json = orjson.dumps(frontend_event)
-            
-            # Broadcast to all connected clients
+            # Broadcast to all connected clients with optional per-client sequence reset
             disconnected_clients = set()
             successful_sends = 0
             
             for client in self.connected_clients:
                 try:
-                    # Send as text, not bytes, for WebSocket compatibility
-                    await client.send_text(event_json.decode('utf-8'))
-                    successful_sends += 1
+                    sent = await self._send_event_to_client_with_reset_logic(client, event)
+                    if sent:
+                        successful_sends += 1
                 except Exception as e:
                     logger.warning(f"Failed to send to client: {e}")
                     disconnected_clients.add(client)
@@ -261,13 +262,18 @@ class RRWebEventStreamer:
             logger.error(f"Error broadcasting event: {e}")
             return 0
     
-    async def add_client(self, websocket) -> bool:
-        """Add a new client for event streaming"""
+    async def add_client(self, websocket, send_buffered: bool = False) -> bool:
+        """Add a new client for event streaming.
+        Args:
+            websocket: client websocket
+            send_buffered: if True, immediately send buffered events (default False)
+        """
         try:
             self.connected_clients.add(websocket)
             
-            # Send buffered events to new client for catch-up
-            await self._send_buffered_events(websocket)
+            # Optionally send buffered events to new client for catch-up
+            if send_buffered:
+                await self._send_buffered_events(websocket)
             
             logger.info(f"Added client to session {self.session_id}. Total clients: {len(self.connected_clients)}")
             return True
@@ -280,6 +286,9 @@ class RRWebEventStreamer:
         """Remove a client from event streaming"""
         try:
             self.connected_clients.discard(websocket)
+            # Clear any per-client reset state for this websocket
+            if websocket in self._client_reset_state:
+                self._client_reset_state.pop(websocket, None)
             logger.info(f"Removed client from session {self.session_id}. Total clients: {len(self.connected_clients)}")
             return True
             
@@ -438,6 +447,131 @@ class RRWebEventStreamer:
         """Clear the event buffer"""
         self.event_buffer.clear()
         logger.info(f"Cleared event buffer for session {self.session_id}")
+    
+    # =============================
+    # Per-client sequence reset API
+    # =============================
+    def mark_sequence_reset_for_client(self, websocket: Any, history_window_seconds: float = 3.0) -> None:
+        """Mark that a client requested sequence reset.
+        The next FullSnapshot will be sent to that client with sequence 0,
+        and subsequent events will have sequence_id relative to that FullSnapshot.
+        Optionally replay a short history window of incremental events.
+        """
+        self._client_reset_state[websocket] = {
+            'waiting_for_fullsnapshot': True,
+            'reset_offset': None,
+            'fullsnapshot_timestamp': None,
+            'history_window_seconds': max(0.0, float(history_window_seconds)),
+        }
+        logger.info(f"Per-client sequence reset marked for session {self.session_id}")
+    
+    async def _send_event_to_client_with_reset_logic(self, websocket: Any, event: RRWebEvent) -> bool:
+        """Apply per-client sequence reset logic when sending an event to a client."""
+        try:
+            # Guard: skip if socket already closing/closed
+            if (getattr(websocket, 'application_state', None) != WebSocketState.CONNECTED or
+                getattr(websocket, 'client_state', None) != WebSocketState.CONNECTED):
+                # Cleanup immediately to avoid repeated attempts
+                self.connected_clients.discard(websocket)
+                self._client_reset_state.pop(websocket, None)
+                return False
+
+            state = self._client_reset_state.get(websocket)
+            event_type = event.event.get('type') if isinstance(event.event, dict) else None
+            
+            if state:
+                # Waiting for the next FullSnapshot to start at 0
+                if state.get('waiting_for_fullsnapshot', False):
+                    if event_type != 2:
+                        # Skip non-FullSnapshot events for this client until FullSnapshot arrives
+                        return True
+                    # Send FullSnapshot with client sequence_id = 0
+                    client_payload = {
+                        'type': 'rrweb_event',
+                        'session_id': event.session_id,
+                        'timestamp': event.timestamp,
+                        'event': event.event,
+                        'sequence_id': 0,
+                    }
+                    if not await self._safe_send_to_client(websocket, client_payload):
+                        return False
+                    
+                    # Record reset point based on global sequence
+                    state['waiting_for_fullsnapshot'] = False
+                    state['reset_offset'] = event.sequence_id
+                    state['fullsnapshot_timestamp'] = event.timestamp
+                    
+                    # Optionally replay short buffered incremental history after FS
+                    window_s = state.get('history_window_seconds', 0.0)
+                    if window_s > 0.0:
+                        cutoff_time = (event.timestamp or 0)
+                        window_end = cutoff_time + window_s
+                        for buffered in list(self.event_buffer):
+                            if not isinstance(buffered, RRWebEvent):
+                                continue
+                            b_type = buffered.event.get('type') if isinstance(buffered.event, dict) else None
+                            if b_type != 3:
+                                continue
+                            if buffered.timestamp is None:
+                                continue
+                            if buffered.timestamp < cutoff_time or buffered.timestamp > window_end:
+                                continue
+                            client_seq = max(0, buffered.sequence_id - state['reset_offset'])
+                            replay_payload = {
+                                'type': 'rrweb_event',
+                                'session_id': buffered.session_id,
+                                'timestamp': buffered.timestamp,
+                                'event': buffered.event,
+                                'sequence_id': client_seq,
+                            }
+                            if not await self._safe_send_to_client(websocket, replay_payload):
+                                return False
+                    return True
+                
+                # After reset: remap sequence relative to reset_offset
+                reset_offset = state.get('reset_offset')
+                if reset_offset is not None:
+                    client_seq = max(0, event.sequence_id - reset_offset)
+                    payload = {
+                        'type': 'rrweb_event',
+                        'session_id': event.session_id,
+                        'timestamp': event.timestamp,
+                        'event': event.event,
+                        'sequence_id': client_seq,
+                    }
+                    return await self._safe_send_to_client(websocket, payload)
+            
+            # Default: no reset for this client
+            default_payload = {
+                'type': 'rrweb_event',
+                'session_id': event.session_id,
+                'timestamp': event.timestamp,
+                'event': event.event,
+                'sequence_id': event.sequence_id,
+            }
+            return await self._safe_send_to_client(websocket, default_payload)
+        except Exception as e:
+            logger.warning(f"Failed to send event to client with reset logic: {e}")
+            # Ensure cleanup on any error
+            self.connected_clients.discard(websocket)
+            self._client_reset_state.pop(websocket, None)
+            return False
+
+    async def _safe_send_to_client(self, websocket: Any, payload: Dict[str, Any]) -> bool:
+        """Safely send to a client; remove and clear state on failure."""
+        try:
+            if (getattr(websocket, 'application_state', None) != WebSocketState.CONNECTED or
+                getattr(websocket, 'client_state', None) != WebSocketState.CONNECTED):
+                self.connected_clients.discard(websocket)
+                self._client_reset_state.pop(websocket, None)
+                return False
+            await websocket.send_text(orjson.dumps(payload).decode('utf-8'))
+            return True
+        except Exception as e:
+            logger.warning(f"Safe send failed, removing client: {e}")
+            self.connected_clients.discard(websocket)
+            self._client_reset_state.pop(websocket, None)
+            return False
     
     # Browser readiness tracking methods
     async def mark_browser_ready(self) -> bool:

@@ -96,11 +96,18 @@ class PageExtractionStep(TimestampedWorkflowStep):
 
 
 # --- Simplified Clipboard Actions ---
+class ClickToCopyStep(TimestampedWorkflowStep):
+	"""Click the element, then capture clipboard into context."""
+
+	type: Literal['click_to_copy']
+	cssSelector: str = Field(..., description='Clickable element that triggers copy')
+	timeoutMs: Optional[int] = Field(4000, description='Time to wait for clipboard')
+	output: Optional[str] = Field(None, description='Context key to store copied text')
 class ClipboardCopyStep(TimestampedWorkflowStep):
 	"""Copies content to clipboard using pyperclip."""
 
 	type: Literal['clipboard_copy']
-	content: str = Field(..., description='Content to copy to clipboard')
+	content: Optional[str] = Field(None, description='Content to copy to clipboard')
 	cssSelector: Optional[str] = Field(None, description='Element selector to copy from (if applicable)')
 
 
@@ -112,6 +119,12 @@ class ClipboardPasteStep(TimestampedWorkflowStep):
 	cssSelector: str = Field(..., description='Target element selector to paste into')
 
 
+class ClipboardCaptureStep(TimestampedWorkflowStep):
+	"""Capture content from the browser page clipboard."""
+
+	type: Literal['clipboard_capture']
+	output: Optional[str] = Field(None, description='Context key to store copiedText in.')
+
 # --- Union of all possible step types ---
 # This Union defines what constitutes a valid step in the "steps" list.
 DeterministicWorkflowStep = Union[
@@ -122,8 +135,10 @@ DeterministicWorkflowStep = Union[
 	KeyPressStep,
 	ScrollStep,
 	PageExtractionStep,
+	ClickToCopyStep,
 	ClipboardCopyStep,
 	ClipboardPasteStep,
+	ClipboardCaptureStep,
 ]
 
 AgenticWorkflowStep = AgentTaskWorkflowStep

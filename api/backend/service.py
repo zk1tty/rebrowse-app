@@ -11,9 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import requests
+from backend.logging_broadcast import execution_id_var
 from browser_use import Browser
 from browser_use.controller.service import Controller
-from langchain_openai import ChatOpenAI
+from browser_use.llm.openai.chat import ChatOpenAI  # Correct provider import
 from supabase import Client
 import aiofiles
 import psutil
@@ -26,6 +27,11 @@ from workflow_use.builder.service import BuilderService
 
 from .dependencies import supabase
 from .execution_history_service import get_execution_history_service
+from .decrypt_cookies import (
+    get_cookie_upload_by_id,
+    get_latest_verified_cookie_upload,
+    decrypt_storage_state_row,
+)
 from .views import (
 	TaskInfo,
 	WorkflowAddRequest,
@@ -67,11 +73,12 @@ class WorkflowService:
 		self.log_dir: Path = self.tmp_dir / 'logs'
 		self.log_dir.mkdir(exist_ok=True, parents=True)
 
-		# LLM / workflow executor
+		# LLM / workflow executor (use browser_use.llm provider for Agent fallback)
 		try:
-			self.llm_instance = ChatOpenAI(model='gpt-4.1-mini')
+			model_name = os.getenv('BROWSER_USE_MODEL', 'gpt-4o')
+			self.llm_instance = ChatOpenAI(model=model_name, api_key=os.getenv('OPENAI_API_KEY'))
 		except Exception as exc:
-			print(f'Error initializing LLM: {exc}. Ensure OPENAI_API_KEY is set.')
+			print(f'Error initializing browser_use OpenAI LLM: {exc}. Ensure OPENAI_API_KEY and model are set.')
 			self.llm_instance = None
 
 		# Browser configuration for production/Railway
@@ -84,6 +91,23 @@ class WorkflowService:
 		self.active_tasks: Dict[str, TaskInfo] = {}
 		self.workflow_tasks: Dict[str, asyncio.Task] = {}
 		self.cancel_events: Dict[str, asyncio.Event] = {}
+
+	def _get_storage_state_for_user(self, user_id: Optional[str]) -> Optional[dict]:
+		"""Fetch latest verified cookies for user and decrypt to Playwright storage_state dict.
+
+		Returns None on any failure. Plaintext is not persisted.
+		"""
+		if not user_id:
+			return None
+		try:
+			row = get_latest_verified_cookie_upload(user_id)
+			if not row:
+				return None
+			state = decrypt_storage_state_row(row)
+			return state
+		except Exception as e:
+			logger.info(f"No storage_state available for user {user_id}: {e}")
+			return None
 
 	def _cleanup_browser_profile(self, profile_path: str = None) -> bool:
 		"""Clean up browser profile directory to prevent SingletonLock conflicts"""
@@ -197,33 +221,31 @@ class WorkflowService:
 				print("[WorkflowService] Searched paths:", playwright_chromium_paths)
 				print("[WorkflowService] Make sure 'playwright install chromium' was run")
 			
-			# Optimized arguments for cloud execution with better navigation support
+			# Optimized arguments for cloud execution with better navigation support (lean set)
 			base_args = [
-					'--no-sandbox',  # Required for Docker/Railway
-					'--disable-dev-shm-usage',  # Overcome limited resource problems
-					'--disable-web-security',  # Disable web security for automation
-					'--disable-features=VizDisplayCompositor',  # Disable compositor
-					'--disable-background-timer-throttling',  # Disable background throttling
+					'--no-sandbox',
+					'--disable-dev-shm-usage',
+					'--disable-web-security',
+					'--disable-background-timer-throttling',
 					'--disable-backgrounding-occluded-windows',
 					'--disable-renderer-backgrounding',
-					'--disable-extensions',  # Disable extensions for security
-					'--no-first-run',  # Skip first run setup
-					'--no-default-browser-check',  # Skip default browser check
-					'--disable-default-apps',  # Disable default apps
-					'--disable-component-update',  # Disable component updates
-					'--disable-background-networking',  # Disable background networking
-					'--disable-sync',  # Disable sync
-					'--metrics-recording-only',  # Disable metrics uploading
-					'--no-report-upload',  # Don't upload crash reports
-					'--disable-breakpad',  # Disable crash reporting
-					# Network and navigation improvements
-					'--aggressive-cache-discard',  # Better memory management
-					'--enable-automation',  # Enable automation features
-					'--disable-blink-features=AutomationControlled',  # Hide automation detection
-					'--disable-client-side-phishing-detection',  # Disable phishing detection that can block navigation
-					'--disable-features=TranslateUI',  # Disable translate UI
-					'--disable-ipc-flooding-protection',  # Allow more IPC messages
-					'--max_old_space_size=4096',  # Increase memory limit
+					'--disable-extensions',
+					'--no-first-run',
+					'--no-default-browser-check',
+					'--disable-default-apps',
+					'--disable-component-update',
+					'--disable-background-networking',
+					'--disable-sync',
+					'--metrics-recording-only',
+					'--no-report-upload',
+					'--disable-breakpad',
+					'--aggressive-cache-discard',
+					'--enable-automation',
+					'--no-zygote',
+					# '--disable-blink-features=AutomationControlled',
+					'--disable-client-side-phishing-detection',
+					'--disable-features=TranslateUI',
+					'--max_old_space_size=512',
 			]
 			
 			# Standard headless configuration with better navigation support
@@ -283,7 +305,7 @@ class WorkflowService:
 				'--disable-default-browser-check',  # Skip default browser check
 				'--disable-extensions',  # Disable extensions for consistency
 				'--enable-automation',  # Enable automation features
-				'--disable-blink-features=AutomationControlled',  # Hide automation detection
+				# '--disable-blink-features=AutomationControlled',  # Hide automation detection # TODO: Remove this for LinkedIn auth?
 				'--disable-client-side-phishing-detection',  # Disable phishing detection
 				'--disable-features=TranslateUI',  # Disable translate UI
 				'--disable-background-networking',  # Disable background networking
@@ -636,13 +658,14 @@ class WorkflowService:
 		visual_streaming: bool = False,
 		visual_quality: str = "standard",
 		visual_events_buffer: int = 1000,
+		forced_execution_id: Optional[str] = None,
 	) -> None:
 		"""Execute a workflow from database with enhanced visual streaming support using rrweb."""
 		log_file = self.log_dir / 'backend.log'
 		temp_file = None
 		session_id = f"visual-{task_id}"
 		execution_start_time = time.time()
-		execution_id = None
+		execution_id = forced_execution_id if forced_execution_id else None
 		
 		# Get execution history service for tracking
 		from backend.execution_history_service import get_execution_history_service
@@ -666,28 +689,38 @@ class WorkflowService:
 				raise ValueError(f"Workflow {workflow_id} not found in database")
 			
 			# Verify ownership if owner_id provided
-			if owner_id and workflow_data.get('owner_id') and workflow_data.get('owner_id') != owner_id:
-				raise ValueError(f"Access denied: User {owner_id} does not own workflow {workflow_id}")
+			# Allow execution for public workflows
+			# if owner_id and workflow_data.get('owner_id') and workflow_data.get('owner_id') != owner_id:
+			# 	raise ValueError(f"Access denied: User {owner_id} does not own workflow {workflow_id}")
 			
 			workflow_name = workflow_data.get('name', f'workflow_{workflow_id}')
 			
-			# STEP 1: Create execution record in database
-			try:
-				execution_id = await execution_service.create_execution_record(
-					workflow_id=workflow_id,
-					user_id=owner_id,
-					inputs=inputs,
-					mode=mode,
-					visual_enabled=visual,
-					visual_streaming_enabled=visual_streaming,
-					visual_quality=visual_quality,
-					session_id=session_id if visual_streaming else None
-				)
-				await self._write_log(log_file, f"[{self._get_timestamp()}] Created execution record: {execution_id}\n")
-			except Exception as e:
-				await self._write_warning_log(log_file, f"Failed to create execution record: {e}")
-				# Continue execution even if database tracking fails
+			# STEP 1: Create execution record in database if not pre-created
+			if not execution_id:
+				try:
+					execution_id = await execution_service.create_execution_record(
+						workflow_id=workflow_id,
+						user_id=owner_id,
+						inputs=inputs,
+						mode=mode,
+						visual_enabled=visual,
+						visual_streaming_enabled=visual_streaming,
+						visual_quality=visual_quality,
+						session_id=session_id if visual_streaming else None
+					)
+					await self._write_log(log_file, f"[{self._get_timestamp()}] Created execution record: {execution_id}\n")
+				except Exception as e:
+					await self._write_warning_log(log_file, f"Failed to create execution record: {e}")
+					# Continue execution even if database tracking fails
 			
+			# Tag logs with execution_id for broadcast duration
+			ctx_token = None
+			try:
+				if execution_id:
+					ctx_token = execution_id_var.set(execution_id)
+			except Exception:
+				ctx_token = None
+
 			# Initialize task info with visual streaming fields
 			from backend.views import TaskInfo
 			task_info = TaskInfo(
@@ -764,13 +797,53 @@ class WorkflowService:
 						except Exception as e:
 							await self._write_error_log(log_file, f'Error in streaming callback: {e}')
 					
-					# Create browser + recorder using new architecture
+					# Create browser + recorder using rrweb architecture
 					await self._write_log(log_file, f'[{self._get_timestamp()}] Creating browser with rrweb using new architecture...\n')
+					
+
+					storage_state_data = None
+					# 0. Try latest verified DB record for this owner (guarded by FEATURE_USE_COOKIES)
+					try:
+						if os.getenv('FEATURE_USE_COOKIES', 'true').lower() == 'true':
+							storage_state_data = self._get_storage_state_for_user(owner_id)
+						if storage_state_data:
+							await self._write_log(log_file, f'[{self._get_timestamp()}] Loaded storage_state from DB for user {owner_id}\n')
+					except Exception as _e:
+						await self._write_warning_log(log_file, f'Failed to load storage_state from DB: {_e}')
+
+					# Fallback 1: legacy per-user file
+					if storage_state_data is None:
+						user_dir = Path.home() / '.browseruse' / 'profiles' / owner_id
+						print(f'[WorkflowService] User directory: {user_dir}')
+						user_storage_state_path = Path(user_dir) / 'storage_state.json'
+						if user_storage_state_path.exists():
+							with open(user_storage_state_path, 'r') as user_storage_file:
+								storage_state_data = json.load(user_storage_file)
+
+					# TODO: this fallback is no longer needed?
+					# Fallback 2: env or repo file
+					if storage_state_data is None:
+						import base64
+						try:
+							b64 = os.getenv('STORAGE_STATE_JSON_B64')
+							if b64:
+								storage_state_data = json.loads(base64.b64decode(b64).decode('utf-8'))
+							elif os.path.exists('storage_state.json'):
+								with open('storage_state.json', 'r') as _f:
+									storage_state_data = json.load(_f)
+						except Exception as _e:
+							await self._write_warning_log(log_file, f'Failed to load storage_state from env/file: {_e}')
+
+					# If still None, proceed anonymously (fallback)
+					if storage_state_data is None:
+						await self._write_warning_log(log_file, 'No verified storage_state; Anonymous mode.')
+
 					browser_for_workflow, rrweb_recorder = await browser_factory.create_browser_with_rrweb(
 						mode='visual',
 						session_id=session_id,
 						event_callback=streaming_callback,
-						headless=True
+						headless=True,
+						storage_state=storage_state_data,
 					)
 					
 					# Attach recorder to browser for controller access
@@ -843,7 +916,8 @@ class WorkflowService:
 			workflow = Workflow.load_from_file(
 				str(temp_file),
 				browser=browser_for_workflow,
-				llm=self.llm_instance
+				llm=self.llm_instance,
+				run_id=execution_id
 			)
 			
 			# Check for cancellation before execution
@@ -947,8 +1021,21 @@ class WorkflowService:
 			execution_time_seconds = execution_end_time - execution_start_time
 			
 			await self._write_error_log(log_file, f'[{self._get_timestamp()}] Session workflow error: {exc}\n')
-			self.active_tasks[task_id].status = 'failed'
-			self.active_tasks[task_id].error = str(exc)
+			
+			# Fix: Only update task status if task exists in active_tasks
+			if task_id in self.active_tasks:
+				self.active_tasks[task_id].status = 'failed'
+				self.active_tasks[task_id].error = str(exc)
+			else:
+				# Create task info if it doesn't exist (for early failures)
+				from backend.views import TaskInfo
+				task_info = TaskInfo(
+					status='failed',
+					workflow=f'workflow_{workflow_id}',
+					result=None,
+					error=str(exc),
+				)
+				self.active_tasks[task_id] = task_info
 
 			# Mark browser not ready on error
 			if visual_streaming and session_id:
@@ -986,6 +1073,13 @@ class WorkflowService:
 				except Exception as update_error:
 					await self._write_warning_log(log_file, f'Failed to update execution record with error: {update_error}')
 		finally:
+			# Reset execution_id contextvar
+			try:
+				if 'ctx_token' in locals() and ctx_token is not None:
+					execution_id_var.reset(ctx_token)
+			except Exception:
+				pass
+
 			# Clean up temporary file
 			if temp_file and temp_file.exists():
 				try:
@@ -1023,7 +1117,8 @@ class WorkflowService:
 					await self._write_warning_log(log_file, f'Error stopping visual streaming: {e}\n')
 
 			# Cleanup browser instance (only if it's the regular browser, not the visual browser)
-			if browser and browser != browser_for_workflow:
+			# Fix: Check if browser variable exists and is not None before using it
+			if 'browser' in locals() and browser and browser != browser_for_workflow:
 				try:
 					await browser.close()
 					await self._write_log(log_file, f'[{self._get_timestamp()}] Regular browser instance closed\n')

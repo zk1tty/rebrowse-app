@@ -17,7 +17,7 @@ cmds = [
 ]
 
 [start]
-cmd = "xvfb-run -a -s '-screen 0 1920x1080x24' python -m uvicorn backend.api:app --host 0.0.0.0 --port $PORT"
+cmd = "python -m uvicorn backend.api:app --host 0.0.0.0 --port $PORT"
 
 [variables]
-DISPLAY = ":99" 
+# No DISPLAY needed for headless Chromium
