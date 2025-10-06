@@ -3,7 +3,7 @@ import { Toaster as Sonner } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import React, { useCallback, memo } from 'react';
+import React, { memo } from 'react';
 import { AppProvider } from './contexts/AppContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Index from './pages/Index';
@@ -12,10 +12,8 @@ import ProcessingPage from './pages/ProcessingPage.tsx';
 import NotFound from './pages/NotFound';
 import DevToolsViewer from './components/DevToolsViewer';
 import RRWebVisualizer from './components/RRWebVisualizer';
-import VisualStreamingOverlay from './components/VisualStreamingOverlay';
 import { useExtensionIntegration } from './hooks/useExtensionIntegration';
 import { Analytics } from "@vercel/analytics/react";
-import { useAppContext } from './contexts/AppContext';
 
 const queryClient = new QueryClient();
 
@@ -37,38 +35,9 @@ const ExtensionIntegrationWrapper: React.FC<{ children: React.ReactNode }> = ({ 
   );
 };
 
-// Overlay Wrapper Component (inside AppProvider) - FIXED: Memoized to prevent infinite re-renders
+// Wrapper retained for future global portals, currently pass-through
 const OverlayWrapperComponent = memo<{ children: React.ReactNode }>(({ children }) => {
-  const { 
-    visualOverlayActive, 
-    currentStreamingSession, 
-    overlayWorkflowInfo,
-    setVisualOverlayActive,
-    setCurrentStreamingSession,
-    setOverlayWorkflowInfo
-  } = useAppContext();
-
-  // FIXED: Memoize the callback to prevent recreation on every render
-  const handleOverlayClose = useCallback(() => {
-    console.log('🚪 [OverlayWrapper] Closing visual overlay...');
-    setVisualOverlayActive(false);
-    setCurrentStreamingSession(null);
-    setOverlayWorkflowInfo(null);
-  }, [setVisualOverlayActive, setCurrentStreamingSession, setOverlayWorkflowInfo]);
-
-  return (
-    <>
-      {children}
-      {visualOverlayActive && currentStreamingSession && overlayWorkflowInfo && (
-        <VisualStreamingOverlay
-          sessionId={currentStreamingSession}
-          workflowInfo={overlayWorkflowInfo}
-          isOpen={visualOverlayActive}
-          onClose={handleOverlayClose}
-        />
-      )}
-    </>
-  );
+  return <>{children}</>;
 });
 
 // Enhanced memoization

@@ -1,31 +1,25 @@
 import { 
   Play, 
-  Settings, 
   Edit3, 
   Blocks, 
   SidebarOpen, 
-  Terminal, 
   Palette, 
   LogIn, 
-  LogOut,
   Moon, 
   Sun, 
-  Link, 
   ExternalLink,
-  CheckCircle,
   AlertTriangle,
   Loader2,
-  UserCheck,
-  RefreshCw,
-  User,
-  BarChart3
+  BarChart3,
+  Cookie
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useEffect, useState } from 'react';
-import { hasValidSessionToken, canEditWorkflow, clearStoredAuth } from '@/utils/authUtils';
+import { hasValidSessionToken, canEditWorkflow, getStoredSessionToken, getAuthType } from '@/utils/authUtils';
+import { detectExtensionContext, sendMessageToExtension } from '@/utils/extensionUtils';
 import { useSessionValidation } from '@/hooks/useSessionValidation';
 import SessionLoginModal from '@/components/SessionLoginModal';
 import SessionStatus from '@/components/SessionStatus';
@@ -44,8 +38,8 @@ export function TopToolbar() {
     currentUserSessionToken,
     isCurrentUserOwner,
     isCurrentWorkflowPublic,
-    authRefreshTrigger,
-    setCurrentUserSessionToken
+    // authRefreshTrigger,
+    // setCurrentUserSessionToken
   } = useAppContext();
   
   const { theme, toggleTheme } = useTheme();
@@ -54,7 +48,7 @@ export function TopToolbar() {
   const [showUserConsole, setShowUserConsole] = useState(false);
   
   // Use the new session validation hook for real-time authentication status
-  const { isValid: hasValidSession, isChecking: isValidatingSession, error: sessionError } = useSessionValidation(30000);
+  const { isValid: hasValidSession, isChecking: isValidatingSession } = useSessionValidation(30000);
   
   // For backward compatibility, also check the stored token
   const hasSessionToken = hasValidSessionToken(currentUserSessionToken) && hasValidSession;
@@ -67,18 +61,37 @@ export function TopToolbar() {
   );
   const canExecute = hasSessionToken || isCurrentWorkflowPublic;
 
+  // Determine anonymous state
+  // Prefer explicit auth type flag, fallback to heuristic (context token without stored token)
+  const storedToken = getStoredSessionToken();
+  const authType = getAuthType();
+  const isAnonymous = Boolean(authType === 'anonymous' || (currentUserSessionToken && !storedToken));
+
   // Handle logout
-  const handleLogout = () => {
-    clearStoredAuth();
-    setCurrentUserSessionToken(null);
-    toast({
-      title: 'Logged Out',
-      description: 'You have been successfully logged out.',
-    });
-  };
+  // const handleLogout = () => {
+  //   clearStoredAuth();
+  //   setCurrentUserSessionToken(null);
+  //   toast({
+  //     title: 'Logged Out',
+  //     description: 'You have been successfully logged out.',
+  //   });
+  // };
 
   // Dynamic Login Banner Component
   const LoginStatusBanner = () => {
+    const handleLoginAsYouClick = async () => {
+      try {
+        const context = detectExtensionContext();
+        if (context.isExtension) {
+          await sendMessageToExtension({ type: 'OPEN_AUTH_POPUP' });
+          return;
+        }
+        // Fallback: open in-app login modal when not in extension context
+        setShowLoginModal(true);
+      } catch {
+        setShowLoginModal(true);
+      }
+    };
     // Case 1: No session token at all
     if (!currentUserSessionToken) {
       return (
@@ -109,12 +122,27 @@ export function TopToolbar() {
       );
     }
 
-    // Case 3: Session is valid and authenticated - show nothing
+    // Case 3: Anonymous session active -> prompt to login as real user via extension
+    if (isAnonymous) {
+      return (
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={handleLoginAsYouClick}
+          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 text-base px-6 py-3 border-blue-200"
+        >
+          <Cookie className="w-5 h-5" />
+          Login as you
+        </Button>
+      );
+    }
+
+    // Case 4: Session is valid and authenticated - show nothing
     if (hasValidSession && hasSessionToken) {
       return null;
     }
 
-    // Case 4: Session token exists but is invalid/expired
+    // Case 5: Session token exists but is invalid/expired
     if (currentUserSessionToken && !hasValidSession) {
       return (
         <Button
@@ -150,9 +178,16 @@ export function TopToolbar() {
     const handleOpenUserConsole = () => {
       setShowUserConsole(true);
     };
+    const handleOpenLoginModal = () => {
+      setShowLoginModal(true);
+    };
     
     window.addEventListener('openUserConsole', handleOpenUserConsole);
-    return () => window.removeEventListener('openUserConsole', handleOpenUserConsole);
+    window.addEventListener('openLoginModal', handleOpenLoginModal);
+    return () => {
+      window.removeEventListener('openUserConsole', handleOpenUserConsole);
+      window.removeEventListener('openLoginModal', handleOpenLoginModal);
+    };
   }, []);
 
   const handleRunWithInputs = () => {
@@ -167,17 +202,17 @@ export function TopToolbar() {
     setActiveDialog('run');
   };
 
-  const handleRunAsTool = () => {
-    if (!canExecute) {
-      setShowLoginModal(true);
-      return;
-    }
-    if (checkForUnsavedChanges()) {
-      return;
-    }
-    console.log('Running workflow as tool:', currentWorkflowData?.name);
-    setActiveDialog('runAsTool');
-  };
+  // const handleRunAsTool = () => {
+  //   if (!canExecute) {
+  //     setShowLoginModal(true);
+  //     return;
+  //   }
+  //   if (checkForUnsavedChanges()) {
+  //     return;
+  //   }
+  //   console.log('Running workflow as tool:', currentWorkflowData?.name);
+  //   setActiveDialog('runAsTool');
+  // };
 
   const handleToggleMode = () => {
     if (displayMode === 'canvas' && !canEdit) {
@@ -308,26 +343,13 @@ export function TopToolbar() {
               className={`flex items-center gap-2 text-base px-6 py-3 disabled:opacity-50 ${
                 theme === 'dark' 
                   ? 'text-white border-gray-600 hover:bg-gray-800' 
-                  : 'text-white'
+                  : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200'
               }`}
               title={!canExecute ? 'Login required to execute workflows' : ''}
             >
               <Play className="w-5 h-5" />
               {!canExecute ? 'Run' : 'Run'}
             </Button>
-
-            {/* tempolary disabled Run as Tool
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={handleRunAsTool}
-              disabled={!currentWorkflowData || workflowStatus === 'running' || !canExecute}
-              className="flex items-center gap-2 text-base px-6 py-3 disabled:opacity-50"
-              title={!canExecute ? 'Login required to execute workflows' : ''}
-            >
-              <Settings className="w-5 h-5" />
-              {!canExecute ? 'Login to Run' : 'Run as Tool'}
-            </Button> */}
 
             <Button
               variant="default"

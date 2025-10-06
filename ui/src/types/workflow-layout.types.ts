@@ -30,6 +30,7 @@ export const stepSchema = z.object({
     'extract_page_content',
     'clipboard_copy',
     'clipboard_paste',
+    'click_to_copy',
   ]),
 
   /* optional fields (vary by step type) */
@@ -41,6 +42,8 @@ export const stepSchema = z.object({
   selectedText: z.string().nullable().optional(),
   value: z.string().nullable().optional(),
   task: z.string().nullable().optional(),
+  content: z.string().nullable().optional(),
+  timeoutMs: z.number().int().nullable().optional(),
 });
 
 /* ── Execution Statistics ──────────────────────────────────────────── */

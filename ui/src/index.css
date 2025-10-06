@@ -1,3 +1,31 @@
+/* Custom scrollbars for log viewer */
+.scrollbar-dark::-webkit-scrollbar {
+  width: 10px;
+}
+.scrollbar-dark::-webkit-scrollbar-track {
+  background: #1f2937; /* gray-800 */
+}
+.scrollbar-dark::-webkit-scrollbar-thumb {
+  background: #9ca3af; /* gray-400 */
+  border-radius: 8px;
+}
+.scrollbar-dark::-webkit-scrollbar-thumb:hover {
+  background: #e5e7eb; /* gray-200 (off-white) */
+}
+
+.scrollbar-light::-webkit-scrollbar {
+  width: 10px;
+}
+.scrollbar-light::-webkit-scrollbar-track {
+  background: #f3f4f6; /* gray-100 */
+}
+.scrollbar-light::-webkit-scrollbar-thumb {
+  background: #9ca3af; /* gray-400 */
+  border-radius: 8px;
+}
+.scrollbar-light::-webkit-scrollbar-thumb:hover {
+  background: #6b7280; /* gray-500 */
+}
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

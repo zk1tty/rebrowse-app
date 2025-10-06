@@ -14,7 +14,8 @@ import { createEnhancedWorkflowService } from '@/services/enhancedWorkflowServic
 // import { fetchWorkflowLogs, cancelWorkflow } from '@/services/pollingService';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
-import { hasValidSessionToken, getStoredSessionToken } from '@/utils/authUtils';
+import { hasValidSessionToken, getStoredSessionToken, storeAnonymousSessionToken } from '@/utils/authUtils';
+import { API_ENDPOINTS } from '@/lib/constants';
 
 export type DisplayMode = 'canvas' | 'editor' | 'start';
 export type DialogType =
@@ -28,6 +29,7 @@ export type SidebarStatus = 'loading' | 'ready' | 'error';
 export type EditorStatus = 'saved' | 'unsaved';
 export type WorkflowStatus =
   | 'idle'
+  | 'starting'
   | 'running'
   | 'failed'
   | 'cancelling'
@@ -52,13 +54,15 @@ interface AppContextType {
   sidebarStatus: SidebarStatus;
   editorStatus: EditorStatus;
   setEditorStatus: (status: EditorStatus) => void;
+  // Allow external components (e.g., overlay wrapper) to set workflow status
+  setWorkflowAppStatus: (status: WorkflowStatus) => void;
   currentWorkflowData: Workflow | null;
   isCurrentWorkflowPublic: boolean;
   currentUserSessionToken: string | null;
   isCurrentUserOwner: boolean;
   workflows: EnhancedWorkflow[];
   activeExecutions: Record<string, ActiveExecution>;
-  // Visual Streaming Overlay States
+  // VIew Mode Overlay States
   visualOverlayActive: boolean;
   currentStreamingSession: string | null;
   overlayWorkflowInfo: {
@@ -67,6 +71,8 @@ interface AppContextType {
     mode: string;
     hasStreamingSupport?: boolean;
   } | null;
+  currentRunId: string | null;
+  setCurrentRunId: (runId: string | null) => void;
   setVisualOverlayActive: (active: boolean) => void;
   setCurrentStreamingSession: (sessionId: string | null) => void;
   setOverlayWorkflowInfo: (info: { name: string; taskId: string; mode: string; hasStreamingSupport?: boolean } | null) => void;
@@ -99,6 +105,9 @@ interface AppContextType {
   setIsCurrentUserOwner: (isOwner: boolean) => void;
   refreshAuthenticationStatus: () => void;
   authRefreshTrigger: number;
+  anonymousUserId: string | null;
+  isAnonymousUser: boolean;
+  isInitializingAnonymous: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -142,12 +151,19 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const [currentExecutionMode, setCurrentExecutionMode] = useState<'cloud-run' | 'local-run' | null>(null);
   const [currentExecutionInputs, setCurrentExecutionInputs] = useState<any | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const logsWsRef = useRef<WebSocket | null>(null);
   const [recordingStatus, setRecordingStatus] =
     useState<RecordingStatus>('idle');
   const [recordingData, setRecordingData] = useState<any>(null);
   const [authRefreshTrigger, setAuthRefreshTrigger] = useState<number>(0);
 
-  // Visual Streaming Overlay States
+  // Anonymous user support
+  const [anonymousUserId, setAnonymousUserId] = useState<string | null>(null);
+  const [isAnonymousUser, setIsAnonymousUser] = useState<boolean>(false);
+  const [isInitializingAnonymous, setIsInitializingAnonymous] = useState<boolean>(false);
+  const anonymousInitPromiseRef = useRef<Promise<string | null> | null>(null);
+
+  // View Mode Overlay States
   const [visualOverlayActive, setVisualOverlayActive] = useState(false);
   const [currentStreamingSession, setCurrentStreamingSession] = useState<string | null>(null);
   const [overlayWorkflowInfo, setOverlayWorkflowInfo] = useState<{
@@ -156,13 +172,17 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     mode: string;
     hasStreamingSupport?: boolean;
   } | null>(null);
-
-
+  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
 
   // Wrapper function to handle both workflow data and public flag
   const setCurrentWorkflowData = useCallback((workflow: Workflow | null, isPublic: boolean = false) => {
     setCurrentWorkflowDataState(workflow);
     setIsCurrentWorkflowPublic(isPublic);
+  }, []);
+
+  // Expose safe workflow status setter for external events (e.g., visual completion)
+  const setWorkflowAppStatus = useCallback((status: WorkflowStatus) => {
+    setWorkflowStatus(status);
   }, []);
 
   const checkForUnsavedChanges = useCallback(() => {
@@ -189,14 +209,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
 
   const selectWorkflow = useCallback(
     (workflowName: string) => {
-      console.log("[selectWf] wfname:", workflowName);
+      
       if (checkForUnsavedChanges()) {
         return;
       }
-      console.log("[selectWf] workflows:", workflows);
-      console.log("[selectWf] obj:", Object.keys(workflows));
+      
       const wf = workflows.find((w) => w.name === workflowName);
-      console.log("[selectWf] wf:", wf);
+      
       if (wf) {
         setCurrentWorkflowData(wf, false); // Private workflows are not public
       } else {
@@ -260,6 +279,17 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     }
   }, []);
 
+  const closeLogsWebSocket = useCallback(() => {
+    if (logsWsRef.current) {
+      try {
+        logsWsRef.current.close();
+      } catch (e) {
+        // noop
+      }
+      logsWsRef.current = null;
+    }
+  }, []);
+
   const startPollingLogs = useCallback(
     (taskId: string) => {
       stopPollingLogs();
@@ -319,16 +349,99 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     [logPosition, workflowStatus, stopPollingLogs]
   );
 
+  const startLogsWebSocket = useCallback((executionId: string) => {
+    // Always clean any existing connection
+    closeLogsWebSocket();
+
+    try {
+      const wsUrl = API_ENDPOINTS.LOGS_STREAM_WS(executionId);
+      console.log(`[Logs] Connecting WebSocket (execution_id=${executionId}):`, wsUrl);
+      const ws = new WebSocket(wsUrl);
+      logsWsRef.current = ws;
+
+      // Clear logs when a fresh connection opens
+      setLogData([]);
+
+      ws.onopen = () => {
+        console.log('[Logs] WebSocket connected');
+      };
+
+      ws.onmessage = (event: MessageEvent) => {
+        const pushMessage = (msg: string) => {
+          setLogData((prev) => [...prev, msg]);
+        };
+        const parseAndAppend = (text: string) => {
+          try {
+            const parsed = JSON.parse(text);
+            const message = parsed?.message ?? parsed?.data?.message ?? null;
+            if (message != null) {
+              pushMessage(String(message));
+            } else {
+              // If no message field, append raw for visibility
+              console.log('[Logs] no message field, raw:', text?.slice?.(0, 200));
+              pushMessage(text);
+            }
+          } catch (e) {
+            // Not JSON; append raw
+            console.log('[Logs] non-JSON frame:', text?.slice?.(0, 200));
+            pushMessage(text);
+          }
+        };
+
+        const raw = event.data;
+        if (typeof raw === 'string') {
+          parseAndAppend(raw);
+        } else if (raw instanceof Blob) {
+          raw.text().then(parseAndAppend).catch(() => {
+            console.warn('[Logs] failed to read Blob frame');
+          });
+        } else if (raw instanceof ArrayBuffer) {
+          try {
+            const text = new TextDecoder().decode(new Uint8Array(raw));
+            parseAndAppend(text);
+          } catch {
+            console.warn('[Logs] failed to decode ArrayBuffer frame');
+          }
+        } else {
+          console.warn('[Logs] unsupported WS frame type');
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('[Logs] WebSocket error:', err);
+        // Fallback to polling if WS fails
+        closeLogsWebSocket();
+        startPollingLogs(executionId);
+      };
+
+      ws.onclose = (evt: CloseEvent) => {
+        console.log('[Logs] WebSocket closed:', evt.code, evt.reason);
+        // If closed unexpectedly and workflow still running, fallback to polling
+        const abnormal = evt.code !== 1000;
+        if (abnormal && workflowStatus === 'running') {
+          startPollingLogs(executionId);
+        }
+      };
+    } catch {
+      // If creation throws, fallback to polling
+      startPollingLogs(executionId);
+    }
+  }, [closeLogsWebSocket, startPollingLogs, workflowStatus]);
+
   const cancelWorkflowExecution = useCallback(async (taskId: string) => {
     try {
       setWorkflowStatus('cancelling');
       await workflowService.cancelWorkflow(taskId);
+      // Reflect cancellation immediately in UI
+      setWorkflowStatus('cancelled');
+      stopPollingLogs();
+      closeLogsWebSocket();
     } catch (err) {
       console.error('Failed to cancel workflow:', err);
       setWorkflowError('Failed to cancel workflow');
       setWorkflowStatus('failed');
     }
-  }, []);
+  }, [stopPollingLogs, closeLogsWebSocket]);
 
   const executeWorkflow = useCallback(
     async (
@@ -337,18 +450,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       mode: 'cloud-run' | 'local-run' = 'cloud-run',
       visual: boolean = false
     ) => {
-      if (!hasValidSessionToken(currentUserSessionToken)) {
-        toast({
-          title: 'Authentication Required',
-          description: 'Please login through the Chrome extension to execute workflows.',
-          variant: 'destructive',
-        });
-        return;
-      }
-
+      // Removed authentication check - always allow execution
+      
       setWorkflowStatus('starting');
       setWorkflowError(null);
       setActiveDialog(null);
+      setLogData([]);
+      closeLogsWebSocket();
 
       try {
         // Show toast for visual mode
@@ -358,11 +466,107 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
             description: `Starting ${mode === 'cloud-run' ? '☁️ cloud-run' : '🖥️ local-run'} execution with live browser view...`,
           });
         }
+        
+        // Ensure-on-demand: make sure we have a session token before executing
+        const ensureAnonymousUser = async (): Promise<string | null> => {
+          if (hasValidSessionToken(currentUserSessionToken)) {
+            return currentUserSessionToken;
+          }
+          if (anonymousInitPromiseRef.current) {
+            return anonymousInitPromiseRef.current;
+          }
+          // Start a single in-flight initialization to avoid parallel calls
+          anonymousInitPromiseRef.current = (async () => {
+            setIsInitializingAnonymous(true);
+            try {
+              // Try to use existing Supabase client
+              let supabaseClient: any = null;
+              try {
+                const { supabase } = await import('@/lib/api');
+                supabaseClient = supabase;
+              } catch {
+                supabaseClient = null;
+              }
+
+              // 1) Check for existing session
+              if (supabaseClient) {
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                if (session?.access_token) {
+                  setCurrentUserSessionToken(session.access_token);
+                  return session.access_token;
+                }
+                // 2) Attempt anonymous sign-in
+                try {
+                  console.info('[Auth] Attempting anonymous sign-in...');
+                  const { data, error } = await supabaseClient.auth.signInAnonymously();
+
+                  if (!error && data?.session?.access_token) {
+                    console.info('[Auth] Anonymous sign-in succeeded. User is anonymous:', data.user?.is_anonymous === true);
+                    setAnonymousUserId(data.user?.id ?? null);
+                    setIsAnonymousUser(true);
+                    setCurrentUserSessionToken(data.session.access_token);
+                    // Persist anonymous session token for page reload/navigation
+                    storeAnonymousSessionToken(data.session.access_token);
+                    return data.session.access_token;
+                  }
+                  if (error) {
+                    // Log detailed error information to diagnose 401s
+                    console.error('[Auth] Anonymous sign-in failed:', {
+                      name: (error as any)?.name,
+                      message: (error as any)?.message,
+                      status: (error as any)?.status,
+                      code: (error as any)?.code,
+                    });
+                  }
+                } catch {
+                  // ignore; we'll fall back to race guard
+                }
+              }
+
+              // 3) Race-condition guard: wait up to 10s for token to appear
+              const maxAttempts = 100;
+              let attempts = 0;
+              while (attempts < maxAttempts) {
+                // Try to read a fresh session directly from Supabase in case state lags
+                try {
+                  if (supabaseClient) {
+                    const { data: { session } } = await supabaseClient.auth.getSession();
+                    if (session?.access_token) {
+                      setCurrentUserSessionToken(session.access_token);
+                      return session.access_token;
+                    }
+                  }
+                } catch {
+                  // ignore and retry
+                }
+                // Fallback to state if already set
+                if (hasValidSessionToken(currentUserSessionToken)) {
+                  return currentUserSessionToken;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+                attempts++;
+              }
+              return null;
+            } finally {
+              setIsInitializingAnonymous(false);
+            }
+          })();
+          try {
+            return await anonymousInitPromiseRef.current;
+          } finally {
+            anonymousInitPromiseRef.current = null;
+          }
+        };
+
+        // Non-blocking app start: we only ensure right before execution
+        const ensuredToken = await ensureAnonymousUser();
+        console.log('Anonymous token:', ensuredToken);
+        console.log('Current user session token:', currentUserSessionToken);
 
         const result = await workflowService.executeWorkflow(
           workflowId,
           inputFields,
-          currentUserSessionToken!,
+          (ensuredToken || currentUserSessionToken) || undefined, // Pass undefined instead of null
           mode,
           visual
         );
@@ -412,10 +616,18 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
           setDisplayMode('canvas');
         }
         
-        // Only start log polling for non-visual workflows
-        // Visual streaming workflows handle their own status through RRWebVisualizer
-        if (!visual || (!result.visual_enabled && !result.visual_streaming_enabled)) {
-          startPollingLogs(result.task_id);
+        // Start live logs via WebSocket using execution_id only
+        const executionId = (result as any).execution_id as string | undefined;
+        console.log('[Logs] execution_id from executeWorkflow:', executionId);
+        if (executionId) {
+          startLogsWebSocket(executionId);
+        } else {
+          console.warn('[Logs] No execution_id returned in execute response; skipping WS logs.');
+        }
+        // Capture runId for step event stream when available
+        const runId = (result as any).execution_id as string | undefined;
+        if (runId) {
+          setCurrentRunId(runId);
         }
       } catch (err) {
         console.error('Workflow execution failed:', err);
@@ -425,7 +637,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         
         if (err instanceof Error) {
           const errorText = err.message.toLowerCase();
-          
+
           // Handle authentication-related errors
           if (errorText.includes('jwt') || errorText.includes('session authentication') || errorText.includes('unauthorized')) {
             errorMessage = 'Please login through the Chrome extension to execute workflows.';
@@ -442,9 +654,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         setWorkflowError(errorMessage);
         setWorkflowStatus('failed');
         stopPollingLogs();
+        closeLogsWebSocket();
       }
     },
-    [startPollingLogs, stopPollingLogs, setDisplayMode, currentUserSessionToken]
+    [startLogsWebSocket, stopPollingLogs, setDisplayMode, currentUserSessionToken, closeLogsWebSocket]
   );
 
   // Uncomment for debugging
@@ -529,9 +742,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     }
   }, [currentUserSessionToken, enhancedWorkflowService]);
 
-  useEffect(() => {
-    fetchWorkflows();
+  const refreshAuthenticationStatus = useCallback(() => {
+    setAuthRefreshTrigger(prev => prev + 1);
   }, []);
+
+  // Removed initializeAnonymousUser; handled on-demand in executeWorkflow
 
   // Poll for active executions every 5 seconds when authenticated
   useEffect(() => {
@@ -548,21 +763,25 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     return () => clearInterval(interval);
   }, [currentUserSessionToken, pollActiveExecutions]); // Added pollActiveExecutions to dependencies
 
+  // Removed eager anonymous initialization on app load; handled on-demand
+
   // Update enhanced service when session token changes
   useEffect(() => {
     enhancedWorkflowService.updateSessionToken(currentUserSessionToken);
   }, [currentUserSessionToken]);
 
-  const refreshAuthenticationStatus = useCallback(() => {
-    console.log('🔄 [AppContext] Refreshing authentication status across all components');
-    // Trigger a re-render of all components that depend on authentication state
-    setAuthRefreshTrigger(prev => prev + 1);
-    
-    // Also trigger a small delay to ensure state has propagated
-    setTimeout(() => {
-      console.log('🔄 [AppContext] Authentication refresh completed');
-    }, 100);
+  // Fetch workflows on app start
+  useEffect(() => {
+    fetchWorkflows();
   }, []);
+
+  // Close the logs WebSocket when workflow finishes or is cancelled
+  useEffect(() => {
+    if (['completed', 'failed', 'cancelled'].includes(workflowStatus)) {
+      closeLogsWebSocket();
+      stopPollingLogs();
+    }
+  }, [workflowStatus, closeLogsWebSocket, stopPollingLogs]);
 
   // Memoize context value to prevent unnecessary re-renders
   const contextValue = useMemo(() => ({
@@ -593,6 +812,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     sidebarStatus,
     editorStatus,
     setEditorStatus,
+    setWorkflowAppStatus,
     checkForUnsavedChanges,
     recordingStatus,
     setRecordingStatus,
@@ -610,9 +830,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     visualOverlayActive,
     currentStreamingSession,
     overlayWorkflowInfo,
+    currentRunId,
+    setCurrentRunId,
     setVisualOverlayActive,
     setCurrentStreamingSession,
-    setOverlayWorkflowInfo
+    setOverlayWorkflowInfo,
+    anonymousUserId,
+    isAnonymousUser,
+    isInitializingAnonymous
   }), [
     selectWorkflow,
     displayMode,
@@ -641,6 +866,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     sidebarStatus,
     editorStatus,
     setEditorStatus,
+    setWorkflowAppStatus,
     checkForUnsavedChanges,
     recordingStatus,
     setRecordingStatus,
@@ -658,9 +884,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     visualOverlayActive,
     currentStreamingSession,
     overlayWorkflowInfo,
+    currentRunId,
+    setCurrentRunId,
     setVisualOverlayActive,
     setCurrentStreamingSession,
-    setOverlayWorkflowInfo
+    setOverlayWorkflowInfo,
+    anonymousUserId,
+    isAnonymousUser,
+    isInitializingAnonymous
   ]);
 
   return (

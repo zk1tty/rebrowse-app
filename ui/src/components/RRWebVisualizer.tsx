@@ -17,11 +17,13 @@ import { FrontendScreensaver } from './FrontendScreensaver';
 interface RRWebVisualizerProps {
   sessionId?: string;
   onClose?: () => void;
+  onCompleted?: () => void;
 }
 
 const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({ 
   sessionId: propSessionId, 
-  onClose 
+  onClose,
+  onCompleted
 }: RRWebVisualizerProps) {
   const { sessionId: urlSessionId } = useParams<{ sessionId: string }>();
   const sessionId = propSessionId || urlSessionId;
@@ -32,7 +34,7 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
-  const [connectedSessionId, setConnectedSessionId] = useState<string | null>(null);
+  // const [connectedSessionId, setConnectedSessionId] = useState<string | null>(null);
   const [stats, setStats] = useState({
     eventsReceived: 0,
     bytesReceived: 0,
@@ -63,13 +65,13 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
   
   const flushLogs = useCallback(() => {
     if (logBuffer.current.length > 0) {
-      setLogs(prev => [...prev.slice(-49), ...logBuffer.current].slice(-50));
+      setLogs((prev: string[]) => [...prev.slice(-49), ...logBuffer.current].slice(-50));
       logBuffer.current = [];
     }
     flushLogsTimer.current = null;
   }, []);
   
-  const addLog = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+  const addLog = useCallback((message: string, _type?: 'info' | 'success' | 'warning' | 'error') => {
     const timestamp = new Date().toLocaleTimeString();
     const logEntry = `[${timestamp}] ${message}`;
     
@@ -113,21 +115,18 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
   }, [addLog]);
 
   // Session ID validation helper
-  const validateSessionId = useCallback((sessionId: string) => {
-    addLog(`🔍 Session ID validation:`, 'info');
-    addLog(`   • Full ID: ${sessionId}`, 'info');
-    addLog(`   • Length: ${sessionId.length} characters`, 'info');
-    
-    const isVisualSession = sessionId.startsWith('visual-');
-    const uuidPart = isVisualSession ? sessionId.substring(7) : sessionId;
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const isValidUUID = uuidRegex.test(uuidPart);
-    
-    addLog(`   • Visual session: ${isVisualSession ? '✅' : '❌'}`, isVisualSession ? 'success' : 'info');
-    addLog(`   • Valid UUID core: ${isValidUUID ? '✅' : '❌'}`, isValidUUID ? 'success' : 'warning');
-    
-    return isValidUUID;
-  }, [addLog]);
+  // const validateSessionId = useCallback((sessionId: string) => {
+  //   addLog(`🔍 Session ID validation:`);
+  //   addLog(`   • Full ID: ${sessionId}`);
+  //   addLog(`   • Length: ${sessionId.length} characters`);
+  //   const isVisualSession = sessionId.startsWith('visual-');
+  //   const uuidPart = isVisualSession ? sessionId.substring(7) : sessionId;
+  //   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  //   const isValidUUID = uuidRegex.test(uuidPart);
+  //   addLog(`   • Visual session: ${isVisualSession ? '✅' : '❌'}`);
+  //   addLog(`   • Valid UUID core: ${isValidUUID ? '✅' : '❌'}`);
+  //   return isValidUUID;
+  // }, [addLog]);
 
   // Simple initialization (official rrweb stream pattern)
   useEffect(() => {
@@ -145,7 +144,7 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
       if (!iframeRef.current) {
         if (attempts >= maxAttempts) {
           console.error('❌ [RRWebVisualizer] Timeout waiting for iframe to be rendered');
-          addLog('❌ Timeout waiting for iframe to be rendered', 'error');
+          addLog('❌ Timeout waiting for iframe to be rendered');
           setConnectionStatus('error');
       return;
     }
@@ -165,7 +164,7 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
             // Re-verify iframe is still good before passing to WorkflowVisualizer
             if (!iframeRef.current || !document.contains(iframeRef.current)) {
               console.error('❌ [RRWebVisualizer] Iframe became invalid');
-              addLog('❌ Iframe became invalid', 'error');
+              addLog('❌ Iframe became invalid');
               setConnectionStatus('error');
               return;
             }
@@ -178,8 +177,12 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
         },
         onDisconnect: (event: CloseEvent) => {
           setConnectionStatus('disconnected');
-                if (event.code === 1000 && onClose) {
-                  setTimeout(onClose, 3000); // Auto-close on completion
+          if (event.code === 1000) {
+            if (onCompleted) {
+              setTimeout(onCompleted, 3000);
+            } else if (onClose) {
+              setTimeout(onClose, 3000);
+            }
           }
         },
         onEvent: (data: any) => {
@@ -203,7 +206,7 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
         onError: (error: Error) => {
           setConnectionStatus('error');
           setPlayerError(error.message);
-          addLog(`❌ Error: ${error.message}`, 'error');
+          addLog(`❌ Error: ${error.message}`);
         }
       });
 
@@ -248,17 +251,31 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
 
     try {
       setConnectionStatus('connecting');
-      addLog(`🔗 Connecting to session: ${sessionId}`, 'info');
+      addLog(`🔗 Connecting to session: ${sessionId}`);
       
       // Direct connection (official rrweb stream pattern)
       await visualizerRef.current.connectToStream(sessionId);
       
+      // Fallback: if no FullSnapshot arrives in time (completed session), render cached snapshot
+      setTimeout(() => {
+        if (!hasRealContent && visualizerRef.current) {
+          const rendered = visualizerRef.current.renderCachedSnapshot(sessionId);
+          if (rendered) {
+            setHasRealContent(true);
+            addLog('🖼️ Rendered cached snapshot (session may be completed)');
+          } else {
+            addLog('⏳ Still waiting for FullSnapshot...');
+            // Keep waiting quietly; user can retry
+          }
+        }
+      }, 3000);
+      
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog(`❌ Connection failed: ${errorMessage}`, 'error');
+      addLog(`❌ Connection failed: ${errorMessage}`);
       setConnectionStatus('error');
     }
-  }, [sessionId, addLog]);
+  }, [sessionId, addLog, hasRealContent]);
 
   // Utility functions
   const getStatusIcon = () => {
@@ -294,7 +311,7 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
       <div className="h-screen flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-500" />
-          <p className="text-gray-600">Loading rrweb visual streaming...</p>
+          <p className="text-gray-600">Loading visual mode...</p>
         </div>
       </div>
     );
@@ -303,7 +320,8 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
   // Always embedded mode now
   return (
     <div className="h-full flex flex-col bg-gray-100">
-      <div className="bg-gray-800 border-b border-gray-600 px-4 py-2">
+      {/* Visual panel header */}
+      <div className="bg-gray-800 border-b border-gray-600 px-4 py-2 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4 text-sm">
             <div className="flex items-center space-x-2">
@@ -345,34 +363,28 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
         </div>
       </div>
 
+      {/* Content area strictly subtracts header height (using flex layout) */}
       <div className="flex-1 bg-white min-h-0">
-        <div className="h-full p-2 min-h-0">
-          <div className="relative w-full h-full border rounded bg-gray-50 overflow-hidden min-h-[400px]">
+        <div className="h-full min-h-0">
+          {/* Fill panel height with no extra padding; center content with no top/bottom gaps */}
+          <div className="relative w-full h-full bg-gray-50 overflow-hidden">
+            <div className="absolute inset-0 w-full h-full">
             {/* 🎬 FRONTEND SCREENSAVER: Show until RRWeb content arrives */}
-            <FrontendScreensaver isVisible={!hasRealContent} />
+              <FrontendScreensaver isVisible={!hasRealContent} />
 
             {/* ✅ RRWeb iframe - shown when real content arrives */}
-            <iframe 
-              ref={iframeRef} 
-              src="about:blank"
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-              // IFRAME SECURITY OPTIONS:
-              // Option 1 (current): "allow-scripts" - Minimal permissions to prevent security warnings
-              // Option 2 (fallback): "allow-scripts allow-same-origin allow-popups allow-forms" - More permissions if needed
-              // Option 3: Remove sandbox entirely and use CSP headers for document-level control
-              className="w-full h-full overflow-hidden bg-white rounded border-0 rrweb-iframe" 
-              title="rrweb-player"
-              style={{
-                position: 'relative',
-                width: '100%',
-                height: '100%',
-                minHeight: '400px',
-                maxHeight: '100%',
-                backgroundColor: '#ffffff',
-                border: '1px solid #e5e7eb',
-                display: hasRealContent ? 'block' : 'none'
-              }}
-            />
+              <iframe 
+                ref={iframeRef} 
+                src="about:blank"
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                className="absolute inset-0 w-full h-full overflow-hidden bg-white border-0 rrweb-iframe" 
+                title="rrweb-player"
+                style={{
+                  backgroundColor: '#ffffff',
+                  display: hasRealContent ? 'block' : 'none'
+                }}
+              />
+            </div>
             
             {/* Overlay states on top of iframe */}
             {connectionStatus === 'connecting' && (
@@ -402,9 +414,9 @@ const RRWebVisualizerComponent = React.memo(function RRWebVisualizer({
               <div className="absolute inset-0 flex items-center justify-center z-10 bg-white bg-opacity-90">
                 <div className="text-center text-gray-600">
                   <div className="text-2xl mb-2">🎥</div>
-                  <div>Initializing visual streaming...</div>
+                  <div>Initializing visual mode...</div>
                   <div className="text-xs mt-2 text-gray-500">
-                    Live mode will activate when first event arrives
+                    View mode will activate when first event arrives
                   </div>
                 </div>
               </div>

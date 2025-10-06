@@ -13,17 +13,14 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { 
   Chrome, 
+  LogIn,
   Key, 
   AlertCircle, 
   CheckCircle, 
-  ExternalLink,
-  Copy,
   Download
 } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import { 
-  storeSessionToken, 
-  hasValidSessionToken,
   initializeSessionFromExtension,
   validateSessionToken 
 } from '@/utils/authUtils';
@@ -95,6 +92,19 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
     }
   };
 
+  const handleOpenChromeExtensions = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    const url = 'chrome://extensions';
+    const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!newWindow) {
+      toast({
+        title: 'Popup blocked',
+        description: 'Please open chrome://extensions manually from your browser.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleGetExtension = () => {
     // Try multiple approaches for downloading the extension
     try {
@@ -122,13 +132,13 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
     }
   };
 
-  const copyExtensionUrl = () => {
-    navigator.clipboard.writeText('/chrome-extension.zip');
-    toast({
-      title: 'Copied!',
-      description: 'Extension download path copied to clipboard',
-    });
-  };
+  // const copyExtensionUrl = () => {
+  //   navigator.clipboard.writeText('/chrome-extension.zip');
+  //   toast({
+  //     title: 'Copied!',
+  //     description: 'Extension download path copied to clipboard',
+  //   });
+  // };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -137,15 +147,15 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
           <DialogTitle className={`flex items-center space-x-2 ${
             theme === 'dark' ? 'text-white' : 'text-black'
           }`}>
-            <Chrome className={`h-5 w-5 ${
+            <LogIn className={`h-5 w-5 ${
               theme === 'dark' ? 'text-blue-400' : 'text-blue-600'
             }`} />
-            <span>Chrome Extension Login</span>
+            <span>Login to Record Workflows</span>
           </DialogTitle>
           <DialogDescription className={
             theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
           }>
-            Login using your session token from the Chrome extension to edit workflows and manage your collection.
+            Login from Recorder - Chrome extension.
           </DialogDescription>
         </DialogHeader>
 
@@ -176,7 +186,7 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
                     }`}
                   >
                     <Download className="h-3 w-3 mr-1" />
-                    Get Extension
+                    Install
                   </Button>
                   {/* <Button
                     variant="ghost"
@@ -209,7 +219,7 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
             <Input
               id="sessionToken"
               type="password"
-              placeholder="Paste your session token from the Chrome extension"
+              placeholder="Paste your session token"
               value={sessionToken}
               onChange={(e) => {
                 setSessionToken(e.target.value);
@@ -225,7 +235,7 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
             <p className={`text-xs ${
               theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Get your session token from the Chrome extension settings or popup.
+              Extract your session token from the popup.
             </p>
           </div>
 
@@ -253,14 +263,17 @@ export const SessionLoginModal: React.FC<SessionLoginModalProps> = ({
           }`}>
             <h4 className={`font-medium mb-2 ${
               theme === 'dark' ? 'text-white' : 'text-gray-900'
-            }`}>How to get your session token:</h4>
+            }`}>How to Login:</h4>
             <ol className={`text-sm space-y-1 list-decimal list-inside ${
               theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
             }`}>
-              <li>Install and open the Chrome extension</li>
-              <li>Login to your account in the extension</li>
-              <li>Copy the session token from extension settings</li>
-              <li>Paste it above and click "Login"</li>
+              <li>Click Install buttton above.</li>
+              <li>
+                Go to <a href="chrome://extensions" target="_blank" rel="noopener noreferrer" onClick={handleOpenChromeExtensions} className={theme === 'dark' ? 'text-blue-400 underline underline-offset-2' : 'text-blue-600 underline underline-offset-2 hover:text-blue-800'}>chrome://extensions</a>
+              </li>
+              <li>Go to "Load unpacked"</li>
+              <li>Select the folder where you downloaded.</li>
+              <li>Go to Login app</li>
             </ol>
           </div>
         </div>

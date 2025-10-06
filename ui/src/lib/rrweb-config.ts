@@ -114,11 +114,7 @@ export const getRRWebReplayerConfig = (container: HTMLElement, useMinimalConfig 
       target: container,  // ✅ Use 'target' instead of 'root' (matches fix strategy)
       ...RRWEB_MINIMAL_TEST_CONFIG
     };
-  }
-  
-  // 🎭 FULL CONFIG MODE - All settings with runtime unpackFn
-  console.log('🎭 [Config] Using FULL config with container target and all settings');
-  
+  }  
   // Create config with runtime values
   const config: any = {
     target: container,  // ✅ Use 'target' instead of 'root' (matches fix strategy)
@@ -128,7 +124,6 @@ export const getRRWebReplayerConfig = (container: HTMLElement, useMinimalConfig 
   // ✅ Set unpackFn at runtime if rrweb instance is available
   if (rrwebInstance?.unpack) {
     config.unpackFn = rrwebInstance.unpack;
-    console.log('✅ [Config] Set unpackFn from rrweb instance');
   } else {
     console.log('⚠️ [Config] No rrweb.unpack available - will use default unpacking');
   }

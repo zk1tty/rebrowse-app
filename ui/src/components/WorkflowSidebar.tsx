@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Globe, Search, Plus, Loader, Workflow, HelpCircle, MessageCircle, ExternalLink, MessageSquare } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Globe, Search, Video, Loader, Workflow, HelpCircle, MessageCircle, MessageSquare } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -7,7 +7,6 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
-  SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
@@ -20,24 +19,24 @@ import { useToast } from '@/hooks/use-toast';
 import { EditRecordingDialog } from './EditRecordingDialog';
 import { RecordingInProgressDialog } from './RecordingInProgressDialog';
 import SessionStatus from '@/components/SessionStatus';
+import SessionLoginModal from '@/components/SessionLoginModal';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog';
 
 export function WorkflowSidebar() {
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteWorkflowId, setDeleteWorkflowId] = useState<string | null>(null);
   const [showHelpDialog, setShowHelpDialog] = useState(false);
+  const [showSessionLoginModal, setShowSessionLoginModal] = useState(false);
   const { toast } = useToast();
   const { theme } = useTheme();
   const { state } = useSidebar();
   const {
     workflows,
-    activeExecutions,
     deleteWorkflow,
     sidebarStatus,
     checkForUnsavedChanges,
@@ -103,12 +102,12 @@ export function WorkflowSidebar() {
     }
   };
 
-  const handleDeleteWorkflow = (workflowId: string) => {
-    if (checkForUnsavedChanges()) {
-      return;
-    }
-    setDeleteWorkflowId(workflowId);
-  };
+  // const handleDeleteWorkflow = (workflowId: string) => {
+  //   if (checkForUnsavedChanges()) {
+  //     return;
+  //   }
+  //   setDeleteWorkflowId(workflowId);
+  // };
 
   const confirmDeleteWorkflow = async (workflowId: string) => {
     if (!workflowId) return;
@@ -149,7 +148,7 @@ export function WorkflowSidebar() {
   };
 
   const handleTelegramClick = () => {
-    window.open('https://t.me/n0rixpunks', '_blank');
+    window.open('https://t.me/rebrowser', '_blank');
     setShowHelpDialog(false);
     toast({
       title: 'Opening Telegram',
@@ -209,20 +208,21 @@ export function WorkflowSidebar() {
             <p className={`text-sm ${
               theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
             }`}>
-              Start by creating or importing a workflow
+              Start by recording or importing a workflow
             </p>
           </div>
           <Button 
             variant="outline" 
             size="sm"
+            onClick={() => setShowSessionLoginModal(true)}
             className={`${
               theme === 'dark' 
                 ? 'border-gray-600 text-gray-300 hover:bg-gray-800' 
                 : 'border-gray-300 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            <Plus className="w-4 h-4 mr-2" />
-            Create Workflow
+            <Video className="w-4 h-4 mr-2" />
+            Record Workflow
           </Button>
         </div>
       );
@@ -322,7 +322,7 @@ export function WorkflowSidebar() {
 
   return (
     <>
-      <Sidebar collapsible="icon" className={`${
+      <Sidebar collapsible="offcanvas" className={`${
         theme === 'dark' ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'
       } border-r`}>
         <SidebarHeader className={`${
@@ -384,7 +384,7 @@ export function WorkflowSidebar() {
                   ? 'bg-cyan-600 hover:bg-cyan-700' 
                   : 'bg-purple-600 hover:bg-purple-700'
               }`}
-              title={state === 'collapsed' ? 'Prompt New Workflow' : ''}
+              title={state === 'collapsed' ? 'Prompt Workflow' : ''}
             >
               {recordingStatus === 'recording' ? (
                 <>
@@ -394,7 +394,7 @@ export function WorkflowSidebar() {
               ) : (
                 <>
                   <MessageSquare className={`${state === 'collapsed' ? 'w-5 h-5' : 'w-4 h-4'} ${state !== 'collapsed' ? 'mr-2' : ''}`} />
-                  {state !== 'collapsed' && 'Prompt New Workflow'}
+                  {state !== 'collapsed' && 'Prompt Workflow'}
                 </>
               )}
             </Button>
@@ -410,7 +410,7 @@ export function WorkflowSidebar() {
                 ) : (
                   // Show minimal workflow icons when collapsed
                   <div className="flex flex-col items-center space-y-3 pt-4">
-                    {workflows.slice(0, 3).map((workflow, index) => (
+                    {workflows.slice(0, 3).map((workflow) => (
                       <div
                         key={workflow.name}
                         className={`w-10 h-10 rounded-lg flex items-center justify-center cursor-pointer ${
@@ -490,6 +490,11 @@ export function WorkflowSidebar() {
         />
       )}
 
+      <SessionLoginModal
+        open={showSessionLoginModal}
+        onOpenChange={setShowSessionLoginModal}
+      />
+
       {/* Help Dialog */}
       <Dialog open={showHelpDialog} onOpenChange={setShowHelpDialog}>
         <DialogContent className={`sm:max-w-md ${
@@ -500,7 +505,7 @@ export function WorkflowSidebar() {
               theme === 'dark' ? 'text-white' : 'text-gray-900'
             }`}>
               <HelpCircle className="w-5 h-5" />
-              Need Help?
+              Need help?
             </DialogTitle>
           </DialogHeader>
 
@@ -521,7 +526,7 @@ export function WorkflowSidebar() {
             <div className={`text-center text-xs ${
               theme === 'dark' ? 'text-gray-500' : 'text-gray-400'
             }`}>
-              <p>@n0rixpunks</p>
+              <p>Rebrowse Support Telegram</p>
             </div>
           </div>
         </DialogContent>

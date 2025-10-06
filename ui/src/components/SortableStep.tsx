@@ -127,27 +127,80 @@ export function SortableStep({
           }`}
         >
           <div className="space-y-2">
+            {/* Show commonly edited fields explicitly when present */}
+            {/* clipboard_paste uses 'content' instead of 'output' */}
+            {step.type === 'clipboard_paste' && (
+              <div>
+                <Label className={`capitalize ${theme === 'dark' ? 'text-white' : ''}`}>content</Label>
+                <Input
+                  value={(step as any).content ?? ''}
+                  onChange={(e) => onUpdate(index, 'content' as keyof Step, e.target.value)}
+                  disabled={disabled}
+                />
+              </div>
+            )}
+            {step.type !== 'clipboard_paste' && typeof (step as any).output !== 'undefined' && (
+              <div>
+                <Label className={`capitalize ${theme === 'dark' ? 'text-white' : ''}`}>output</Label>
+                <Input
+                  value={(step as any).output ?? ''}
+                  onChange={(e) => onUpdate(index, 'output', e.target.value)}
+                  disabled={disabled}
+                />
+              </div>
+            )}
+
+            {typeof (step as any).cssSelector !== 'undefined' && (
+              <div>
+                <Label className={`capitalize ${theme === 'dark' ? 'text-white' : ''}`}>cssSelector</Label>
+                <Input
+                  placeholder={'e.g., [data-testid="primaryColumn"] button[aria-label="Copy text"]'}
+                  value={(step.cssSelector as any) ?? ''}
+                  onChange={(e) => onUpdate(index, 'cssSelector', e.target.value)}
+                  disabled={disabled}
+                />
+              </div>
+            )}
+
+            {typeof (step as any).timeoutMs !== 'undefined' && (
+              <div>
+                <Label className={`capitalize ${theme === 'dark' ? 'text-white' : ''}`}>timeoutMs</Label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  value={(step as any).timeoutMs ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const parsed = raw === '' ? null : Number.parseInt(raw, 10);
+                    onUpdate(index, 'timeoutMs' as keyof Step, (Number.isNaN(parsed) ? null : parsed) as any);
+                  }}
+                  disabled={disabled}
+                />
+              </div>
+            )}
+
+            {/* Render any remaining optional fields dynamically except core ones */}
             {Object.keys(step).map((key) => {
               const value = step[key as keyof Step];
               if (
                 [
                   'type',
                   'description',
-                  'output',
                   'timestamp',
                   'tabId',
+                  'output',
+                  'content',
+                  'cssSelector',
+                  'timeoutMs',
                 ].includes(key)
-              )
-                return null;
+              ) return null;
 
               return (
                 <div key={key}>
                   <Label className={`capitalize ${theme === 'dark' ? 'text-white' : ''}`}>{key}</Label>
                   <Input
-                    value={(value as string) ?? ''}
-                    onChange={(e) =>
-                      onUpdate(index, key as keyof Step, e.target.value)
-                    }
+                    value={(value as any) ?? ''}
+                    onChange={(e) => onUpdate(index, key as keyof Step, e.target.value)}
                     disabled={disabled}
                   />
                 </div>

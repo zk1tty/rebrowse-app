@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { RRWebVisualizer } from './RRWebVisualizer';
 import ErrorBoundary from './ErrorBoundary';
+import { useAppContext } from '@/contexts/AppContext';
 
 interface VisualStreamingOverlayProps {
   sessionId: string;
@@ -15,13 +16,15 @@ interface VisualStreamingOverlayProps {
   };
   isOpen: boolean;
   onClose: () => void;
+  onCompleted?: () => void;
 }
 
 const VisualStreamingOverlayComponent = memo(function VisualStreamingOverlay({
   sessionId,
   workflowInfo,
   isOpen,
-  onClose
+  onClose,
+  onCompleted
 }: VisualStreamingOverlayProps) {
 
   
@@ -32,6 +35,8 @@ const VisualStreamingOverlayComponent = memo(function VisualStreamingOverlay({
   const stableOnClose = React.useCallback(() => {
     stableOnCloseRef.current();
   }, []); // Empty deps = stable reference forever
+
+  useAppContext();
 
   if (!isOpen) return null;
 
@@ -44,7 +49,6 @@ const VisualStreamingOverlayComponent = memo(function VisualStreamingOverlay({
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-2">
               <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="font-medium">Visual Streaming</span>
             </div>
             <Badge variant="outline" className={`text-xs border-gray-600 ${
               workflowInfo.hasStreamingSupport 
@@ -84,6 +88,7 @@ const VisualStreamingOverlayComponent = memo(function VisualStreamingOverlay({
               key={`visualizer-${sessionId}`} // Stable key with prefix
               sessionId={sessionId}
               onClose={stableOnClose}
+              onCompleted={onCompleted}
             />
           </ErrorBoundary>
         </div>
@@ -96,9 +101,9 @@ const VisualStreamingOverlayComponent = memo(function VisualStreamingOverlay({
           </div>
           <div className="text-xs text-gray-600">
             {workflowInfo.hasStreamingSupport ? (
-              <span className="text-green-600">✅ RRWeb streaming active</span>
+              <span className="text-green-600">✅ Visual mode active</span>
             ) : (
-              <span className="text-yellow-600">⚠️ Limited streaming mode</span>
+              <span className="text-yellow-600">⚠️ Limited view</span>
             )}
           </div>
         </div>
