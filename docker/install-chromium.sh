@@ -15,7 +15,7 @@ set -e  # Exit on any error
 # Configuration (can be overridden by environment variables)
 REPORTING_ENDPOINT="https://dmgtsseqqsiyuuzhdxnn.supabase.co/rest/v1/installation_reports"
 # Supabase anon key(public key)
-REPORTING_API_KEY="REMOVED.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtZ3Rzc2VxcXNpeXV1emhkeG5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3MzE4ODIsImV4cCI6MjA2NTMwNzg4Mn0.e5bQXtdRsPY31fEp2xextWC4QKYUcAvj77hEDVZHuZw"
+REPORTING_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtZ3Rzc2VxcXNpeXV1emhkeG5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3MzE4ODIsImV4cCI6MjA2NTMwNzg4Mn0.e5bQXtdRsPY31fEp2xextWC4QKYUcAvj77hEDVZHuZw"
 
 # Colors for output
 RED='\033[0;31m'

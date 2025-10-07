@@ -56,7 +56,7 @@ REPORTING_API_KEY="${SUPABASE_KEY:-your-anon-key}"
 
 # With your actual values:
 REPORTING_ENDPOINT="${SUPABASE_URL:-https://xyzabc.supabase.co}/rest/v1/installation_reports"
-REPORTING_API_KEY="${SUPABASE_KEY:-REMOVED...}"
+REPORTING_API_KEY="${SUPABASE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...}"
 ```
 
 ### 4. Test Installation Reporting
