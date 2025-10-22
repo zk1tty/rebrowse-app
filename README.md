@@ -4,16 +4,16 @@
 
 ## About Rebrowse
 
-[Rebrowse]((https://rebrowse.me)) is a powerful tool that converts screen recordings into automated browser workflows.   
+[Rebrowse](https://rebrowse.me) is a powerful tool that converts screen recordings into agentic browser workflows.   
 
-## Goal
+## Problem to address
 
 Most AI copilots are sucks at workflow executions.
 They are 
-- slow "what takes so much time?"
-- not deterministic "you did this yesterday"
-- low vilisility "why takes so much time?"
-- call LLM everytime "are you stupid?"
+- slow - "what takes so much time?"
+- not deterministic - "you did this yesterday. Don't you remember?"
+- low vilisility - "why takes so much time?"
+- call LLM everytime - "are you stupid?"
 
 I'm solving this issues.
 
