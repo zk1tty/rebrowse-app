@@ -1,4 +1,4 @@
-[<img src="./doc/assets/rebrowse-hero-image.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
+[<img src="./doc/assets/header-image.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
 [![n0rizkitty](https://img.shields.io/twitter/follow/n0rizkitty?style=social)](https://x.com/n0rizkitty)
 <br/>
 
@@ -6,8 +6,29 @@
 
 [Rebrowse]((https://rebrowse.me)) is a powerful tool that converts screen recordings into automated browser workflows.   
 
-Upcoming features of Rebrowse(v0.2.0) :
-[<img src="./doc/assets/v0.2-core-feature.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
+## Goal
+
+Most AI copilots are sucks at workflow executions.
+They are 
+- slow "what takes so much time?"
+- not deterministic "you did this yesterday"
+- low vilisility "why takes so much time?"
+- call LLM everytime "are you stupid?"
+
+I'm solving this issues.
+
+### Remarkable Features
+
+1. 20x Speed and 95% Accuracy
+  - we use deterministic executions + customised flash-mode of browser-use.
+  - It allows us to execute with 20x speed.
+
+2. The world-first real-time **Preview**/**Evals** of **headless** browser 🙈
+  - I used rrweb to ovecome CROS issues.
+  - You can interact in real-time with the remote browser deployed under proxy on cloud.
+
+3. Parallel-run(v0.2.0):
+[<img src="./doc/assets/parallel-run-mode.png" alt="Rebrowse Hero" width="full"/>](https://rebrowse.me)
 
 ## Showcase: Grok-powered X Bot
 
