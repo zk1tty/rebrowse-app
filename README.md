@@ -4,7 +4,7 @@
 
 ## About Rebrowse
 
-[Rebrowse](https://rebrowse.me) is a powerful tool that converts screen recordings into agentic browser workflows.   
+[Rebrowse](https://rebrowse.me) is self-learning browser recorder. It records what people browse, generates agentic browser workflows and execute them on cloud browser.   
 
 ## Problem to address
 
