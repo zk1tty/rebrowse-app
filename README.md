@@ -10,7 +10,7 @@ So users can execute them on cloud browser in one click.
 
 ## Problem to address
 
-Most AI copilots are sucks at workflow executions.
+Most AI copilots are terrible at **workflow automation**.
 They are 
 - slow - "what takes so much time?"
 - not deterministic - "you did this yesterday. Don't you remember?"
@@ -21,11 +21,16 @@ I'm solving these real problems.
 
 ## Remarkable Features
 
-1. 20x Speed and 95% Accuracy
+1. Turn screen recording into workflows: 
+    - Create one deterministic workflow at first. 
+    - Yopu can visually understand the flow with condifence.  
+    ![Preview Demo](./doc/assets/grok-flow.png)
+
+2. 20x Speed and 95% Accuracy
     - we use deterministic executions + customised flash-mode of browser-use.
     - It allows us to execute at 20x speed.
 
-2. The world-first real-time **Preview**/**Evals** of **headless** browser 🙈
+3. The world-first real-time **Preview**/**Evals** of **headless** browser 🙈
     - I used rrweb to ovecome CROS issues.
     - You can interact in real-time with the remote browser deployed under proxy on cloud.
 
