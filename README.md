@@ -21,10 +21,11 @@ I'm solving these real problems.
 
 ## Remarkable Features
 
-1. Turn screen recording into workflows: 
-    - Create one deterministic workflow at first. 
+1. Screen-recording + voice = AI workflows: 
+    - Create one deterministic workflow at first.  
     - Yopu can visually understand the flow with condifence.  
-    ![Preview Demo](./doc/assets/grok-flow.png)
+    
+    ![PH-Apollo-Recording](./doc/assets/PH-apollo-recording.gif)
 
 2. 20x Speed and 95% Accuracy
     - we use deterministic executions + customised flash-mode of browser-use.
