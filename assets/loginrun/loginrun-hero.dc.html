@@ -87,7 +87,7 @@ class Component extends DCLogic {
     // Scene layout, in grid cells
     const GX0 = 102, GX1 = 136, GY0 = 8, GY1 = 76, TY = 20;
     const GCX = (GX0 + GX1) / 2, GCY = (GY0 + GY1) / 2;
-    const L = 8, T = 6, X_START = -52, X_SPAN = GX1 - X_START;
+    const L = 9, T = 6, X_START = -52, X_SPAN = GX1 - X_START;
     const T_ENTER = T * (GX0 - (MC - 1) - X_START) / X_SPAN;
 
     const streaks = [];
@@ -155,7 +155,8 @@ class Component extends DCLogic {
         for (let ix = GX0 + 2; ix < GX1 - 2; ix++) {
           const gx = (ix - GX0) / (GX1 - GX0);
           const wave = 0.5 + 0.5 * Math.sin(ix * 0.55 - tt * 9 + iy * 0.12);
-          const v = 0.08 + 0.22 * gx + 0.04 * Math.sin(tt * 1.7 + iy * 0.2) + env * (0.3 + 0.4 * wave);
+          const flash = clamp(1 - (tt - (T - 0.2)) / 0.35, 0, 1) * (tt > T - 0.2 ? 1 : 0);
+          const v = 0.08 + 0.22 * gx + 0.04 * Math.sin(tt * 1.7 + iy * 0.2) + env * (0.3 + 0.4 * wave) + 0.7 * flash;
           if (v > thr(ix, iy)) sq(ix, iy, 0.5 + 0.35 * env * wave);
         }
       }
@@ -187,16 +188,27 @@ class Component extends DCLogic {
         }
       }
 
-      // success ripple
+      // success burst: three thick halftone shock rings blast out of the gate across the whole frame
       const rt = tt - (T - 0.2);
-      if (rt > 0 && rt < 2) {
-        const rr = rt * 36, fade = 1 - rt / 2;
-        const lo = Math.max(0, Math.floor(GCX - rr - 2)), hi = Math.min(143, Math.ceil(GCX + rr + 2));
-        for (let y = 0; y < 81; y++) {
-          for (let x = lo; x <= hi; x++) {
-            const d = Math.hypot(x - GCX, y - GCY);
-            const w = Math.abs(d - rr);
-            if (w < 1.3 && (1 - w / 1.3) * fade > thr(x, y)) sq(x, y, 0.45);
+      if (rt > 0 && rt < 3) {
+        for (let ring = 0; ring < 3; ring++) {
+          const rtr = rt - ring * 0.22;
+          if (rtr <= 0) continue;
+          const rr = rtr * 58 * (1 - 0.12 * ring);
+          const fade = clamp(1 - rtr / 2.6, 0, 1);
+          if (fade <= 0) continue;
+          const bw = 3.2 - ring * 0.5;
+          const lo = Math.max(0, Math.floor(GCX - rr - bw)), hi = Math.min(143, Math.ceil(GCX + rr + bw));
+          const yl = Math.max(0, Math.floor(GCY - rr - bw)), yh = Math.min(80, Math.ceil(GCY + rr + bw));
+          for (let y = yl; y <= yh; y++) {
+            for (let x = lo; x <= hi; x++) {
+              const d = Math.hypot(x - GCX, y - GCY);
+              const w = Math.abs(d - rr);
+              if (w < bw) {
+                const cov = (1 - w / bw) * (0.35 + 0.65 * fade);
+                if (cov > thr(x, y)) sq(x, y, 0.55 + 0.45 * cov);
+              }
+            }
           }
         }
       }
