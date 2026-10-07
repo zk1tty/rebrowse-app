@@ -115,15 +115,18 @@ class Component extends DCLogic {
       const env = tt < T_ENTER ? 0 : tt < T ? Math.min(1, (tt - T_ENTER) / 0.5) : Math.max(0, 1 - (tt - T) / 1.6);
 
       // wind streaks rushing toward the gate
+      // it stops once the runner reaches the gate; no second wave after that
       const S = GX0;
+      const wind = clamp(1 - (tt - T_ENTER) / 0.25, 0, 1);
       for (const s of streaks) {
+        if (wind <= 0) break;
         const x0 = ((s.ph * S + s.lap * S * (tt / L)) % S);
         for (let k = 0; k < s.len; k++) {
           const x = Math.floor(x0) - k;
           // wind only trails behind the runner, never ahead of him
           if (x < 0 || x >= S || x >= X + 3) continue;
           const edge = Math.min(x, S - 1 - x, (X + 2 - x) * 1.5) / 6;
-          sq(x, s.row, clamp(0.2 + 0.32 * (1 - k / s.len), 0, 0.55) * clamp(edge, 0.25, 1));
+          sq(x, s.row, clamp(0.2 + 0.32 * (1 - k / s.len), 0, 0.55) * clamp(edge, 0.25, 1) * wind);
         }
       }
 
