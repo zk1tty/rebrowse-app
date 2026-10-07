@@ -97,10 +97,6 @@ class Component extends DCLogic {
         lap: 1 + Math.floor(h01(i, 3) * 3), ph: h01(i, 4)
       });
     }
-    const rays = [];
-    for (let i = 0; i < 46; i++) {
-      rays.push({ row: GY0 + 4 + Math.floor(h01(i, 9) * (GY1 - GY0 - 8)), sp: 26 + h01(i, 5) * 40, ph: h01(i, 6) * 50, len: 2 + Math.floor(h01(i, 7) * 5) });
-    }
 
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -181,17 +177,6 @@ class Component extends DCLogic {
           sq(xr, ay, s, k.h < 0.5 ? wid : 0);
         } else {
           sq(ax, ay, 1);
-        }
-      }
-
-      // light streaming out the far side
-      if (env > 0) {
-        for (const q of rays) {
-          const d = (tt * q.sp + q.ph) % 50;
-          for (let k = 0; k < q.len; k++) {
-            const s = (1 - d / 50) * env * (1 - k / q.len);
-            if (s > 0.1) sq(GX1 + d - k, q.row, 0.15 + 0.4 * s);
-          }
         }
       }
 
