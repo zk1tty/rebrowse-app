@@ -67,11 +67,7 @@ class Component extends DCLogic {
 
     const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
     const thr = (x, y) => (B4[((y & 3) << 2) | (x & 3)] + 0.5) / 16;
-    const hash = (a, b) => {
-      let h = Math.imul(a + 1, 73856093) ^ Math.imul(b + 7, 19349663);
-      h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;
-      return h >>> 0;
-    };
+    const hash = (a, b) => (Math.imul(a + 1, 73856093) ^ Math.imul(b + 7, 19349663)) >>> 0;
     const h01 = (a, b) => hash(a, b) / 4294967296;
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -143,14 +139,12 @@ class Component extends DCLogic {
 
       // gate frame
       for (let y = GY0; y <= GY1; y++) {
-        sq(GX0, y, 1); sq(GX1 - 1, y, 1);
-        if (h01(y, 11) < 0.9) { sq(GX0 + 1, y, 1); sq(GX1 - 2, y, 1); }
-        if (h01(y, 12 + Math.floor(tt * 2)) < env * 0.7) { sq(GX0 + 2, y, 0.7); sq(GX1 - 3, y, 0.7); }
+        // one solid bold line, two pixels thick, no gaps
+        sq(GX0, y, 1); sq(GX0 + 1, y, 1);
+        sq(GX1 - 2, y, 1); sq(GX1 - 1, y, 1);
       }
       for (let x = GX0; x < GX1; x++) {
-        sq(x, GY0, 1);
-        if (h01(x, 13) < 0.92) sq(x, GY0 + 1, 1);
-        if (h01(x, 14 + Math.floor(tt * 2)) < env * 0.6) sq(x, GY0 + 2, 0.7);
+        sq(x, GY0, 1); sq(x, GY0 + 1, 1);
       }
 
       // gate interior light, halftone
