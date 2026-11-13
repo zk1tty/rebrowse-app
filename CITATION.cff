@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Rebrowse: Loom for your web browser - It records what people browse, generates agentic browser workflows"
+abstract: "browser-agent is slow. Rebrowse records once, and replays 10 times faster and deterministically on a cloud browser."
+authors:
+  - family-names: Kizawa
+    given-names: Norika
+    orcid: "https://orcid.org/0009-0001-6044-6173"
+    affiliation: "Rebrowse, Inc"
+repository-code: "https://github.com/zk1tty/rebrowse-app"
+license: MIT
+version: 1.0.0
+date-released: 2026-11-13
+keywords:
+  - browser automation
+  - browser agents
+  - playwright
+  - LLM
