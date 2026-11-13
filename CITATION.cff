@@ -10,7 +10,7 @@ authors:
     affiliation: "Rebrowse, Inc"
 repository-code: "https://github.com/zk1tty/rebrowse-app"
 license: MIT
-version: 1.0.0
+version: 0.1.1
 date-released: 2026-11-13
 keywords:
   - browser automation
